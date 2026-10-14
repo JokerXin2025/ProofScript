@@ -11,10 +11,10 @@ import {
   rmSync,
   writeFileSync,
 } from "node:fs";
-import { basename, dirname, join, relative } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 const root = process.cwd();
-const outputRoot = join(root, ".Proof-Script");
+const outputRoot = resolve(process.env.PROOF_SCRIPT_OUTPUT_ROOT || join(root, ".ProofScript"));
 const pendingRoot = join(outputRoot, "computations", "pending");
 const bundlesRoot = join(outputRoot, "computations", "bundles");
 const pagesRoot = join(outputRoot, "pages");
@@ -39,7 +39,7 @@ function sha256(content) {
 function resource(path, hash, mediaType, encoding, byteSize) {
   return {
     $resource: {
-      path: relative(root, path),
+      path: join(".ProofScript", relative(outputRoot, path)),
       hash,
       mediaType,
       encoding,
@@ -110,7 +110,7 @@ for (const { path, value } of buildManifests) {
   }
 
   const published = {
-    schemaVersion: "1.0.0",
+    schemaVersion: "0.0.0",
     abi: value.abi,
     bundleId: value.bundleId,
     bundleHash,
@@ -124,7 +124,7 @@ for (const { path, value } of buildManifests) {
   published.manifest = resource(
     publishedPath,
     sha256(Buffer.from(publishedText)),
-    "application/vnd.proof-script.computation-bundle+json",
+    "application/vnd.proofscript.computation-bundle+json",
     "utf-8",
     Buffer.byteLength(publishedText),
   );
@@ -149,7 +149,7 @@ for (const pagePath of filesBelow(pagesRoot, ".json")) {
     if (!bundle.entries.some(entry => entry.id === execution.entry)) {
       throw new Error(`page ${relative(root, pagePath)} references missing entry ${execution.entry}`);
     }
-    value.schemaVersion = "1.2.0";
+    value.schemaVersion = "0.0.0";
     value.execution = {
       backend: "wasm",
       status: "ready",
@@ -176,8 +176,8 @@ for (const key of pendingKeys) {
 for (const { pagePath, page } of pageUpdates) writeJsonAtomic(pagePath, page);
 
 const index = {
-  schemaVersion: "1.0.0",
-  abi: "proof-script-json-v1",
+  schemaVersion: "0.0.0",
+  abi: "proofscript-json-v1",
   bundles: [...bundles.values()].map(bundle => ({
     bundleId: bundle.bundleId,
     bundleHash: bundle.bundleHash,

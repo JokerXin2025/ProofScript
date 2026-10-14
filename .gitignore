@@ -87,7 +87,16 @@ tmbootpicker.efi
 
 
 # --------------------------------------------------
-# Proof-Script
+# ProofScript
 # --------------------------------------------------
 
-.Proof-Script/
+.ProofScript/
+.Mitar/
+.PS4HTML/
+__pycache__/
+*.pyc
+*.egg-info/
+.venv/
+tools/ps4html/build/
+tools/ps4html/dist/
+examples/site/lake-manifest.json

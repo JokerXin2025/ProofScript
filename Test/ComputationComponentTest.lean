@@ -17,7 +17,7 @@ def doubleValue (request : ComputationRequest) : Except String ComputationRespon
 
 @computation {
   metadata := (title := "Finite computation", label := "finite-computation"),
-  renderer := "proof-script/test-table-v1",
+  renderer := "proofscript/test-table-v1",
   function := chooseOffset,
   payload := r#"{"inputs":[{"value":false,"output":112},{"value":true,"output":128}]}"#}
 
@@ -25,11 +25,38 @@ def doubleValue (request : ComputationRequest) : Except String ComputationRespon
 
 @computation {
   metadata := (title := "Typed computation", label := "typed-computation"),
-  renderer := "proof-script/test-json-v1",
+  renderer := "proofscript/test-json-v1",
   function := doubleValue,
   payload := r#"{"input":{"value":21}}"#}
 
 #check __proofScript_doubleValue
+
+@computation {
+  payload := r#"{"inputs":[{"value":false,"output":112}]}"#,
+  function := chooseOffset,
+  renderer := "proofscript/test-table-v1",
+  metadata := (title := "Reordered computation", label := "reordered-computation")}
+
+/--
+error: unknown @computation field `renderre`
+-/
+#guard_msgs (error) in
+@computation {
+  metadata := (title := "Invalid computation"),
+  renderre := "proofscript/test-table-v1",
+  function := chooseOffset,
+  payload := r#"{}"#}
+
+/--
+error: duplicate @computation field `renderer`
+-/
+#guard_msgs (error) in
+@computation {
+  metadata := (title := "Duplicate computation"),
+  renderer := "proofscript/test-table-v1",
+  renderer := "proofscript/test-json-v1",
+  function := chooseOffset,
+  payload := r#"{}"#}
 
 structure MissingCodec where
   value : Nat
@@ -45,7 +72,7 @@ Hint: Additional diagnostic information may be available using the `set_option d
 #guard_msgs (error) in
 @computation {
   metadata := (title := "Missing codec"),
-  renderer := "proof-script/test-json-v1",
+  renderer := "proofscript/test-json-v1",
   function := missingCodec,
   payload := r#"{}"#}
 
@@ -57,7 +84,7 @@ error: @computation requires a function with exactly one explicit argument
 #guard_msgs (error) in
 @computation {
   metadata := (title := "Two arguments"),
-  renderer := "proof-script/test-json-v1",
+  renderer := "proofscript/test-json-v1",
   function := twoArguments,
   payload := r#"{}"#}
 

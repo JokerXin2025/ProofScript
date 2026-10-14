@@ -1,0 +1,29 @@
+<details class="reference-item">
+  <summary>
+    <span class="reference-index">${index}</span>
+    <span class="reference-main">
+      <span class="reference-label">${title}</span>
+      <span class="reference-subtitle">${subtitle}</span>
+    </span>
+    <button type="button" class="reference-info">
+      <i class="codicon codicon-info"></i>
+    </button>
+    <span class="reference-toggle">
+      <i class="codicon codicon-chevron-down"></i>
+    </span>
+  </summary>
+  <dialog class="reference-info-dialog">
+    <div class="reference-info-dialog-body">
+      <form method="dialog">
+        <button type="submit" class="reference-info-dialog-close">
+          <i class="codicon codicon-close"></i>
+        </button>
+      </form>
+       <h3 class="reference-info-dialog-title">${info_title}</h3>
+${rows}
+    </div>
+  </dialog>
+  <div class="reference-theorems">
+${theorems}
+  </div>
+</details>

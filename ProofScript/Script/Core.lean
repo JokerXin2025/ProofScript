@@ -1,78 +1,43 @@
 import ProofScript.Script.JsonBox
 
-open Lean (Json)
-open Lean.Name (mkSimple)
+open Lean
 
 
 namespace ProofScript
 
+
 /- The marker identifies the witness-producing goal created by `witness`. -/
-def witnessDataGoalMDataKey : Lean.Name := `ProofScript.witnessDataGoal
+def witnessDataGoalMDataKey : Name := `ProofScript.witnessDataGoal
 
-initialize stepCounter : IO.Ref Nat ← IO.mkRef 0
-initialize currentBoxTag : IO.Ref String ← IO.mkRef ""
-initialize boxTagStack  : IO.Ref (List String) ← IO.mkRef []
-initialize prevStepRef : IO.Ref (Option (String × List (String × Json))) ← IO.mkRef none
-/-- Stack of (mainTag, remainingNodes) per active strategy. -/
-initialize strategyBranchStack : IO.Ref (List (String × List String)) ← IO.mkRef []
-
-def freshStep : IO Nat := do
-  let n ← stepCounter.get
-  stepCounter.set (n + 1)
-  return n
-
-def pushBoxTag (tag : String) : IO Unit := do
-  let stack ← boxTagStack.get
-  boxTagStack.set (tag :: stack)
-  currentBoxTag.set tag
-
-def popBoxTag : IO Unit := do
-  let stack ← boxTagStack.get
-  match stack with
-  | _ :: rest => boxTagStack.set rest ; match rest with | top :: _ => currentBoxTag.set top | [] => currentBoxTag.set ""
-  | [] => pure ()
-
-def getPrevStep : IO (Option (String × List (String × Json))) := prevStepRef.get
-def setPrevStep (info : String × List (String × Json)) : IO Unit := prevStepRef.set (some info)
-
-def resetScriptState : IO Unit := do
-  stepCounter.set 0
-  currentBoxTag.set ""
-  boxTagStack.set []
-  prevStepRef.set none
+def pushBoxTag {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT IO m]
+    (tag : String) : m Unit := pushRecordingTag tag
+def popBoxTag {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT IO m]
+    : m Unit := popRecordingTag
 
 /-! ## Strategy branch tracking -/
 
 /-- Start a new strategy -/
-def startStrategy (mainTag : String) (nodes : List String) : IO Unit := do
+def startStrategy {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT IO m]
+    (mainTag : String) (nodes : List String) : m Unit := do
   for node in nodes do
     let nodeTag := mainTag ++ "_" ++ node
-    JSON_boxes.modify fun arr =>
-      match arr.findIdx? (fun (b, _) => b == mkSimple nodeTag) with
-      | some _ => arr
-      | none => arr.push (mkSimple nodeTag, #[])
+    ensureBox nodeTag
   match nodes with
   | firstNode :: remaining =>
     pushBoxTag (mainTag ++ "_" ++ firstNode)
-    let cur ← strategyBranchStack.get
-    strategyBranchStack.set ((mainTag, remaining) :: cur)
+    beginStrategyBranches mainTag remaining
   | [] => pure ()
 
 /-- Advance to the next branch -/
-def advanceStrategyCase : IO Unit := do
-  let stack ← strategyBranchStack.get
-  match stack with
-  | [] => pure ()
-  | (mainTag, nodeList) :: rest =>
-    popBoxTag
-    match nodeList with
-    | [] => strategyBranchStack.set rest
-    | nextNode :: remaining =>
+def advanceStrategyCase {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT IO m]
+    : m Unit := do
+  if ← hasStrategyBranches then
+    match ← nextStrategyBranch with
+    | none =>
+      -- The last branch also returns to its parent.
+      popBoxTag
+    | some (mainTag, nextNode) =>
+      popBoxTag
       pushBoxTag (mainTag ++ "_" ++ nextNode)
-      strategyBranchStack.set ((mainTag, remaining) :: rest)
-
-/-- `_next_strategy_case`：它不调用任何 tactic，只推进录制 box 状态，在分支之间自动插入。 -/
-elab "_next_strategy_case" : tactic => do
-  advanceStrategyCase
 
 end ProofScript

@@ -1,0 +1,330 @@
+:root {
+    --reference-border: #aebbce;
+    --reference-background: #f8fafc;
+    --reference-control-background: #e2e8f0;
+    --reference-accent: #64748b;
+    --reference-theorem-hover: #e8edf3;
+}
+
+html {
+    scroll-behavior: smooth;
+}
+
+body {
+    padding-bottom: 33.33vh;
+}
+
+/* ── reference section ─────────────────────── */
+
+.references {
+    margin-top: 56px;
+    padding: 0 4px 12px;
+}
+
+.references-title {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    margin: 0 0 4px;
+    font-size: 24px;
+    font-weight: 700;
+    color: var(--text-color);
+    letter-spacing: 0.6px;
+    padding-bottom: 12px;
+    border-bottom: 1px solid var(--border-color-light);
+}
+.reference-list {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 20px;
+}
+
+/* ── item ──────────────────────────────────── */
+
+.reference-item {
+    border-left: 2px solid transparent;
+    background: transparent;
+    border-radius: 8px;
+    transition: background 0.25s ease, border-color 0.25s ease,
+                box-shadow 0.25s ease;
+    scroll-margin-top: 24px;
+}
+.reference-item:hover,
+.reference-item[open] {
+    background: var(--reference-background);
+    border-left-color: var(--reference-border);
+}
+.reference-item > summary {
+    list-style: none;
+    cursor: pointer;
+    user-select: none;
+    display: flex;
+    align-items: stretch;
+    gap: 14px;
+    padding: 14px 18px;
+    border-radius: 8px;
+}
+.reference-item > summary::-webkit-details-marker {
+    display: none;
+}
+
+/* ── index (number) ────────────────────────── */
+
+.reference-index {
+    flex-shrink: 0;
+    min-width: 26px;
+    display: grid;
+    place-items: center;
+    font-family: serif;
+    font-size: 18px;
+    font-weight: 800;
+    color: var(--text-color);
+    transition: color 0.25s ease;
+}
+.reference-item:hover .reference-index,
+.reference-item[open] .reference-index {
+    color: var(--reference-accent);
+}
+
+/* ── main (title + subtitle) ───────────────── */
+
+.reference-main {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+}
+.reference-label {
+    font-size: 16px;
+    font-weight: 550;
+    color: var(--text-color);
+    line-height: 1.5;
+}
+.reference-subtitle {
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 12.5px;
+    font-weight: 400;
+    line-height: 1.5;
+    color: var(--text-muted);
+}
+
+/* ── info button ───────────────────────────── */
+
+.reference-info {
+    all: unset;
+    align-self: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    box-sizing: border-box;
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    background: transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    opacity: 0;
+    transform: translateX(8px);
+    pointer-events: none;
+    transition: opacity 0.2s ease, transform 0.2s ease,
+                color 0.25s ease, background 0.25s ease;
+}
+.reference-info .codicon {
+    font-size:18px
+}
+.reference-item:hover > summary .reference-info,
+.reference-item[open] > summary .reference-info {
+    opacity: 1;
+    transform: translateX(0);
+    pointer-events: auto;
+    color: var(--reference-accent);
+}
+.reference-item:hover > summary .reference-info:hover,
+.reference-item[open] > summary .reference-info:hover {
+    color: var(--text-color);
+}
+.reference-info:focus-visible {
+    opacity: 1;
+    pointer-events: auto;
+    outline: 2px solid var(--reference-accent);
+    outline-offset: 2px;
+}
+
+/* ── toggle (chevron) ──────────────────────── */
+
+.reference-toggle {
+    align-self: center;
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    color: var(--text-muted);
+    background: transparent;
+    border-radius: 50%;
+    transition: transform 0.3s cubic-bezier(0.2, 0.8, 0.2, 1),
+                color 0.25s ease;
+}
+.reference-toggle .codicon {
+    font-size:18px
+}
+.reference-item:hover > summary .reference-toggle,
+.reference-item[open] > summary .reference-toggle {
+    color: var(--reference-accent);
+}
+.reference-item[open] > summary .reference-toggle {
+    transform: rotate(180deg);
+}
+
+/* ── native <dialog> ───────────────────────── */
+
+.reference-info-dialog {
+    border: none;
+    border-radius: 12px;
+    padding: 0;
+    width: min(480px, calc(100vw - 48px));
+    max-height: calc(100vh - 48px);
+    overflow: auto;
+    box-shadow: 0 16px 48px -8px rgba(15, 23, 42, 0.25);
+    color: var(--text-color);
+    font-family: inherit;
+}
+.reference-info-dialog::backdrop {
+    background: rgba(15, 23, 42, 0.4);
+}
+.reference-info-dialog[open] {
+    animation: ref-dialog-in 0.2s cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+
+.reference-info-dialog-body {
+    position: relative;
+    padding: 28px 32px;
+}
+
+.reference-info-dialog-title {
+    font-size: 17px;
+    font-weight: 700;
+    margin: 0 0 16px;
+    padding-bottom: 12px;
+}
+
+.reference-info-dialog-close {
+    position: absolute;
+    top: 12px;
+    right: 12px;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    font-size: 14px;
+    color: var(--text-muted);
+    border: none;
+    background: transparent;
+    border-radius: 50%;
+    cursor: pointer;
+    transition: color 0.2s ease;
+}
+.reference-info-dialog-close .codicon {
+    font-size:18px
+}
+
+.reference-info-row {
+    display: flex;
+    gap: 8px;
+    padding: 2px 0;
+    font-size: 14px;
+    line-height: 1.6;
+}
+.reference-info-row:last-child {
+    border-bottom: none;
+}
+.reference-info-key {
+    flex-shrink: 0;
+    min-width: 80px;
+    font-weight: 600;
+    color: var(--text-muted);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 12.5px;
+}
+.reference-info-value {
+    flex: 1;
+    color: var(--text-color);
+}
+
+@keyframes ref-dialog-in {
+    from { opacity: 0; transform: scale(0.95); }
+    to   { opacity: 1; transform: scale(1); }
+}
+
+/* ── theorem sub-list ──────────────────────── */
+
+.reference-theorems {
+    padding: 2px 6px 16px 46px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.theorem-link {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 9px 12px;
+    border-radius: 8px;
+    background: transparent;
+    color: var(--text-color);
+    text-decoration: none;
+    transition: background 0.2s ease;
+}
+.theorem-link:hover {
+    background: var(--reference-theorem-hover);
+}
+.theorem-link-unresolved {
+    cursor: default;
+}
+.theorem-link-unresolved:hover {
+    background: transparent;
+}
+.theorem-name {
+    font-family: 'Consolas', monospace;
+    font-size: 13px;
+    font-weight: 400;
+    color: var(--text-color);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.theorem-location {
+    margin-left: auto;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    color: var(--text-muted);
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.theorem-go {
+    flex-shrink: 0;
+    width: 28px;
+    height: 28px;
+    display: grid;
+    place-items: center;
+    color: var(--reference-accent);
+    opacity: 0;
+    transform: translateX(-4px);
+    transition: opacity 0.2s ease, transform 0.2s ease;
+}
+.theorem-go .codicon {
+    font-size:18px
+}
+.theorem-link:hover .theorem-go {
+    opacity: 1;
+    transform: translateX(0);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    html {
+        scroll-behavior: auto;
+    }
+}

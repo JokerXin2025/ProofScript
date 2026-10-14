@@ -4,7 +4,7 @@ set -eu
 root=$(CDPATH= cd -- "$(dirname -- "$0")/../../.." && pwd)
 spike="$root/runtime/wasm/spike"
 lean_source=${PROOF_SCRIPT_LEAN_SOURCE:-$HOME/Developer/lean4-wasm-4.32.0}
-out=${PROOF_SCRIPT_LEAN_WASM_BUILD:-$lean_source/build/proof-script-emscripten}
+out=${PROOF_SCRIPT_LEAN_WASM_BUILD:-$lean_source/build/proofscript-emscripten}
 libuv_source=${PROOF_SCRIPT_LIBUV_SOURCE:-}
 expected_hash=$(lean --githash)
 

@@ -5,7 +5,7 @@ import ProofScript
 
 This paragraph contains *bold*, _italic_, *_bold italic_*, ~~deleted~~,
 __underlined__, ==highlighted==, x^2^, a~n~, `code`, $x + y$, and
-[a link](https://example.com). See @<overview>, @thm:paper-main,
+[a link](https://example.com). See @<overview>, @thm:Test.PaperExtensionTest.paperMain,
 and @fig:diagram.
 
 - First item
@@ -27,15 +27,16 @@ theorem example : True := by
 ```
 "#
 
-@theorem @[theorem_info (name := "Paper Main", label := "paper-main")]
-  paperMain (P : Prop) (h : P) : P := script
+@theorem paperMain (P : Prop) (h : P) : P := script
   assumption
+theorem_info paperMain {name := "Paper Main"}
 
 @theorem defaultDisplayName : True := script
   trivial
 
-@theorem @[theorem_info (name := "Incomplete Result")] incompleteResult : True := script
-  cause "pending"
+@theorem incompleteResult : True := script
+  admit "pending"
+theorem_info incompleteResult {name := "Incomplete Result"}
 
 page_end
 

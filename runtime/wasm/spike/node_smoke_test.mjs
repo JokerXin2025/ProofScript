@@ -77,7 +77,7 @@ durations.sort((a, b) => a - b);
 const callsTotalMs = durations.reduce((sum, value) => sum + value, 0);
 const report = {
   calls: 1006,
-  protocol: "proof-script-json-v1",
+  protocol: "proofscript-json-v1",
   initializationMs: Number(initialized - started) / 1e6,
   callsTotalMs,
   callMeanMs: callsTotalMs / durations.length,

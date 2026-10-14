@@ -9,16 +9,22 @@ import { pathToFileURL } from "node:url";
 const root = process.cwd();
 const pagePath = process.argv[2];
 if (!pagePath) throw new Error("usage: test-finalized-computation.mjs <page.json>");
+const resolvedPage = resolve(root, pagePath);
+const snapshot = resolvedPage.includes("/.PS4HTML/inputs/")
+  ? resolvedPage.slice(0, resolvedPage.indexOf("/.ProofScript/pages/")) : root;
 const page = JSON.parse(await readFile(resolve(root, pagePath), "utf8"));
+const project = JSON.parse(await readFile(resolve(snapshot, ".ProofScript/project.json"), "utf8"));
+assert.equal(project.schemaVersion, "0.0.0");
 const computations = page.components
   .map(component => component.data?.computation?.value)
   .filter(Boolean);
 assert.ok(computations.length > 0);
 assert.ok(computations.every(value => value.execution.status === "ready"));
+assert.ok(computations.every(value => value.schemaVersion === "0.0.0"));
 
 async function verifiedResource(reference) {
   const descriptor = reference.$resource;
-  const path = resolve(root, descriptor.path);
+  const path = resolve(snapshot, descriptor.path);
   const bytes = await readFile(path);
   assert.equal(createHash("sha256").update(bytes).digest("hex"), descriptor.hash);
   assert.equal(bytes.length, descriptor.byteSize);
@@ -26,7 +32,13 @@ async function verifiedResource(reference) {
 }
 
 const execution = computations[0].execution;
-await verifiedResource(execution.manifest);
+for (const value of computations) {
+  const manifest = JSON.parse((await verifiedResource(value.execution.manifest)).bytes.toString("utf8"));
+  assert.equal(manifest.schemaVersion, "0.0.0");
+  assert.ok(manifest.entries.some(entry => entry.id === value.execution.entry));
+  await verifiedResource(value.execution.module);
+  await verifiedResource(value.execution.wasm);
+}
 await verifiedResource(execution.wasm);
 const moduleResource = await verifiedResource(execution.module);
 const instance = await (await import(pathToFileURL(moduleResource.path))).default();
@@ -61,6 +73,12 @@ function invoke(entry, input) {
   return result;
 }
 
-assert.deepEqual(invoke("chooseOffset", true), { ok: true, value: 128 });
-assert.deepEqual(invoke("doubleValue", { value: 21 }), { ok: true, value: { doubled: 42 } });
+assert.equal(invoke("__missing_entry__", {}).error.code, "unknown-entry");
+const entries = new Set(computations.filter(value => value.execution.bundleId === execution.bundleId).map(value => value.execution.entry));
+if (entries.has("chooseOffset")) assert.deepEqual(invoke("chooseOffset", true), { ok: true, value: 128 });
+if (entries.has("doubleValue")) assert.deepEqual(invoke("doubleValue", { value: 21 }), { ok: true, value: { doubled: 42 } });
+if (entries.has("computeFibonacci")) {
+  assert.equal(invoke("computeFibonacci", { n: 10 }).value.value, 55);
+  assert.equal(invoke("computeFibonacci", { n: 41 }).error.code, "computation-error");
+}
 console.log(JSON.stringify({ resources: 3, entries: computations.length, status: "ok" }));

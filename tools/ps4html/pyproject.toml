@@ -1,0 +1,22 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "PS4HTML"
+version = "0.1.0"
+description = "An automatic informalization tool for mathematical proofs in Lean4"
+requires-python = ">=3.11"
+readme = "README.md"
+license = {file = "PS4HTML/LICENSE-APACHE-2.0.txt"}
+dependencies = ["Pygments>=2.18,<3"]
+
+[project.scripts]
+ps4html = "PS4HTML.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["PS4HTML*", "Lean2TeX*"]
+
+[tool.setuptools.package-data]
+PS4HTML = ["Templates/*.html", "assets/css/*", "assets/js/*", "LICENSE-APACHE-2.0.txt"]

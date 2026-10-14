@@ -1,12 +1,14 @@
 import ProofScript
 
--- 测试：不带 #theorem 的 calc
+set_option linter.defProp false
+
+-- 测试：不带 @theorem 的 calc
 theorem test_calc_no_export (a b c : Nat) (hab : a = b) (hbc : b = c) : a = c := script
   calc
     a = b := hab
     _ = c := hbc
 
--- 测试：#theorem + calc 录制
+-- 测试：@theorem + calc 录制
 @theorem test_calc_with_export (a b c d : Nat)
     (hab : a = b) (hbc : b = c) (hcd : c = d) : a = d := script
   calc

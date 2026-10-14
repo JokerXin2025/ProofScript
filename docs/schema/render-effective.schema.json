@@ -1,0 +1,420 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proofscript.local/schema/render-effective-0.1.0.json",
+  "title": "ProofScript effective module rendering rules",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "module",
+    "imports",
+    "rules"
+  ],
+  "properties": {
+    "schemaVersion": {
+      "const": "0.1.0"
+    },
+    "module": {
+      "type": "string",
+      "minLength": 1
+    },
+    "imports": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "rules": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": [
+          "ruleId",
+          "strategy",
+          "fields",
+          "recordedFields"
+        ],
+        "properties": {
+          "ruleId": {
+            "type": "string",
+            "minLength": 1
+          },
+          "strategy": {
+            "type": "boolean"
+          },
+          "fields": {
+            "type": "object",
+            "properties": {
+              "renderer": {
+                "enum": [
+                  "none",
+                  "calc",
+                  "infer",
+                  "media",
+                  "diagram",
+                  "remark",
+                  "admit",
+                  "embed",
+                  "strategy"
+                ]
+              },
+              "display": {
+                "type": "boolean"
+              },
+              "color": {
+                "type": "array",
+                "prefixItems": [
+                  {
+                    "$ref": "#/$defs/color"
+                  },
+                  {
+                    "$ref": "#/$defs/color"
+                  },
+                  {
+                    "$ref": "#/$defs/color"
+                  }
+                ],
+                "items": false,
+                "minItems": 3,
+                "maxItems": 3
+              },
+              "template": {
+                "type": "array",
+                "minItems": 1,
+                "items": {
+                  "type": "object",
+                  "required": [
+                    "lang",
+                    "tag"
+                  ],
+                  "properties": {
+                    "lang": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "tag": {
+                      "type": "string"
+                    },
+                    "content": {
+                      "type": "string"
+                    },
+                    "inline": {
+                      "type": "boolean"
+                    },
+                    "introducer": {
+                      "$ref": "#/$defs/introducer"
+                    },
+                    "cases": {
+                      "type": "array",
+                      "minItems": 1,
+                      "items": {
+                        "$ref": "#/$defs/case"
+                      }
+                    }
+                  },
+                  "oneOf": [
+                    {
+                      "required": [
+                        "content"
+                      ],
+                      "not": {
+                        "anyOf": [
+                          {
+                            "required": [
+                              "cases"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "inline"
+                            ]
+                          },
+                          {
+                            "required": [
+                              "introducer"
+                            ]
+                          }
+                        ]
+                      }
+                    },
+                    {
+                      "required": [
+                        "cases"
+                      ],
+                      "not": {
+                        "required": [
+                          "content"
+                        ]
+                      }
+                    }
+                  ],
+                  "additionalProperties": false
+                }
+              }
+            },
+            "oneOf": [
+              {
+                "properties": {
+                  "renderer": {
+                    "const": "none"
+                  }
+                },
+                "required": [
+                  "renderer",
+                  "template"
+                ]
+              },
+              {
+                "properties": {
+                  "renderer": {
+                    "enum": [
+                      "calc",
+                      "infer",
+                      "media",
+                      "diagram",
+                      "remark",
+                      "admit",
+                      "embed",
+                      "strategy"
+                    ]
+                  }
+                },
+                "required": [
+                  "renderer"
+                ]
+              },
+              {
+                "required": [
+                  "template"
+                ],
+                "not": {
+                  "required": [
+                    "renderer"
+                  ]
+                }
+              }
+            ],
+            "additionalProperties": false
+          },
+          "recordedFields": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/outputField"
+                }
+              }
+            ]
+          }
+        },
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "color": {
+      "oneOf": [
+        {
+          "type": "null"
+        },
+        {
+          "type": "string",
+          "pattern": "^#(?:[0-9a-fA-F]{3}|[0-9a-fA-F]{4}|[0-9a-fA-F]{6}|[0-9a-fA-F]{8})$"
+        }
+      ]
+    },
+    "introducer": {
+      "type": "object",
+      "required": [
+        "tag",
+        "content"
+      ],
+      "properties": {
+        "tag": {
+          "type": "string"
+        },
+        "content": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "case": {
+      "type": "object",
+      "required": [
+        "name",
+        "tag",
+        "title"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "tag": {
+          "type": "string"
+        },
+        "title": {
+          "type": "string"
+        },
+        "introducer": {
+          "$ref": "#/$defs/introducer"
+        }
+      },
+      "additionalProperties": false
+    },
+    "schemaField": {
+      "type": "object",
+      "required": [
+        "name",
+        "schema"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema": {
+          "$ref": "#/$defs/paramSchema"
+        }
+      },
+      "additionalProperties": false
+    },
+    "outputField": {
+      "type": "object",
+      "required": [
+        "name",
+        "schema",
+        "nullable"
+      ],
+      "properties": {
+        "name": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schema": {
+          "$ref": "#/$defs/paramSchema"
+        },
+        "nullable": {
+          "type": "boolean"
+        }
+      },
+      "additionalProperties": false
+    },
+    "paramSchema": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": [
+            "kind"
+          ],
+          "properties": {
+            "kind": {
+              "enum": [
+                "expression",
+                "string",
+                "number",
+                "boolean",
+                "name",
+                "syntax",
+                "json"
+              ]
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "value"
+          ],
+          "properties": {
+            "kind": {
+              "const": "literal"
+            },
+            "value": {
+              "type": "string"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "element"
+          ],
+          "properties": {
+            "kind": {
+              "const": "array"
+            },
+            "element": {
+              "$ref": "#/$defs/paramSchema"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "element"
+          ],
+          "properties": {
+            "kind": {
+              "const": "optional"
+            },
+            "element": {
+              "$ref": "#/$defs/paramSchema"
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "fields"
+          ],
+          "properties": {
+            "kind": {
+              "const": "object"
+            },
+            "fields": {
+              "type": "array",
+              "items": {
+                "$ref": "#/$defs/schemaField"
+              }
+            }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": [
+            "kind",
+            "options"
+          ],
+          "properties": {
+            "kind": {
+              "const": "union"
+            },
+            "options": {
+              "type": "array",
+              "minItems": 1,
+              "items": {
+                "$ref": "#/$defs/paramSchema"
+              }
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    }
+  }
+}

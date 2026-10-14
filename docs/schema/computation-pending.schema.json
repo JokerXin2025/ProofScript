@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proof-script.local/schema/computation-pending-1.0.0.json",
-  "title": "Proof-Script Pending Computation Entry",
+  "$id": "https://proofscript.local/schema/computation-pending-0.0.0.json",
+  "title": "ProofScript Pending Computation Entry",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -14,8 +14,8 @@
     "source"
   ],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "abi": { "const": "proof-script-json-v1" },
+    "schemaVersion": { "const": "0.0.0" },
+    "abi": { "const": "proofscript-json-v1" },
     "bundleId": { "type": "string", "minLength": 1 },
     "entry": { "type": "string", "minLength": 1 },
     "wrapper": { "type": "string", "minLength": 1 },

@@ -1,7 +1,7 @@
 import ProofScript
 
 open Lean
-open ProofScript.Extension
+open ProofScript
 
 structure VideoComponent where
   title : String

@@ -1,12 +1,16 @@
 # 嵌入式计算前端交接文档
 
-本文面向页面渲染器和前端运行时维护者，描述如何消费 Proof-Script finalized page JSON、加载
+本文面向页面渲染器和前端运行时维护者，描述如何消费 ProofScript finalized page JSON、加载
 Lean/Wasm bundle，并将计算结果交给具体页面组件。
+
+当前内置实现位于 `tools/ps4html/PS4HTML/assets/js/computation.js`，注册入口为
+`PS4HTMLComputation.register`。本文 TypeScript/React 片段为下游接入参考，不表示内置实现使用 React。
+所有公开 `schemaVersion` 均为 `0.0.0`。
 
 ## 站点构建器职责
 
 前端仓库或页面渲染器不只负责读取已经存在的 JSON。负责发布网站的 build pipeline 必须先编译
-Lean/Proof-Script 项目，再构建和 finalize 计算资源。完整且不可省略的顺序是：
+Lean/ProofScript 项目，再构建和 finalize 计算资源。完整且不可省略的顺序是：
 
 ```sh
 # 1. 编译项目；产生 page JSON、pending manifests、wrapper 和最新 C IR
@@ -14,10 +18,10 @@ lake build
 
 # 2. 按 bundleId 构建多入口 Lean/Wasm
 PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
-  node /path/to/Proof-Script/scripts/build-computations.mjs
+  node /path/to/ProofScript/scripts/build-computations.mjs
 
 # 3. 发布内容寻址资源，并将页面 execution 从 pending 回填为 ready
-node /path/to/Proof-Script/scripts/finalize-computations.mjs
+node /path/to/ProofScript/scripts/finalize-computations.mjs
 ```
 
 渲染器的生产构建必须在上述任一步失败时失败，不能继续发布旧页面或静态 fallback 冒充成功。推荐在
@@ -25,19 +29,19 @@ node /path/to/Proof-Script/scripts/finalize-computations.mjs
 
 ```sh
 # 不应有要部署的 pending 页面；所有 ready 资源必须存在
-node /path/to/Proof-Script/scripts/test-finalized-computation.mjs \
-  .Proof-Script/pages/<page>.json
+node /path/to/ProofScript/scripts/test-finalized-computation.mjs \
+  .ProofScript/pages/<page>.json
 ```
 
 重要约束：
 
-- `#computation` 在 Lean elaboration 时登记 wrapper，但模块 C IR 在 elaboration 完成后才写出，所以
+- `@computation` 在 Lean elaboration 时登记 wrapper，但模块 C IR 在 elaboration 完成后才写出，所以
   不能省略第一步，也不能在 command elaborator 中同步链接 Wasm。
-- Lake 若复用未变化的 `.olean`，编译期文件副作用不一定重新执行。清空 `.Proof-Script/` 后应确保
+- Lake 若复用未变化的 `.olean`，编译期文件副作用不一定重新执行。清空 `.ProofScript/` 后应确保
   页面模块被重新 elaboration，必要时使用项目自己的 clean/rebuild 流程。
-- Finalize 之后若再次编译页面模块，`#page_end` 会把页面重新写回 `pending`。发布流程中 finalize
+- Finalize 之后若再次编译页面模块，`page_end` 会把页面重新写回 `pending`。发布流程中 finalize
   必须位于最后一次 Lean 编译之后。
-- 只有 `.Proof-Script/pages/` 和 `.Proof-Script/resources/` 是前端部署输入；pending 和 bundles 是
+- 只有 `.ProofScript/pages/` 和 `.ProofScript/resources/` 是前端部署输入；pending 和 bundles 是
   构建中间产物。
 - `PROOF_SCRIPT_LEAN_WASM_PREFIX` 必须指向与项目 Lean commit 匹配的 Emscripten Lean runtime，
   不能指向 macOS/Linux 宿主 toolchain。
@@ -47,11 +51,11 @@ node /path/to/Proof-Script/scripts/test-finalized-computation.mjs \
 一次完整后端构建产生：
 
 ```text
-.Proof-Script/pages/**/*.json
-.Proof-Script/resources/computation/<bundleHash>/bundle.json
-.Proof-Script/resources/computation/<bundleHash>/bundle.mjs
-.Proof-Script/resources/computation/<bundleHash>/bundle.wasm
-.Proof-Script/computations/index.json
+.ProofScript/pages/**/*.json
+.ProofScript/resources/computation/<bundleHash>/bundle.json
+.ProofScript/resources/computation/<bundleHash>/bundle.mjs
+.ProofScript/resources/computation/<bundleHash>/bundle.wasm
+.ProofScript/computations/index.json
 ```
 
 前端渲染页面时只需要 page JSON 中的 computation component。全局 index 用于预加载、诊断和
@@ -66,13 +70,13 @@ Finalized component 示例：
   "data": {
     "computation": {
       "value": {
-        "schemaVersion": "1.2.0",
+         "schemaVersion": "0.0.0",
         "metadata": {
           "title": "Typed computation",
           "label": "typed-computation",
           "extra": []
         },
-        "renderer": "proof-script/test-json-v1",
+        "renderer": "proofscript/test-json-v1",
         "function": {
           "declaration": "doubleValue",
           "type": "ComputationRequest → Except String ComputationResponse"
@@ -80,7 +84,7 @@ Finalized component 示例：
         "execution": {
           "backend": "wasm",
           "status": "ready",
-          "abi": "proof-script-json-v1",
+          "abi": "proofscript-json-v1",
           "bundleId": "Test.ComputationComponentTest",
           "entry": "doubleValue",
           "wrapper": "__proofScript_doubleValue",
@@ -113,7 +117,7 @@ Finalized component 示例：
 ```text
 execution.backend = wasm
 execution.status = ready
-execution.abi = proof-script-json-v1
+execution.abi = proofscript-json-v1
 ```
 
 遇到 `pending` 时不得尝试运行，应显示 fallback 或“计算资源尚未完成构建”。
@@ -143,7 +147,7 @@ function resourceUrl(base: URL, ref: ResourceRef): URL {
 }
 ```
 
-部署层必须允许访问以 `.Proof-Script/` 开头的静态路径，并为 Wasm 返回：
+部署层必须允许访问以 `.ProofScript/` 开头的静态路径，并为 Wasm 返回：
 
 ```http
 Content-Type: application/wasm
@@ -157,7 +161,7 @@ Content-Type: text/javascript
 
 ## 完整性校验
 
-Proof-Script 当前使用 SHA-256 十六进制 hash。加载器至少在第一次使用一个 bundle 时校验
+ProofScript 当前使用 SHA-256 十六进制 hash。加载器至少在第一次使用一个 bundle 时校验
 module、Wasm 和 manifest：
 
 ```ts
@@ -361,7 +365,7 @@ type RendererProps = {
 };
 
 const renderers = new Map<string, () => Promise<ComputationRenderer>>([
-  ["proof-script/e8-root-explorer-v1", loadE8Renderer],
+  ["proofscript/e8-root-explorer-v2", loadE8Renderer],
 ]);
 ```
 
@@ -404,14 +408,15 @@ function ComputationBlock({ value }: { value: ComputationValue }) {
 
 ## E8 Renderer 输入输出
 
-当前 SpherePaper manifest 仍使用简单的 `E8RootFamily → Nat` 入口。正式 E8 renderer 应等待后端将
-入口升级为结构化请求/响应，例如：
+内置 `proofscript/e8-root-explorer-v2` 已消费结构化请求/响应。请求字段为 family、projection
+以及可选有理半径；具体编码见 `tools/ps4html/PS4HTML/assets/js/e8-computation.js`。
+以下仅列响应中 UI 使用的部分字段，不替代领域后端的完整协议：
 
 ```ts
 type E8Request = {
   family: "integral" | "halfIntegral" | "all";
-  projection: "coxeter-plane" | "coordinates-1-2";
-  radiusSquared?: { numerator: number; denominator: number };
+  projection: "coxeterPlane" | { coordinates: { x: number; y: number } };
+  radius?: { numerator: number; denominator: number };
 };
 
 type E8Response = {
@@ -423,8 +428,10 @@ type E8Response = {
   integralCount: number;
   halfIntegralCount: number;
   totalCount: number;
+  selectedCount: number;
   normSquared: number;
-  radiusAdmissible: boolean;
+  radiusAdmissible?: boolean;
+  "radiusAdmissible?"?: boolean;
 };
 ```
 
@@ -476,10 +483,10 @@ lake build
 
 # 2. 多入口 Wasm bundle
 PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
-  node /path/to/Proof-Script/scripts/build-computations.mjs
+  node /path/to/ProofScript/scripts/build-computations.mjs
 
 # 3. 内容寻址发布和页面回填
-node /path/to/Proof-Script/scripts/finalize-computations.mjs
+node /path/to/ProofScript/scripts/finalize-computations.mjs
 ```
 
 前端只应部署 finalize 之后的 pages 和 resources，不应部署 `computations/pending` 或 bundles 中间目录。

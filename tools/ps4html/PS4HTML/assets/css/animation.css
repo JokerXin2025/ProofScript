@@ -1,0 +1,43 @@
+details.goal-block[open] > *:not(summary),
+details.reference-item[open] > .reference-theorems {
+    animation: sweep 0.35s ease-out forwards;
+    will-change: transform, opacity;
+    transform-origin: top;
+}
+
+@keyframes sweep {
+    0% { opacity: 0; transform: translateY(-10px) scaleY(0.98); }
+    100% { opacity: 1; transform: translateY(0) scaleY(1); }
+}
+
+details .step-block {
+    opacity: 0;
+}
+
+details details:not([open]) .step-block {
+    animation: none !important;
+    opacity: 0;
+}
+
+@keyframes slideInStep {
+    0% { opacity: 0; transform: translateX(-15px); }
+    100% { opacity: 1; transform: translateX(0); }
+}
+
+details[open] .step-block {
+    animation: slideInStep 0.4s cubic-bezier(0.2, 0.8, 0.2, 1) forwards;
+    animation-delay: calc(var(--step-idx, 0) * 0.04s); 
+}
+
+@media (prefers-reduced-motion: reduce) {
+    details.goal-block[open] > *:not(summary),
+    details.reference-item[open] > .reference-theorems,
+    details[open] .step-block {
+        animation: none !important;
+        opacity: 1 !important;
+        transform: none !important;
+    }
+    details .step-block {
+        opacity: 1;
+    }
+}

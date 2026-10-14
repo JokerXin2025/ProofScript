@@ -1,12 +1,12 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proof-script.local/schema/computation-published-bundle-1.0.0.json",
-  "title": "Proof-Script Published Computation Bundle",
+  "$id": "https://proofscript.local/schema/computation-published-bundle-0.0.0.json",
+  "title": "ProofScript Published Computation Bundle",
   "type": "object",
   "required": ["schemaVersion", "abi", "bundleId", "bundleHash", "entries", "module", "wasm"],
   "properties": {
-    "schemaVersion": { "const": "1.0.0" },
-    "abi": { "const": "proof-script-json-v1" },
+    "schemaVersion": { "const": "0.0.0" },
+    "abi": { "const": "proofscript-json-v1" },
     "bundleId": { "type": "string", "minLength": 1 },
     "bundleHash": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
     "entries": {

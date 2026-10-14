@@ -1,6 +1,6 @@
 # ProofText 语法
 
-ProofText 是 Proof-Script 的 `@text` 命令内部使用的轻量级标记语言，用于编写随 Lean
+ProofText 是 ProofScript 的 `@text` 命令内部使用的轻量级标记语言，用于编写随 Lean
 模块一同导出的语义化正文、块级结构和行内格式。
 
 ProofText 与 Typst 有些相似，但它是一门独立且刻意保持精简的语言。例如，`*文本*`
@@ -35,8 +35,8 @@ Lean 会先解码字符串，再由 ProofText 解析其中的内容。因此可�
 产生相同的 ProofText 内容：
 
 ```lean
-#text "\\*字面星号"
-#text r"\*字面星号"
+@text "\\*字面星号"
+@text r"\*字面星号"
 ```
 
 对于多行文字、LaTeX 以及包含大量 ProofText 转义符的内容，建议使用 Lean 原始字符串。
@@ -48,12 +48,12 @@ Lean 会先解码字符串，再由 ProofText 解析其中的内容。因此可�
 ## 2. 完整示例
 
 ````lean
-#text r#"
+@text r#"
 = ProofText 概览 <overview>
 
 这一段包含 *粗体*、_强调_、*_粗体强调_*、~~删除线~~、__下划线__、
 ==高亮==、x^2^、a~n~、`行内代码`、$x + y$ 和[一个链接](https://example.com)。
-另请参阅 @<overview>、@thm:main-result 和 @fig:diagram。
+另请参阅 @<overview>、@thm:Paper.Main.mainResult 和 @fig:diagram。
 
 - 第一项
 - 第二项
@@ -90,7 +90,7 @@ ProofText 会先归一化缩进，使多行字符串可以与周围的 Lean 代�
 ```lean
 namespace Example
 
-  #text r#"
+  @text r#"
     = 标题
 
     一个段落。
@@ -327,7 +327,7 @@ ProofText 转义只在行内解析时生效。在行内代码、行内公式、�
 链接使用以下形式：
 
 ```text
-[Proof-Script 仓库](https://github.com/example/Proof-Script)
+[ProofScript 仓库](https://github.com/example/ProofScript)
 ```
 
 标签会递归解析为行内 ProofText；URL 原样保留且不会进行有效性检查。解析器允许空标签和
@@ -339,7 +339,7 @@ ProofText 转义只在行内解析时生效。在行内代码、行内公式、�
 
 ### 5.6 标签
 
-标题和引用使用以下形式的标签：
+标题与图片引用使用以下形式的标签：
 
 ```text
 [A-Za-z][A-Za-z0-9_-]*
@@ -362,18 +362,19 @@ ProofText 有四种引用形式：
 | 语法 | 目标种类 |
 | --- | --- |
 | `@<label>` | 标题 |
-| `@thm:label` | 定理 |
+| `@thm:Lean.DeclarationName` | 定理（完整限定的 Lean 声明名） |
 | `@fig:label` | 图形或 TikZ 组件 |
 
 例如：
 
 ```text
-参见 @<introduction> 和 @thm:main-result。
+参见 @<introduction> 和 @thm:Paper.Main.mainResult。
 参见 @fig:overview-diagram。
 ```
 
-标题引用具有结束符 `>`。带类型的引用形式会读取随后由字母、数字、连字符和下划线组成的
-最长序列。因此，`@thm:result.` 表示对 `result` 的引用，之后是普通标点。
+标题引用具有结束符 `>`。图片引用读取字母、数字、连字符和下划线；定理引用还支持点号，
+以便使用完整限定的 Lean 声明名。末尾的点号作为标点保留，例如 `@thm:Paper.Main.result.`
+引用的是 `Paper.Main.result`。
 
 一旦遇到已知引用标记，错误的引用语法就会报错。`@eq:result` 等未知形式仍作为普通文本。
 
@@ -418,7 +419,7 @@ ProofText 有四种引用形式：
 
 ## 7. 错误
 
-以下错误形式会使 `#text` 命令在 elaboration 时失败：
+以下错误形式会使 `@text` 命令在 elaboration 时失败：
 
 | 情形 | 典型诊断信息 |
 | --- | --- |
@@ -446,7 +447,7 @@ ProofText 有四种引用形式：
 - 搜索结束分隔符时识别转义；
 - 使用多个反引号的行内代码；
 - URL 有效性检查或 URL 括号平衡；
-- `#text` elaboration 阶段的引用目标检查；
+- `@text` elaboration 阶段的引用目标检查；
 - Markdown 硬换行语法或自动生成软换行、硬换行节点；
 - 图片、HTML、水平分隔线、脚注或 ProofText 表格语法。
 
@@ -482,6 +483,6 @@ ProofText 有四种引用形式：
 | 公式 | `$latex$` |
 | 链接 | `[标签](url)` |
 | 标题引用 | `@<label>` |
-| 定理引用 | `@thm:label` |
+| 定理引用 | `@thm:Lean.DeclarationName` |
 | 图形引用 | `@fig:label` |
 | 转义 | `\字符` |

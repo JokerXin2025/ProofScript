@@ -1,0 +1,91 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proofscript.local/schema/lean2tex-events-0.0.0.json",
+  "title": "Lean-owned Lean2TeX configuration events",
+  "type": "object",
+  "required": ["schema_version", "module", "events"],
+  "properties": {
+    "schema_version": { "const": "0.0.0" },
+    "module": { "type": "string", "minLength": 1 },
+    "events": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["sequence", "category", "target", "fields"],
+        "properties": {
+          "sequence": { "type": "integer", "minimum": 0 },
+          "category": { "enum": ["definition", "variable", "phrase"] },
+          "target": { "type": "string", "minLength": 1 },
+          "fields": { "type": "object", "minProperties": 1 },
+          "source": {
+            "type": "object",
+            "required": ["file", "start", "stop"],
+            "properties": {
+              "file": { "type": "string" },
+              "start": { "type": "integer", "minimum": 0 },
+              "stop": { "type": "integer", "minimum": 0 }
+            },
+            "additionalProperties": false
+          }
+        },
+        "allOf": [
+          { "if": { "properties": { "category": { "const": "definition" } }, "required": ["category"] },
+            "then": { "properties": { "fields": { "$ref": "#/$defs/definition" } } } },
+          { "if": { "properties": { "category": { "const": "variable" } }, "required": ["category"] },
+            "then": { "properties": { "fields": { "$ref": "#/$defs/variable" } } } },
+          { "if": { "properties": { "category": { "const": "phrase" } }, "required": ["category"] },
+            "then": { "properties": { "fields": { "$ref": "#/$defs/phrase" } } } }
+        ],
+        "additionalProperties": false
+      }
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "definition": {
+      "type": "object", "minProperties": 1,
+      "properties": {
+        "kind": { "enum": ["const", "operator", "relation", "logic", "projection", "constructor", "type"] },
+        "arguments": { "oneOf": [{ "const": "explicit" }, { "type": "array", "items": { "type": "integer", "minimum": 0 } }] },
+        "dynamic_arity": { "type": "boolean" },
+        "styles": { "type": "array", "items": { "$ref": "#/$defs/style" } },
+        "calc_symbol": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] },
+        "unwrap": { "oneOf": [{ "type": "null" }, { "type": "integer", "minimum": 0 }] },
+        "alias": { "oneOf": [{ "type": "null" }, { "type": "string", "minLength": 1 }] }
+      },
+      "additionalProperties": false
+    },
+    "style": {
+      "type": "object", "required": ["template"],
+      "properties": {
+        "name": { "type": "string" }, "mode": { "enum": ["formula", "text"] },
+        "template": { "type": "string" },
+        "fixity": { "enum": ["atom", "prefix", "postfix", "infix", "binder", "application", "custom"] },
+        "precedence": { "type": "integer", "minimum": 0 },
+        "associativity": { "enum": ["left", "right", "none"] },
+        "separator": { "type": "string" },
+        "isolated_arguments": { "type": "array", "uniqueItems": true, "items": { "type": "integer", "minimum": 0 } },
+        "binders": { "type": "array", "items": {
+          "type": "array", "prefixItems": [
+            { "type": "integer", "minimum": 0 }, { "type": "integer", "minimum": 0 }
+          ], "items": false, "minItems": 2, "maxItems": 2
+        } }
+      }, "additionalProperties": false
+    },
+    "variable": {
+      "type": "object", "minProperties": 1,
+      "properties": {
+        "default": { "type": "string" },
+        "names": { "type": "array", "items": { "type": "string" } }
+      }, "additionalProperties": false
+    },
+    "phrase": {
+      "type": "object", "required": ["template"], "additionalProperties": false,
+      "properties": { "template": { "type": "array", "items": {
+        "type": "object", "required": ["lang", "content"],
+        "properties": { "lang": { "type": "string", "minLength": 1 }, "content": { "type": "string" } },
+        "additionalProperties": false
+      } } }
+    }
+  }
+}

@@ -1,0 +1,40 @@
+<section class="theorem-proof" id="${anchor}" data-language-panel="${language}" ${hidden}>
+  <h2>
+    <span>
+      ${proof_state}
+      ${title}
+    </span>
+    <label class="proof-indent-control" title="${indent_title}">
+      <span class="proof-indent-value">20</span>
+      <input class="proof-indent-slider" type="range" min="15" max="30" value="20" step="1" aria-label="${indent_label}">
+    </label>
+    <button class="flip-btn" type="button" title="${source_title}">
+      <i class="codicon codicon-file-code"></i>
+    </button>
+  </h2>
+
+  <div class="proof-flip">
+    <div class="proof-flip-inner">
+      <div class="proof-flip-front">
+        <div class="goal-content">
+
+${content}
+
+        </div>
+      </div>
+      <div class="proof-flip-back proof-source-card">
+        <div class="code-header">
+          <span>${file_name}</span>
+          <span>${lines_count} ${lines_label}</span>
+        </div>
+        <pre><code>
+
+${code}
+
+        </code></pre>
+      </div>
+    </div>
+  </div>
+
+  <div class="qed">□</div>
+</section>

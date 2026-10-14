@@ -1,8 +1,10 @@
-import ProofScript.Computation.Json
+import ProofScript.Page.Component.Computation
 
 open Lean
 
+
 namespace ProofScript.WasmSpike
+
 
 structure Request where
   message : String
@@ -23,6 +25,7 @@ def compute (request : Request) : Except String Response := do
 /-- JSON ABI entry point used to validate typed decoding and structured errors. -/
 @[export proof_script_spike]
 def invoke (input : String) : String :=
-  ProofScript.Computation.invokeJson compute input
+  Computation.invokeJson compute input
+
 
 end ProofScript.WasmSpike

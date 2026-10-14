@@ -2,6 +2,7 @@ import Lean.Meta
 import ProofScript.Script.Core
 
 open Lean (MetaM Level Literal Expr BinderInfo MData Json Syntax)
+open Lean
 open Lean.Meta (inferType)
 open Lean.JsonNumber (fromNat)
 
@@ -21,14 +22,65 @@ structure ExprJsonState where
   compactCache : Std.HashMap Expr String := {}
 deriving Inhabited
 
-initialize exprJsonStateRef : IO.Ref ExprJsonState ← IO.mkRef {}
+/- Each export has its own non-persistent, backtrackable expression table. -/
+initialize exprJsonExportExt : EnvExtension (Option ExprJsonState) ←
+  registerEnvExtension (pure none)
 
-def resetExprJsonState : IO Unit :=
-  exprJsonStateRef.set {}
+def withExprJsonExport {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadFinally m] (action : m α) : m α := do
+  let previous := exprJsonExportExt.getState (← getEnv)
+  modifyEnv (exprJsonExportExt.setState · (some {}))
+  try
+    action
+  finally
+    modifyEnv (exprJsonExportExt.setState · previous)
 
-def getExprJsonTable : IO Json := do
-  let state ← exprJsonStateRef.get
+private def getExprJsonState {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] : m ExprJsonState := do
+  match exprJsonExportExt.getState (← getEnv) with
+  | some state => return state
+  | none => liftM (throw (IO.userError "ProofScript: no active expression export") : IO ExprJsonState)
+
+private def modifyExprJsonState {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] (f : ExprJsonState → ExprJsonState) : m Unit := do
+  let state ← getExprJsonState
+  modifyEnv (exprJsonExportExt.setState · (some (f state)))
+
+def getExprJsonTable {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] : m Json := do
+  let state ← getExprJsonState
   return Json.mkObj <| state.nodes.toList.mapIdx fun index node => (s!"e{index}", node)
+
+/-- Rebase all expression references, including those nested inside exported nodes. -/
+private partial def rebaseExprRefs (value : Json) (offset : Nat) : Json :=
+  match value with
+  | .arr values => .arr (values.map (rebaseExprRefs · offset))
+  | .obj fields => .mkObj <| fields.toList.map fun (key, value) =>
+      if key == "$ref" then
+        match value with
+        | .str id =>
+          match (id.drop 1).toString.toNat? with
+          | some n => (key, Json.str s!"e{offset + n}")
+          | none => (key, value)
+        | _ => (key, value)
+      else (key, rebaseExprRefs value offset)
+  | other => other
+
+/-- Import an isolated expression export into the active proof's expression table. -/
+def mergeExprJsonSnapshot {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] (root table : Json) : m Json := do
+  let state ← getExprJsonState
+  let .ok entries := table.getObj?
+    | liftM (throw (IO.userError "invalid expression snapshot table") : IO Json)
+  let offset := state.nodes.size
+  let mut nodes := state.nodes
+  for index in [:entries.size] do
+    let node ← match table.getObjVal? s!"e{index}" with
+      | .ok node => pure node
+      | .error _ => liftM (throw (IO.userError "incomplete expression snapshot table") : IO Json)
+    nodes := nodes.push (rebaseExprRefs node offset)
+  modifyExprJsonState fun state => { state with nodes }
+  return rebaseExprRefs root offset
 
 private def exprRef (id : String) : Json :=
   Json.mkObj [("$ref", Json.str id)]
@@ -130,7 +182,9 @@ private def applicationBinderInfos (expr : Expr) : MetaM (Array (Option BinderIn
   for arg in args do
     match type? with
     | some type =>
-        match (← trySome (Lean.Meta.whnf type)) with
+        -- Instantiating a dependent binder with a raw bvar can leave an open
+        -- type. Meta reduction is only defined for locally closed expressions.
+        match (← if type.hasLooseBVars then pure none else trySome (Lean.Meta.whnf type)) with
         | some (.forallE _ _ body binderInfo) =>
             result := result.push (some binderInfo)
             type? := some (body.instantiate1 arg)
@@ -150,11 +204,11 @@ private partial def serializeNode (expr : Expr)
   let expr ← Lean.instantiateMVars expr
   let cacheable := sourceRange?.isNone && !cfg.withMData && cfg.withFVarDetails && cfg.withSourceRanges
   if cacheable then
-    let state ← exprJsonStateRef.get
+    let state ← getExprJsonState
     let cache := if cfg.withTypes then state.fullCache else state.compactCache
     if let some id := cache.get? expr then
       return exprRef id
-  let state ← exprJsonStateRef.get
+  let state ← getExprJsonState
   let index := state.nodes.size
   let id := s!"e{index}"
   let state := { state with nodes := state.nodes.push Json.null }
@@ -162,13 +216,16 @@ private partial def serializeNode (expr : Expr)
       if cfg.withTypes then { state with fullCache := state.fullCache.insert expr id }
       else { state with compactCache := state.compactCache.insert expr id }
     else state
-  exprJsonStateRef.set state
+  modifyExprJsonState fun _ => state
   let body ← serializeCore expr cfg sourceRange?
   let body ← match body with
     | Json.obj fields =>
-        let isProp ← trySome (Lean.Meta.isProp expr)
+        -- Binder bodies are exported structurally, retaining de Bruijn indices.
+        -- They are not standalone terms; catching exceptions does not catch a
+        -- Lean panic caused by passing them to type inference/reduction.
+        let isProp ← if expr.hasLooseBVars then pure none else trySome (Lean.Meta.isProp expr)
         let fields := fields.insert "isProp" (Json.bool (isProp.getD false))
-        let fields ← if cfg.withTypes && !expr.isFVar then
+        let fields ← if cfg.withTypes && !expr.isFVar && !expr.hasLooseBVars then
           match (← trySome (inferType expr)) with
           | some type =>
               let type ← Lean.instantiateMVars type
@@ -189,7 +246,7 @@ private partial def serializeNode (expr : Expr)
         else pure fields
         pure (Json.obj fields)
     | other => pure other
-  exprJsonStateRef.modify fun state => { state with nodes := state.nodes.set! index body }
+  modifyExprJsonState fun state => { state with nodes := state.nodes.set! index body }
   return exprRef id
 
 /-- 对 `Expr` 的构造子逐一序列化主体字段。 -/

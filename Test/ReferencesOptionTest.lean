@@ -1,9 +1,9 @@
 import ProofScript
 
-@[theorem_info (tags := "option")]
 theorem option_ref (P : Prop) (h : P) : P := h
+theorem_info option_ref {tags := ["option"]}
 
-set_option proofScript.references.enabled false in
+set_option referenceCollection false in
 @theorem references_disabled (P : Prop) (h : P) : P := script
   apply (option_ref P)
   assumption

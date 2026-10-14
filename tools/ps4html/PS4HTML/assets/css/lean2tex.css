@@ -1,0 +1,23 @@
+[data-l2t-ref] {
+    border-radius: 0.18em;
+    cursor: default;
+    transition: color 120ms ease, background-color 120ms ease, box-shadow 120ms ease;
+}
+
+[data-l2t-ref][data-l2t-active] {
+    color: #1d4ed8;
+    background-color: rgb(219 234 254 / 0.82);
+    box-shadow: 0 0 0 0.12em rgb(147 197 253 / 0.38);
+}
+
+[data-l2t-kind="binder"][data-l2t-active] {
+    color: #6d28d9;
+    background-color: rgb(237 233 254 / 0.9);
+    box-shadow: 0 0 0 0.12em rgb(196 181 253 / 0.48);
+}
+
+@media (prefers-reduced-motion: reduce) {
+    [data-l2t-ref] {
+        transition: none;
+    }
+}

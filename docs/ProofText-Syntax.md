@@ -1,6 +1,6 @@
 # ProofText Syntax
 
-ProofText is the lightweight markup language parsed inside Proof-Script's `@text` command. It
+ProofText is the lightweight markup language parsed inside ProofScript's `@text` command. It
 provides semantic blocks and inline markup for prose that is exported with a Lean module.
 
 ProofText resembles Typst, but it is a distinct and deliberately small language. In particular,
@@ -36,8 +36,8 @@ In an ordinary Lean string, a backslash intended for ProofText must itself be es
 commands therefore produce the same ProofText content:
 
 ```lean
-#text "\\*literal asterisk"
-#text r"\*literal asterisk"
+@text "\\*literal asterisk"
+@text r"\*literal asterisk"
 ```
 
 Raw Lean strings are recommended for multiline text, LaTeX, and text containing many ProofText
@@ -50,13 +50,13 @@ Components after export are ignored with a warning.
 ## 2. Complete Example
 
 ````lean
-#text r#"
+@text r#"
 = ProofText Overview <overview>
 
 This paragraph contains *strong text*, _emphasis_, *_strong emphasis_*,
 ~~struck text~~, __underlined text__, ==highlighted text==, x^2^, a~n~,
 `inline code`, $x + y$, and [a link](https://example.com).
-See @<overview>, @thm:main-result, and @fig:diagram.
+See @<overview>, @thm:Paper.Main.mainResult, and @fig:diagram.
 
 - First item
 - Second item
@@ -94,7 +94,7 @@ For example, the following heading and paragraph are parsed at column zero after
 ```lean
 namespace Example
 
-  #text r#"
+  @text r#"
     = Heading
 
     A paragraph.
@@ -341,7 +341,7 @@ markup or escapes. A missing closing `$` is an error.
 Links use the following form:
 
 ```text
-[Proof-Script repository](https://github.com/example/Proof-Script)
+[ProofScript repository](https://github.com/example/ProofScript)
 ```
 
 The label is recursively parsed as inline ProofText; the URL is retained verbatim and is not
@@ -354,7 +354,7 @@ an error.
 
 ### 5.6 Labels
 
-Headings and references use labels of the following form:
+Heading and figure labels use the following form:
 
 ```text
 [A-Za-z][A-Za-z0-9_-]*
@@ -378,19 +378,19 @@ ProofText has four reference forms:
 | Syntax | Target kind |
 | --- | --- |
 | `@<label>` | Heading |
-| `@thm:label` | Theorem |
+| `@thm:Lean.DeclarationName` | Theorem (fully qualified Lean declaration name) |
 | `@fig:label` | Figure or TikZ component |
 
 Examples:
 
 ```text
-See @<introduction> and @thm:main-result.
+See @<introduction> and @thm:Paper.Main.mainResult.
 See @fig:overview-diagram.
 ```
 
-Heading references have a closing `>`. The typed forms consume the longest following sequence of
-letters, digits, hyphens, and underscores. Thus `@thm:result.` is a reference to `result` followed
-by ordinary punctuation.
+Heading references have a closing `>`. Figure references consume letters, digits, hyphens and
+underscores. Theorem references also accept dots for qualified Lean declaration names; trailing
+dots are treated as punctuation. Thus `@thm:Paper.Main.result.` refers to `Paper.Main.result`.
 
 Malformed reference syntax is an error once a recognized marker has been encountered. Unknown
 forms such as `@eq:result` remain ordinary text.
@@ -436,7 +436,7 @@ before their bodies are recursively parsed.
 
 ## 7. Errors
 
-The `#text` command fails during elaboration for these malformed forms:
+The `@text` command fails during elaboration for these malformed forms:
 
 | Condition | Typical diagnostic |
 | --- | --- |
@@ -465,7 +465,7 @@ The current parser does not implement:
 - escape-aware closing-delimiter search;
 - multiple-backtick inline code;
 - URL validation or balanced parentheses in URLs;
-- reference-target validation during `#text` elaboration;
+- reference-target validation during `@text` elaboration;
 - Markdown hard-break syntax or generated soft/hard-break nodes;
 - images, HTML, horizontal rules, footnotes, or ProofText table syntax.
 
@@ -501,6 +501,6 @@ The current parser does not implement:
 | Math | `$latex$` |
 | Link | `[label](url)` |
 | Heading reference | `@<label>` |
-| Theorem reference | `@thm:label` |
+| Theorem reference | `@thm:Lean.DeclarationName` |
 | Figure reference | `@fig:label` |
 | Escape | `\character` |

@@ -10,6 +10,9 @@ if (!pageArgument || !entryArgument || inputArgument === undefined) {
   throw new Error("usage: invoke-finalized-computation.mjs <page.json> <entry> <input-json>");
 }
 const root = process.cwd();
+const resolvedPage = resolve(root, pageArgument);
+const snapshot = resolvedPage.includes("/.PS4HTML/inputs/")
+  ? resolvedPage.slice(0, resolvedPage.indexOf("/.ProofScript/pages/")) : root;
 const page = JSON.parse(await readFile(resolve(root, pageArgument), "utf8"));
 const value = page.components
   .map(component => component.data?.computation?.value)
@@ -19,7 +22,7 @@ if (value.execution.status !== "ready") throw new Error(`computation is ${value.
 
 async function verifiedPath(reference) {
   const descriptor = reference.$resource;
-  const path = resolve(root, descriptor.path);
+  const path = resolve(snapshot, descriptor.path);
   const bytes = await readFile(path);
   if (descriptor.byteSize !== undefined && descriptor.byteSize !== bytes.length) {
     throw new Error(`byte size mismatch: ${descriptor.path}`);

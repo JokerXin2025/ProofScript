@@ -1,0 +1,11 @@
+name = "PS4HTMLDemo"
+version = "1.0.0"
+defaultTargets = ["PS4HTMLDemo"]
+
+[[require]]
+name = "ProofScript"
+path = "../.."
+
+[[lean_lib]]
+name = "PS4HTMLDemo"
+roots = ["PS4HTMLDemo.Library", "PS4HTMLDemo.Gallery", "PS4HTMLDemo.Dependencies", "PS4HTMLDemo.Fibonacci"]

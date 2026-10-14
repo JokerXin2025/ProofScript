@@ -1,0 +1,113 @@
+/* ===== Flip Card ===== */
+.proof-flip-inner {
+    position: relative;
+    /* 调整了动画时长和曲线，使扁平翻转更利落 */
+    transition: transform 0.5s ease-in-out, height 0.5s ease-in-out;
+    transform-style: preserve-3d;
+}
+.proof-flip-inner.flipped { transform: rotateY(180deg); }
+.proof-flip-front { backface-visibility: hidden; }
+.proof-flip-inner.flipped > .proof-flip-front { pointer-events: none; }
+.proof-flip-back {
+    position: absolute; inset: 0;
+    backface-visibility: hidden;
+    pointer-events: none;
+    transform: rotateY(180deg);
+    background: #fff;
+    border-radius: 0.4167vw;
+    border: 0.0521vw solid #e5e7eb;
+    overflow: hidden;
+    display: flex; flex-direction: column;
+}
+.proof-flip-inner.flipped > .proof-flip-back { pointer-events: auto; }
+
+.proof-flip-back .code-header,
+.proof-source-card .code-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0.6vh 0.8vw;
+    background: #f3f4f6;
+    border-bottom: 0.0926vh solid #e5e7eb;
+    flex-shrink: 0;
+}
+.proof-flip-back .code-header span,
+.proof-source-card .code-header span {
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+    font-size: 12px; color: #6b7280;
+}
+.proof-flip-back pre,
+.proof-source-card pre {
+    margin: 0; padding: 0.8vw;
+    font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
+    font-size: 13px; line-height: 1.65;
+    color: #374151;
+    overflow: auto; flex: 1;
+    tab-size: 2;
+    white-space: pre;
+    counter-reset: line;
+    min-height: 0;
+}
+
+.theorem-code-only .proof-source-card {
+    overflow: hidden;
+    border: 0.0521vw solid #e5e7eb;
+    border-radius: 0.4167vw;
+    background: #fff;
+}
+
+.theorem-code-only .page-code {
+    border-radius: 0;
+    background: #fff;
+}
+
+/* Light syntax theme for source cards and reverse-side code. */
+.proof-flip-back .code-theme-light.code-comment,
+.proof-source-card .code-theme-light.code-comment { color: #6a737d; font-style: italic; }
+.proof-flip-back .code-theme-light.code-keyword,
+.proof-source-card .code-theme-light.code-keyword { color: #d73a49; }
+.proof-flip-back .code-theme-light.code-type,
+.proof-flip-back .code-theme-light.code-function,
+.proof-source-card .code-theme-light.code-type,
+.proof-source-card .code-theme-light.code-function { color: #6f42c1; }
+.proof-flip-back .code-theme-light.code-builtin,
+.proof-flip-back .code-theme-light.code-constant,
+.proof-flip-back .code-theme-light.code-number,
+.proof-source-card .code-theme-light.code-builtin,
+.proof-source-card .code-theme-light.code-constant,
+.proof-source-card .code-theme-light.code-number { color: #005cc5; }
+.proof-flip-back .code-theme-light.code-namespace,
+.proof-flip-back .code-theme-light.code-tag,
+.proof-source-card .code-theme-light.code-namespace,
+.proof-source-card .code-theme-light.code-tag { color: #22863a; }
+.proof-flip-back .code-theme-light.code-attribute,
+.proof-flip-back .code-theme-light.code-heading,
+.proof-flip-back .code-theme-light.code-strong,
+.proof-source-card .code-theme-light.code-attribute,
+.proof-source-card .code-theme-light.code-heading,
+.proof-source-card .code-theme-light.code-strong { color: #b08800; }
+.proof-flip-back .code-theme-light.code-string,
+.proof-source-card .code-theme-light.code-string { color: #032f62; }
+.proof-flip-back .code-theme-light.code-operator,
+.proof-flip-back .code-theme-light.code-punctuation,
+.proof-source-card .code-theme-light.code-operator,
+.proof-source-card .code-theme-light.code-punctuation { color: #24292e; }
+.proof-flip-back .code-theme-light.code-emphasis,
+.proof-source-card .code-theme-light.code-emphasis { font-style: italic; }
+.proof-flip-back .code-theme-light.code-inserted,
+.proof-source-card .code-theme-light.code-inserted { color: #22863a; }
+.proof-flip-back .code-theme-light.code-deleted,
+.proof-flip-back .code-theme-light.code-error,
+.proof-source-card .code-theme-light.code-deleted,
+.proof-source-card .code-theme-light.code-error { color: #cb2431; }
+
+/* Flip button */
+.flip-btn {
+    display: inline-flex; align-items: center; gap: 0.2083vw;
+    padding: 0.2778vh 0.5208vw;
+    font-size: 0.7em; font-weight: 500;
+    border: 0 solid;
+    background: #fff; color: #6b7280;
+    cursor: pointer; transition: all 0.2s;
+    vertical-align: middle; user-select: none;
+}
+.flip-btn:hover { background: #f3f4f6; color: #111827; border-color: #d1d5db; }
+.flip-btn i { font-size: 0.6771vw; }

@@ -36,7 +36,7 @@ def computeFibonacci
 组件 renderer ID：
 
 ```text
-proof-script/fibonacci-calculator-v1
+proofscript/fibonacci-calculator-v1
 ```
 
 entry：
@@ -48,31 +48,26 @@ computeFibonacci
 ## 构建
 
 ```sh
-cd /Users/zhoukexin/Proof-Script
-
-# 1. 只构建该示例页面
-lake build Test.EmbeddedComputationDemo
-
-# 2. 构建所有 pending computation bundles
-source "$HOME/Developer/emsdk/emsdk_env.sh"
-PROOF_SCRIPT_LEAN_WASM_PREFIX="$HOME/Developer/lean4-wasm-4.32.0/build/proof-script-emscripten" \
-  node scripts/build-computations.mjs
-
-# 3. 发布资源并把页面更新为 ready
-node scripts/finalize-computations.mjs
+# 在 ProofScript 仓库根目录安装站点工具
+python3 -m pip install -e ./tools/ps4html
+# 先按本机安装位置激活 Emscripten
+export PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/matching/lean-wasm-prefix
+# 构建、导出、编译 Wasm、finalize 和渲染
+lake build Test:ps4html
+ps4html serve
 ```
 
 Finalized 页面：
 
 ```text
-.Proof-Script/pages/Test/EmbeddedComputationDemo.json
+.PS4HTML/inputs/ProofScript/Test/.ProofScript/pages/Test/EmbeddedComputationDemo.json
 ```
 
 ## 不写前端也能先测试
 
 ```sh
 node scripts/invoke-finalized-computation.mjs \
-  .Proof-Script/pages/Test/EmbeddedComputationDemo.json \
+  .PS4HTML/inputs/ProofScript/Test/.ProofScript/pages/Test/EmbeddedComputationDemo.json \
   computeFibonacci \
   '{"n":10}'
 ```
@@ -94,7 +89,7 @@ node scripts/invoke-finalized-computation.mjs \
 
 ```sh
 node scripts/invoke-finalized-computation.mjs \
-  .Proof-Script/pages/Test/EmbeddedComputationDemo.json \
+  .PS4HTML/inputs/ProofScript/Test/.ProofScript/pages/Test/EmbeddedComputationDemo.json \
   computeFibonacci \
   '{"n":41}'
 ```
@@ -111,9 +106,9 @@ computation-error
 n must not exceed 40
 ```
 
-## 前端 UI 建议
+## 内置前端 UI
 
-最小 renderer 可以包含：
+`tools/ps4html/PS4HTML/assets/js/fibonacci-computation.js` 已提供：
 
 1. `0..40` 的 range slider。
 2. 当前 `F(n)` 大号数字。
@@ -143,9 +138,10 @@ payload 中已有：
 ## Renderer 注册
 
 ```ts
-const renderers = new Map([
-  ["proof-script/fibonacci-calculator-v1", loadFibonacciRenderer],
-]);
+PS4HTMLComputation.register("my-project/fibonacci-v1", async ({ compute, element }) => {
+  const result = await compute({ n: 10 });
+  element.textContent = result.ok ? String(result.value.value) : result.error.message;
+});
 ```
 
 Renderer 的领域接口：

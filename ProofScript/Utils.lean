@@ -1,10 +1,11 @@
 import Lean
 
-open Lean (mkIdent)
-open Lean.Parser.Tactic (rcasesPatMed)
+open Lean
+open Parser.Tactic (rcasesPatMed)
 
 
 namespace ProofScript
+
 
 open Lean Elab Tactic in
 /-- Get the expression of current goal -/
@@ -28,6 +29,7 @@ partial def toRoman (n : Nat) :=
   else if n >= 4 then "IV" ++ toRoman (n - 4)
   else if n >= 1 then "I" ++ toRoman (n - 1)
   else ""
+
 
 end ProofScript
 

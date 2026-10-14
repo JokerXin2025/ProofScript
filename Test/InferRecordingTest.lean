@@ -1,38 +1,85 @@
 import ProofScript
 
-theorem test_infer_term (P Q R : Prop) (hPQ : P → Q) (hQR : Q → R) (hp : P) : R :=
-  infer
-    P => Q := hPQ hp
-    _ => R := hQR ?_
-
--- 测试1：在 := script 模式下，infer 能正确录制
-theorem test_infer_script (P Q R : Prop) (hPQ : P → Q) (hQR : Q → R) (hp : P) : R := script
-  infer
-    P => Q := hPQ hp
-    _ => R := hQR ?_
-
--- 测试2：用 #theorem 会怎样（应该失败或生成 sorry）
 @theorem test_infer_export (P Q R : Prop) (hPQ : P → Q) (hQR : Q → R) : P → R := script
-  intro_h hp
+  intro hp
   infer
     P => Q := hPQ hp
-    _ => R := hQR ?_
+    => R := hQR ?_
 
--- infer 的每一步都应作为匿名条件保留，而不只是保留最后一步。
-theorem test_infer_keeps_each_step (P Q R : Prop) (hp : P)
+-- Each tactic proof sees the preceding conclusion, not an outer `this`.
+set_option linter.unusedVariables false in
+theorem test_infer_by (P Q R : Prop) (hp : P)
+    (hPQ : P → Q) (hQR : Q → R) (this : False → False) : R :=
+  infer
+    P => Q := by
+      apply hPQ
+      exact hp
+    => Q ∧ Q := by
+      refine And.intro ?_ ?_
+      · exact this
+      · exact this
+    => Q := And.left ?_
+    => R := (by
+      apply hQR
+      exact this)
+
+@theorem test_recorded_infer_by (P Q R : Prop) (hp : P)
     (hPQ : P → Q) (hQR : Q → R) : Q ∧ R := script
   infer
-    P => Q := hPQ hp
-    _ => R := hQR ?_
+    P => Q := by exact hPQ hp
+    => Q ∧ Q := by
+      refine And.intro ?_ ?_
+      · exact this
+      · exact this
+    => Q := And.left ?_
+    => R := by exact hQR this
   split_and
   | left => trivial
   | right => trivial
 
-@theorem test_recorded_infer_keeps_each_step (P Q R : Prop) (hp : P)
+set_option linter.unusedVariables false in
+example (P Q R : Prop) (hp : P) (hPQ : P → Q) (hQR : Q → R) : True := by
+  fail_if_success
+    have : R := (infer
+      P => Q := hPQ hp
+      => R := hQR (hPQ hp))
+  fail_if_success
+    have : Q ∧ Q := (infer
+      P => Q := hPQ hp
+      => Q ∧ Q := And.intro ?_ ?_)
+  fail_if_success
+    have : True := (infer
+      P => True := by trivial)
+  fail_if_success
+    have : R := (infer
+      P => Q := hPQ hp
+      => R := by exact hQR (show P from this))
+  trivial
+
+example (P Q R : Prop) (hp : P) (hPQ : P → Q) (hQR : Q → R)
+    (this : Nat) : Nat := by
+  have _hr : R := infer
+    P => Q := hPQ hp
+    => R := by exact hQR this
+  -- The alias inside the inference proof does not replace the outer binding.
+  exact this
+
+@theorem test_recorded_infer_named (P Q R : Prop) (hp : P)
     (hPQ : P → Q) (hQR : Q → R) : Q ∧ R := script
   infer
-    P => Q := hPQ hp
-    _ => R := hQR ?_
+    P ⇒ hQ : Q := by exact hPQ hp
+    ⇒ hR : R := hQR ?_
+    ⇒ Q ∧ R := by exact And.intro hQ this
+    ⇒ R := And.right ?_
   split_and
-  | left => trivial
-  | right => trivial
+  | left => exact hQ
+  | right => exact hR
+
+@theorem test_recorded_infer_shallower_continuation (P Q R : Prop) (hp : P)
+    (hPQ : P → Q) (hQR : Q → R) : Q ∧ R := script
+  infer
+      P ⇒ hQ : Q := hPQ hp
+    ⇒ hR : R := hQR ?_
+  split_and
+  | left => exact hQ
+  | right => exact hR

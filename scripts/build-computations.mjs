@@ -8,7 +8,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const root = process.cwd();
 const proofScriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const outputRoot = join(root, ".Proof-Script");
+const outputRoot = resolve(process.env.PROOF_SCRIPT_OUTPUT_ROOT || join(root, ".ProofScript"));
 const pendingRoot = join(outputRoot, "computations", "pending");
 const bundlesRoot = join(outputRoot, "computations", "bundles");
 const leanWasmPrefix = process.env.PROOF_SCRIPT_LEAN_WASM_PREFIX;
@@ -409,12 +409,14 @@ uint32_t proof_script_invoke(uint32_t entry_ptr, uint32_t entry_len,
 `;
   const dispatcherPath = join(out, "dispatcher.c");
 
-  const supportC = importCFile(setup, "ProofScript.Computation.Json");
+  const supportC = importCFile(setup, "ProofScript.Page.Component.Computation");
   const imported = importedCFiles(setup);
   const candidates = [...new Set([supportC, paths.c, ...imported])];
   const rootSymbols = [
     ...entryRows.map(entry => ({ source: paths.c, symbol: entry.symbol })),
-    { source: supportC, symbol: "lp_Proof_x2dScript_ProofScript_Computation_invokeJson" },
+    ...[...cDefinitions(readFileSync(supportC, "utf8"))]
+      .filter(symbol => symbol.endsWith("ProofScript_Computation_invokeJson"))
+      .map(symbol => ({ source: supportC, symbol })),
     { source: paths.c, symbol: moduleInitSymbol(moduleName, setup) },
     ...[...cSymbols(readFileSync(supportC, "utf8"))]
       .filter(symbol => isInitializer(symbol))
@@ -496,8 +498,8 @@ uint32_t proof_script_invoke(uint32_t entry_ptr, uint32_t entry_len,
   await smokeTest(modulePath);
   const wasm = readFileSync(wasmPath);
   const manifest = {
-    schemaVersion: "1.0.0",
-    abi: "proof-script-json-v1",
+    schemaVersion: "0.0.0",
+    abi: "proofscript-json-v1",
     bundleId,
     module: moduleName,
     entries: entryRows.map(({ id, wrapper }) => ({ id, wrapper })),

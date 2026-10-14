@@ -1,0 +1,25 @@
+.proof-mark.pass {
+    color: var(--proof-mark-pass-color-light);
+}
+.proof-mark.sorry {
+    color: var(--proof-mark-warning-color-light);
+}
+.proof-mark.error {
+    color: var(--proof-mark-error-color-light);
+}
+
+.ref-link {
+    color: var(--ref-color);
+    margin: 0 4px;
+    border-bottom: 1px dashed var(--ref-color); 
+    transition: 0.25s;
+}
+.ref-link:hover {
+    border-bottom-style: solid;
+}
+
+.qed {
+    text-align: right; 
+    font-size: 24px;
+    margin: 12px;
+}

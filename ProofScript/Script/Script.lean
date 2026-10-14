@@ -1,30 +1,38 @@
-import ProofScript.Script.Core
-import ProofScript.Script.Record
 import ProofScript.Script.Config
-import ProofScript.Script.ScriptDB
-import ProofScript.Extension.Page.Path
-import ProofScript.Extension.Page.State
-import ProofScript.References.Metadata
 
 open Lean
-open Lean.Parser.Tactic (tacticSeq tacticSeq1Indented inductionAlt case caseArg)
-open Lean.Elab.Tactic (evalTactic)
+open Parser.Tactic (tacticSeq1Indented)
+open Elab.Tactic (evalTactic)
 
 
 namespace ProofScript
 
+
 /-! ## `script` 脚本语法
 
-脚本 body 的每一行既可以是普通 tactic（`tacticSeq`），也可以是模式匹配分支
-`| branch => ...`（复用 Lean 的 `inductionAlt`）。后者不是独立 tactic，
-需要在 macro 展开时转换为 `case branch => ...` -/
+脚本 body 支持 script tactic、命名分支 `| branch => ...` 和匿名分支 `· ...`。
+分支 body 递归使用 script 语法，展开时转换为 Lean 的 case / cdot tactic。 -/
 
-syntax scriptStmt := (ppDedent(ppLine) tacticSeq) <|> inductionAlt
+-- Reuse sequence/branch node layouts, but never the native tactic parser.
+def scriptTacticSeq : Lean.Parser.Parser := Parser.node ``Parser.Tactic.tacticSeq <|
+  Parser.node ``tacticSeq1Indented <|
+    Parser.Tactic.sepBy1IndentSemicolon (Parser.categoryParser `scriptTactic 0)
+
+declare_syntax_cat scriptStmt
+
+syntax (ppDedent(ppLine) scriptTacticSeq) : scriptStmt
 
 /-! 缩进敏感的 `scriptStmt+`：仿 `inferSteps`，用单个 `withPosition` 包裹整个序列，
     `colGe` 要求每个 scriptStmt 的缩进列 ≥ 首 stmt 缩进列，从而把「同缩进/更浅的后续 tactic」
     排除在 script 块之外（避免 `have h : P := script …` 的子证明贪婪吞掉下一行 tactic）。 -/
 syntax scriptStmts := withPosition(ppLine (colGe scriptStmt) (ppLine linebreak (colGe scriptStmt))*)
+
+-- Parse branch bodies recursively so their continuations stay inside the branch.
+syntax scriptBranch := Parser.Tactic.inductionAltLHS+ (" => " scriptStmts)?
+syntax scriptBranch : scriptStmt
+-- Lean's bullet elaborator records focus info on the cdotTk node, not a bare atom.
+syntax scriptBullet := cdotTk scriptStmts
+syntax scriptBullet : scriptStmt
 
 /-- 从 `scriptStmts` 节点提取 scriptStmt 数组。结构：`[首 stmt, (linebreak colGe scriptStmt)* 节点]`。 -/
 def scriptStmtsToArray (stmts : Syntax) : Array Syntax :=
@@ -48,20 +56,36 @@ def inductionAltToCase (alt : Syntax) : Syntax :=
   let binderIdents := lhsArgs[2]!.getArgs
   let tagBI := identToBinderIdent tagIdent
   let binderBIs := binderIdents.map identToBinderIdent
-  let caseArg := Syntax.node tagIdent.getHeadInfo ``caseArg #[tagBI, mkNullNode binderBIs]
-  Syntax.node alt.getHeadInfo ``case #[mkAtomFrom alt "case", mkNullNode #[caseArg], mkAtomFrom alt "=>", body]
+  let caseArg := Syntax.node tagIdent.getHeadInfo ``Parser.Tactic.caseArg #[tagBI, mkNullNode binderBIs]
+  Syntax.node alt.getHeadInfo ``Parser.Tactic.case #[mkAtomFrom alt "case", mkNullNode #[caseArg], mkAtomFrom alt "=>", body]
 
 /-- 提取 `| tag binders => body` 的分支标签。 -/
 def inductionAltTag (alt : Syntax) : String :=
   let lhs := alt.getArg 0 |>.getArg 0
   lhs.getArgs[1]!.getArgs[1]!.getId.toString
 
-/-- 从 `scriptStmt+` 提取所有 tactic（普通行展平，`|` 行转成 `case`）。 -/
-def collectTactics (stmts : Array Syntax) : Array Syntax :=
+/-- 将 tactic 数组组装为 `tacticSeq`（tactic 间插入 `;` 分隔符），
+    容器节点继承第一个 tactic 的位置，避免错误定位到文件开头。 -/
+def buildTacticSeq (tactics : Array Syntax) : Syntax :=
+  let headInfo := if tactics.isEmpty then SourceInfo.none else tactics[0]!.getHeadInfo
+  let parts := tactics.toList.foldl (fun acc t =>
+    if acc.isEmpty then [t] else acc ++ [mkAtomFrom t ";", t]) []
+  let nullNode := mkNullNode parts.toArray
+  let seq1 := Syntax.node headInfo ``tacticSeq1Indented #[nullNode]
+  Syntax.node headInfo ``Parser.Tactic.tacticSeq #[seq1]
+
+/-- Flatten ordinary sequences and recursively convert branches to native `case` tactics. -/
+partial def collectTactics (stmts : Array Syntax) : Array Syntax :=
   stmts.foldl (fun tactics s =>
     let inner := s.getArg 0
-    if inner.getKind == ``inductionAlt then
-      tactics.push (inductionAltToCase inner)
+    if inner.getKind == ``scriptBranch then
+      let caseStx := inductionAltToCase inner
+      let body := collectTactics (scriptStmtsToArray caseStx[3])
+      tactics.push (caseStx.setArg 3 (buildTacticSeq body))
+    else if inner.getKind == ``scriptBullet then
+      let body := collectTactics (scriptStmtsToArray inner[1])
+      tactics.push (Syntax.node inner.getHeadInfo ``Lean.cdot
+        #[inner[0], buildTacticSeq body])
     else
       let seqNode := inner.getArg 0
       if seqNode.getKind == ``tacticSeq1Indented then
@@ -72,16 +96,6 @@ def collectTactics (stmts : Array Syntax) : Array Syntax :=
         tactics.push inner
   ) #[]
 
-/-- 将 tactic 数组组装为 `tacticSeq`（tactic 间插入 `;` 分隔符），
-    容器节点继承第一个 tactic 的位置，避免错误定位到文件开头。 -/
-def buildTacticSeq (tactics : Array Syntax) : Syntax :=
-  let headInfo := if tactics.isEmpty then SourceInfo.none else tactics[0]!.getHeadInfo
-  let parts := tactics.toList.foldl (fun acc t =>
-    if acc.isEmpty then [t] else acc ++ [mkAtomFrom t ";", t]) []
-  let nullNode := mkNullNode parts.toArray
-  let seq1 := Syntax.node headInfo ``tacticSeq1Indented #[nullNode]
-  Syntax.node headInfo ``tacticSeq #[seq1]
-
 /-! ## 策略名验证 -/
 
 /-- 找到 tactic 语法中的第一个 atom（即策略名，如 `provide`/`exact`/`split_and`）。 -/
@@ -89,14 +103,12 @@ partial def findFirstAtom (t : Syntax) : Option Syntax :=
   if t.isAtom then some t
   else t.getArgs.findSome? findFirstAtom
 
-/-- 从策略名 atom 构造 ident（位置关联到原 atom），用于 `check_script_step` 参数。 -/
+/-- 从策略名 atom 构造 ident（位置关联到原 atom），用于 `run_script_step` 参数。 -/
 def tacticNameIdent (t : Syntax) : Option Syntax :=
   match findFirstAtom t with
   | some atom =>
-      let s := atom.getAtomVal
-      if s.all (fun c => c.isAlphanum || c == '_') then
-        some (mkIdentFrom atom s.toName)
-      else none
+      -- Carry the literal keyword, not a namespace path or an escaped identifier.
+      some (mkIdentFrom atom (Name.mkSimple atom.getAtomVal))
   | none => none
 
 /-- 从 tactic 语法中提取策略名字符串（先序遍历第一个 atom）。 -/
@@ -118,23 +130,15 @@ def scriptTacticBaseName? (name : String) : Option String :=
   if name.startsWith "script_" then some (name.drop 7 |>.toString) else none
 
 /-- Select the registered parser candidate without descending into tactic arguments. -/
-def registeredTacticCall (registrations : List ScriptTacticRegistration) (name : String)
+def registeredTacticCall (registrations : List ScriptTacticRegistration)
     (t : Syntax) : Option (ScriptTacticRegistration × Syntax) :=
-  let matching := registrations.filter (·.name == name)
-  let exact := if t.getKind == `choice then
+  if t.getKind == `choice then
     t.getArgs.findSome? fun candidate =>
-      registrations.find? (fun r => r.name == name && r.sourceKind == candidate.getKind)
+      registrations.find? (fun r => r.sourceKind == candidate.getKind)
         |>.map (·, candidate)
   else
-    registrations.find? (fun r => r.name == name && r.sourceKind == t.getKind)
+    registrations.find? (fun r => r.sourceKind == t.getKind)
       |>.map (·, t)
-  exact <|> match matching with
-    | [registration] =>
-        if t.getKind == `choice then
-          t.getArgs.findSome? fun candidate =>
-            if firstAtomName candidate == some name then some (registration, candidate) else none
-        else some (registration, t)
-    | _ => none
 
 /-- Rewrite only a tactic call's root kind and direct keyword token. All parameter syntax is reused. -/
 def rewriteTacticCall (call : Syntax) (sourceName targetName : String)
@@ -162,17 +166,19 @@ def collectFollowingStrategyCases (stmts : Array Syntax) (start : Nat) : List St
   let mut i := start
   while i < stmts.size do
     let inner := stmts[i]!.getArg 0
-    if inner.getKind != ``inductionAlt then break
-    nodes := nodes ++ [inductionAltTag inner]
+    if inner.getKind == ``scriptBranch then
+      nodes := nodes ++ [inductionAltTag inner]
+    else if inner.getKind == ``scriptBullet then
+      nodes := nodes ++ [""]
+    else break
     i := i + 1
   return nodes
 
 /-- Hint mapping table for Lean native tactics -/
 def nativeHintMap : List (String × String) := [
   ("apply", "Use `apply` with a proposition of the form `P -> Q` or `P <-> Q`."),
-  ("exact", "Use `provide` only for existential witnesses; it is not a general `exact`."),
-  ("intro", "Use `intro_h` or `by_contra` instead of `intro`."),
-  ("rw", "Use `rewrite` instead of `rw`."),
+  ("intro", "Use `intro` in script blocks, or `contra` for implications to `False`."),
+  ("rw", "Use `rw` in `script` blocks."),
   ("rfl", "Use `trivial` instead of `rfl`."),
   ("assumption", "Use `trivial` instead of `assumption`."),
   ("trivial", "`trivial` is already allowed in `script` blocks."),
@@ -180,7 +186,7 @@ def nativeHintMap : List (String × String) := [
   ("tauto", "Use `trivial` instead of `tauto`."),
   ("symm", "Use `symm` — it is allowed in `script` blocks."),
   ("unfold", "Use `unfold` — it is allowed in `script` blocks."),
-  ("change", "Use `rewrite` instead of `change`."),
+  ("change", "Use `change` in `script` blocks."),
   ("simp", "Use `simp` — it is allowed in `script` blocks."),
   ("omega", "Use `omega` — it is allowed in `script` blocks."),
   ("dsimp", "Use `simp` instead of `dsimp`."),
@@ -191,7 +197,6 @@ def nativeHintMap : List (String × String) := [
   ("norm_num", "Use `norm_num` — it is allowed in `script` blocks."),
   ("field", "Use `field` — it is allowed in `script` blocks."),
   ("field_simp", "Use `field` instead of `field_simp`."),
-  ("have", "Use a subgoal block instead of `have`."),
   ("refine", "Use `provide` or `apply` instead of `refine`."),
   ("rcases", "Use `cases_on` or `obtain_exist` instead of `rcases`."),
   ("obtain", "Use `obtain` — it is allowed in `script` blocks."),
@@ -201,45 +206,59 @@ def nativeHintMap : List (String × String) := [
 ]
 
 /-- Validate and execute one script tactic through its registered prefixed parser kind. -/
-elab "run_script_step" name:ident call:tactic : tactic => do
-  let nameStr := name.getId.toString
-  let registrations ← getScriptTacticRegistrations
-  let some (registration, sourceCall) := registeredTacticCall registrations nameStr call.raw
-    | let hint := (ProofScript.nativeHintMap.lookup nameStr).getD "unknown script tactic"
+elab "run_script_step" name:ident call:scriptTactic : tactic => do
+  let nameStr := name.getId.toString (escape := false)
+  let registrations := scriptTacticRegistrations (← getEnv)
+  let some (registration, sourceCall) := registeredTacticCall registrations call.raw
+    | let hint := (nativeHintMap.lookup nameStr).getD "unknown script tactic"
       withRef name (throwError hint)
-  let rewritten ← match rewriteTacticCall sourceCall nameStr (scriptTacticName nameStr)
+  let rewritten ← match rewriteTacticCall sourceCall registration.name (scriptTacticName registration.name)
       registration.executionKind with
     | .ok rewritten => pure rewritten
     | .error message => withRef call (throwError message)
-  withScriptMode <| evalTactic (⟨rewritten⟩ : TSyntax `tactic)
+  Elab.Tactic.withTacticInfoContext call.raw <|
+    withScriptMode <| evalTactic (⟨rewritten⟩ : TSyntax `tactic)
+
+elab "run_recorded_step" source:scriptTactic call:tactic : tactic => do
+  let registrations := scriptTacticRegistrations (← getEnv)
+  let some (registration, sourceCall) := registeredTacticCall registrations source.raw
+    | throwErrorAt source "recorded tactic has no matching registration"
+  let execution ← match rewriteTacticCall sourceCall registration.name
+      (scriptTacticName registration.name) registration.executionKind with
+    | .ok rewritten => pure rewritten
+    | .error message => throwErrorAt source "{message}"
+  withRecordingRule registration.ruleId execution <|
+    Elab.Tactic.withTacticInfoContext source.raw <| evalTactic call.raw
 
 /-! ## `:= script` Syntax -/
 
-/-- 递归检查 tactic 序列：普通 tactic 前注入 `check_script_step` 验证；`case` 分支递归
+/-- 递归转换 script 序列：普通 tactic 使用 `run_script_step`；`case` 分支递归
      检查其 body 内的 tactic（否则分支内的策略会绕过校验）。 -/
-private partial def checkScriptStep (t : Syntax)
-                                    : MacroM (Array Syntax) := do
-  if t.getKind == ``case then
+private partial def checkScriptStep (t : Syntax) : MacroM (Array Syntax) := do
+  if t.getKind == ``Parser.Tactic.case then
     let body := t[3]
     let mut checkedInner := #[]
     for x in flattenTactics body do
       checkedInner := checkedInner ++ (← checkScriptStep x)
     let newBody := buildTacticSeq checkedInner
-    let newCase := Syntax.node t.getHeadInfo ``case #[t[0], t[1], t[2], newBody]
+    let newCase := Syntax.node t.getHeadInfo ``Parser.Tactic.case #[t[0], t[1], t[2], newBody]
     return #[newCase]
-  else if t.getKind == `Lean.Parser.Tactic.bullet then
-    Macro.throwError "Bullets (·) are not allowed in `script` block. Use explicit `| branch =>` syntax."
+  else if t.getKind == ``Lean.cdot then
+    let mut checked := #[]
+    for x in flattenTactics t[1] do
+      checked := checked ++ (← checkScriptStep x)
+    return #[t.setArg 1 (buildTacticSeq checked)]
   else
     match tacticNameIdent t with
     | some name =>
         let name' : TSyntax `ident := ⟨name⟩
-        let call : TSyntax `tactic := ⟨t⟩
-        let run ← `(tactic| run_script_step $name':ident $call:tactic)
+         let call : TSyntax `scriptTactic := ⟨t⟩
+         let run ← `(tactic| run_script_step $name':ident $call:scriptTactic)
         return #[run]
     | none => return #[t]
 
 /-- `:= script` term：展开为 `by <tactic 序列>`，每个策略（含 `| branch =>` 分支内的）前
-    注入 `check_script_step` 验证。禁止 `·` bullet（要求用 `| branch =>` 显式分支）。 -/
+    注入 `run_script_step`，也支持匿名 `·` 分支。 -/
 macro "script" stmts:scriptStmts : term => do
   let stmtsArray := scriptStmtsToArray stmts
   let tactics := collectTactics stmtsArray
@@ -249,276 +268,159 @@ macro "script" stmts:scriptStmts : term => do
   let seq := ⟨buildTacticSeq checked⟩
   `(by $seq:tacticSeq)
 
-/-! ## `#theorem` / `#lemma` Syntax -/
-
-/-! ## 录制版代码生成（语法级）
-1. 普通 tactic 与 `case` 分支内的 tactic 切换到注册的录制入口；
-2. 概略分支之间插入 `_next_strategy_case`（推进录制 box）；
-3. 末尾生成 `ProofScript` 合并命令（串起 info 与各分支子 box）。 -/
+/-! ## 录制版代码生成（语法级） -/
 open Lean.Elab.Command in
  /-- 递归校验并改写：普通 tactic 校验注册表后切换录制入口；`case` 分支递归校验其 body
      （否则分支内的策略会绕过校验）。
-    泛型到任意具备 `MonadRef`/`MonadError`/`MonadOptions` 的 monad，使 `CommandElabM`
-    （`#theorem`）与 `TacticM`（`embed` 重放）都能调用。 -/
+    泛型到任意具备 `MonadRef`/`MonadError`/`MonadOptions` 的 monad，使命令 elaborator
+    与 `TacticM`（`embed` 重放）都能调用。 -/
 private partial def validateAndUnderscore {m : Type → Type}
                                           [Monad m]
+                                          [MonadQuotation m]
                                           [MonadRef m]
                                           [MonadError m]
                                           [MonadOptions m]
-                                            (registrations : List ScriptTacticRegistration)
-                                           (t : Syntax)
-                                           : m Syntax := do
-  if t.getKind == ``case then
+                                          (registrations : List ScriptTacticRegistration)
+                                          (t : Syntax)
+                                          : m Syntax := do
+  if t.getKind == ``Parser.Tactic.case then
     let body := t[3]
     let mut newInner : Array Syntax := Array.empty
     for x in flattenTactics body do
       newInner := newInner.push (← validateAndUnderscore (m := m) registrations x)
     let newBody := buildTacticSeq newInner
-    return Syntax.node t.getHeadInfo ``case #[t[0], t[1], t[2], newBody]
+    return Syntax.node t.getHeadInfo ``Parser.Tactic.case #[t[0], t[1], t[2], newBody]
   else
-    match firstAtomName t with
-    | some nm =>
-      let some (registration, sourceCall) := registeredTacticCall registrations nm t
-        | let hint := (nativeHintMap.lookup nm).getD "未知script策略"
-          withRef t (throwError hint)
+    match registeredTacticCall registrations t with
+    | some (registration, sourceCall) =>
       let some recordingKind := registration.recordingKind
-        | withRef t (throwError m!"script strategy `{nm}` has no recorder")
-      match rewriteTacticCall sourceCall nm (recordingTacticName nm) recordingKind with
-      | .ok rewritten => return rewritten
+        | withRef t (throwError m!"{registration.autoRecordingError.getD s!"script strategy `{registration.ruleId}` has no recorder"}")
+      match rewriteTacticCall sourceCall registration.name (recordingTacticName registration.name) recordingKind with
+      | .ok rewritten =>
+          let source : TSyntax `scriptTactic := ⟨t⟩
+          let call : TSyntax `tactic := ⟨rewritten⟩
+          return (← `(tactic| run_recorded_step $source:scriptTactic $call:tactic)).raw
       | .error message => withRef t (throwError message)
-    | none => return t
+    | none =>
+      if let some name := firstAtomName t then
+        let hint := (nativeHintMap.lookup name).getD "未知script策略"
+        withRef t (throwError hint)
+      return t
 
 /-- 给自动生成的概略录制 tactic 追加调用处推导出的隐藏分支参数。节点 kind 已换成
     `_strategy` 的录制 kind，参数布局末尾与 `genRecording`
     生成的 `"_strategy_cases" str` 一致。 -/
 def appendStrategyCases (t : Syntax) (nodes : List String) : Syntax :=
   let encoded := String.intercalate "\n" nodes
-  changeNodeKind t t.getKind <|
-    t.getArgs.push (mkAtomFrom t "_strategy_cases") |>.push (Syntax.mkStrLit encoded t.getHeadInfo)
+  let call := t[2]
+  t.setArg 2 <| changeNodeKind call call.getKind <|
+    call.getArgs.push (mkAtomFrom call "_strategy_cases") |>.push (Syntax.mkStrLit encoded call.getHeadInfo)
 
-syntax "_merge_strategy" str str : tactic
+/-- Merge the recorded strategy metadata and ordered case proofs into its placeholder. -/
+private def mergeStrategyBoxes (mainTag : String) (stepName : String)
+    (nodes : List String) : Elab.Tactic.TacticM Unit := do
+  let mainName := mainTag
+  let mut branches := #[]
+  for node in nodes do
+    let nodeName := mainTag ++ "_" ++ node
+    let proof ← takeBox nodeName
+    branches := branches.push (Json.mkObj [
+      ("name", Json.str node), ("proof", Json.arr proof)])
+  replaceStrategyPlaceholder mainName stepName (Json.mkObj [("branches", Json.arr branches)])
+
+private def mergeRecordedStrategy (name : String) (nodes : String) : Elab.Tactic.TacticM Unit := do
+  let tag ← currentRecordingTag
+  let actualNodes ← takeResolvedBranches (nodes.splitOn "\n")
+  mergeStrategyBoxes tag name actualNodes
+
+local elab "_next_strategy_case" : tactic => advanceStrategyCase
+
+local elab "_merge_strategy" name:str nodes:str : tactic =>
+  mergeRecordedStrategy name.getString nodes.getString
+
+private structure PendingRecordedStrategy where
+  name : String
+  nodes : List String
+  completed : Nat := 0
 
 open Lean.Elab.Command in
-/-- 语法级录制变换：把 `scriptStmt` 序列转成录制版 tactic 序列。
-    调用处动态收集每个概略策略后连续的 `| branch =>`，注入录制 tactic，并在分支结束时
-    插入即时合并步骤。校验策略名合法性（含分支内），
-    非法时用 `nativeHintMap` 报错。
-    泛型到 `CommandElabM`（`#theorem`）与 `TacticM`（`embed` 重放）。 -/
-def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m] [MonadRef m]
-    [MonadError m] [MonadOptions m] [MonadLiftT IO m]
-                                  (stmts : Array Syntax)
-                                   : m (Array Syntax) := do
-  let registrations ← getScriptTacticRegistrations
-  let strategies := registrations.filterMap fun r => if r.strategy then some r.name else none
+partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m] [MonadRef m]
+    [MonadError m] [MonadOptions m] [MonadEnv m] [MonadLiftT IO m]
+                                   (stmts : Array Syntax)
+                                    : m (Array Syntax) := do
+  let registrations := scriptTacticRegistrations (← getEnv)
   let mut out : Array Syntax := #[]
-  let mut pendingStrategy : Option (String × List String) := none
+  let mut pendingStrategy : Option PendingRecordedStrategy := none
   let mut needsAdvance := false
   for i in [:stmts.size] do
     let s := stmts[i]!
     let inner := s.getArg 0
-    if inner.getKind == ``inductionAlt then
-      let caseStx := inductionAltToCase inner
-      let caseStx' ← validateAndUnderscore (m := m) registrations caseStx
+    if inner.getKind == ``scriptBranch || inner.getKind == ``scriptBullet then
+      -- Once all registered proof branches finish, subsequent branches focus the continuation.
       if needsAdvance then
+        if let some pending := pendingStrategy then
+          if pending.completed == pending.nodes.length then
+            out := out.push (← `(tactic| _next_strategy_case)).raw
+            out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit pending.name)
+              $(Syntax.mkStrLit (String.intercalate "\n" pending.nodes)))).raw
+            pendingStrategy := none
+            needsAdvance := false
+      let isBullet := inner.getKind == ``scriptBullet
+      let caseStx := if isBullet then
+          Syntax.node inner.getHeadInfo ``Lean.cdot #[inner[0], inner[1]]
+        else inductionAltToCase inner
+      let bodyIdx := if isBullet then 1 else 3
+      let body ← collectRecordTactics (m := m) (scriptStmtsToArray caseStx[bodyIdx])
+      let caseStx' := caseStx.setArg bodyIdx (buildTacticSeq body)
+      if needsAdvance && pendingStrategy.isSome then
         out := out.push (← `(tactic| _next_strategy_case)).raw
       out := out.push caseStx'
-      needsAdvance := true
-     else
+      pendingStrategy := pendingStrategy.map fun p => { p with completed := p.completed + 1 }
+      needsAdvance := pendingStrategy.isSome
+    else
       -- 概略策略的最后一个分支结束后，若还有普通续接步骤（如 `have h : P | proof => …` 之后的
       -- `<rest>`），先插入 `_next_strategy_case` 把录制 box 从分支推进回主 box，再处理续接步骤。
       if needsAdvance then
         out := out.push (← `(tactic| _next_strategy_case)).raw
         needsAdvance := false
         match pendingStrategy with
-        | some (name, nodes) =>
-            let encoded := String.intercalate "\n" nodes
-            out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit name) $(Syntax.mkStrLit encoded))).raw
+        | some pending =>
+            let encoded := String.intercalate "\n" pending.nodes
+            out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit pending.name) $(Syntax.mkStrLit encoded))).raw
             pendingStrategy := none
         | none => pure ()
-      for t in flattenTactics inner do
-        match firstAtomName t with
-        | some nm =>
-          if strategies.contains nm then
+      let calls := flattenTactics inner
+      for callIdx in [:calls.size] do
+        let t := calls[callIdx]!
+        let selected := (registeredTacticCall registrations t).map (·.1)
+        match selected with
+        | some registration =>
+          if registration.strategy then
+            unless callIdx + 1 == calls.size do
+              withRef t <| throwError "a recorded strategy must be followed immediately by its branches"
             let nodes := collectFollowingStrategyCases stmts (i + 1)
+            let nodes := registration.continuation.map nodes.take |>.getD nodes
             if nodes.isEmpty then
-              withRef t <| throwError m!"strategy `{nm}` requires at least one explicit `| case =>` branch"
-            pendingStrategy := some (nm, nodes)
+              withRef t <| throwError m!"strategy `{registration.ruleId}` requires at least one `| case =>` or `·` branch"
+            pendingStrategy := some { name := registration.name, nodes }
             needsAdvance := false
         | none => pure ()
         let t' ← validateAndUnderscore (m := m) registrations t
-        let t' := match firstAtomName t with
-          | some nm =>
-              if strategies.contains nm then
-                appendStrategyCases t' (collectFollowingStrategyCases stmts (i + 1))
+        let t' := match selected with
+          | some registration =>
+              if registration.strategy then
+                appendStrategyCases t' (pendingStrategy.map (·.nodes) |>.getD [])
               else t'
           | none => t'
         out := out.push t'
   if needsAdvance then
     out := out.push (← `(tactic| _next_strategy_case)).raw
     match pendingStrategy with
-    | some (name, nodes) =>
-        let encoded := String.intercalate "\n" nodes
-        out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit name) $(Syntax.mkStrLit encoded))).raw
+    | some pending =>
+        let encoded := String.intercalate "\n" pending.nodes
+        out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit pending.name) $(Syntax.mkStrLit encoded))).raw
         pendingStrategy := none
     | none => pure ()
   return out
 
-/-- 概略策略的合并：把 info 子 box 与各分支子 box 合并进主 box（直接操作 `JSON_boxes`，
-    替代旧的 `ProofScript <box> <-` 命令，不再依赖 `Tactics.lean`）。
-    合并结果原位替换 `recordStrategy` 写入主 box（`mainTag`）的占位符；找不到占位符时
-    退回追加（兼容手写录制策略）：
-    `{"name": stepName, "info": <info 子 box 第一个值>, <node>: [<分支子 box 数组>], ...}`
-    - `mainTag_info`：取第一个 JSON 值，键 `"info"`，随后清空该子 box。
-    - `mainTag_<node>`：取整个 JSON 数组，键 `<node>`，随后清空该子 box。 -/
-def mergeStrategyBoxes (mainTag : String) (stepName : String) (nodes : List String) : IO Unit := do
-  let mainName := Name.mkSimple mainTag
-  let infoName := Name.mkSimple (mainTag ++ "_info")
-  let mut fields : List (String × Json) := [("name", Json.str stepName)]
-  let boxes ← JSON_boxes.get
-  if let some idx := boxes.findIdx? (fun (b, _) => b == infoName) then
-    if !boxes[idx]!.2.isEmpty then
-      fields := fields ++ [("info", boxes[idx]!.2[0]!)]
-      JSON_boxes.set (boxes.set! idx (infoName, #[]))
-  for node in nodes do
-    let nodeName := Name.mkSimple (mainTag ++ "_" ++ node)
-    let boxes ← JSON_boxes.get
-    if let some idx := boxes.findIdx? (fun (b, _) => b == nodeName) then
-      fields := fields ++ [(node, Json.arr boxes[idx]!.2)]
-      JSON_boxes.set (boxes.set! idx (nodeName, #[]))
-  JSON_boxes.modify fun arr =>
-    match arr.findIdx? (fun (b, _) => b == mainName) with
-    | some idx =>
-      let (b, items) := arr[idx]!
-      let merged := Json.mkObj fields
-      let placeholder := strategyPlaceholderJson stepName
-      match items.findIdx? (· == placeholder) with
-      | some itemIdx => arr.set! idx (b, items.set! itemIdx merged)
-      | none => arr.set! idx (b, items.push merged)
-    | none => arr.push (mainName, #[Json.mkObj fields])
-
-elab_rules : tactic
-  | `(tactic| _merge_strategy $name:str $nodes:str) => do
-      let tag ← currentBoxTag.get
-      mergeStrategyBoxes tag name.getString (nodes.getString.splitOn "\n")
-
-syntax declarationKind := "@theorem" <|> "@lemma"
-syntax declarationKind ("@[" sepBy1(Lean.Parser.Term.attrInstance, ", ") "]")?
-  ident (bracketedBinder)* ":" term ":=" "script" scriptStmts : command
-syntax declarationKind ("@[" sepBy1(Lean.Parser.Term.attrInstance, ", ") "]")?
-  ident (bracketedBinder)* ":" term ":=" "by " Lean.Parser.Tactic.tacticSeqIndentGt : command
-
-private inductive RecordedDeclarationKind where
-  | theorem
-  | lemma
-
-private partial def syntaxContainsAtom (value : String) (stx : Syntax) : Bool :=
-  (stx.isAtom && stx.getAtomVal == value) || stx.getArgs.any (syntaxContainsAtom value)
-
-private def declarationKindOfSyntax (stx : Syntax) : RecordedDeclarationKind :=
-  if syntaxContainsAtom "@lemma" stx then .lemma else .theorem
-
-private partial def findScriptTacticAtom? (stx : Syntax) : Option Syntax :=
-  if stx.isAtom then
-    let value := stx.getAtomVal
-    if value.startsWith "script_" || value.startsWith "_script_" then some stx else none
-  else
-    stx.getArgs.findSome? findScriptTacticAtom?
-
-private def mkDeclarationComponent (kind : RecordedDeclarationKind)
-    (data : Extension.DeclarationComponent) : Extension.ComponentData :=
-  match kind with
-  | .theorem => .theorem data
-  | .lemma => .lemma data
-
-open Lean.Elab.Command in
-private def addRecordedDeclaration (kind : RecordedDeclarationKind)
-    (name : TSyntax `ident) (declName : Name) (proofPath : System.FilePath) : CommandElabM Unit := do
-  let location : Extension.SourceLocation := {
-    file := ← getFileName
-    start := (name.raw.getPos?.getD 0).byteIdx
-    stop := (name.raw.getTailPos?.getD (name.raw.getPos?.getD 0)).byteIdx
-  }
-  let env ← getEnv
-  let sorryAx := (← Lean.collectAxioms declName).contains ``sorryAx
-  let data : Extension.DeclarationComponent := {
-    declName := declName
-    name := name.getId.toString
-    label := none
-    proof := proofPath.toString
-    sorryAx := sorryAx
-  }
-  let component : Extension.Component := {
-    source := location
-    data := mkDeclarationComponent kind data
-  }
-  let (nextEnv, added) ← match Extension.addComponent env component with
-    | .ok result => pure result
-    | .error message => throwErrorAt name message
-  unless added do
-    logWarningAt name "page component appears after page_end and was ignored"
-  setEnv nextEnv
-
-open Lean.Elab.Command in
-private def collectDeclarationReferences (declName : Name) : CommandElabM Unit := do
-  unless ← referencesEnabled do return
-  let env ← getEnv
-  let some value := (env.find? declName).bind (·.value? (allowOpaque := true))
-    | return
-  for constant in value.getUsedConstants do
-    if let some info := findTheoremInfo env constant then
-      liftIO <| addTheoremRef { name := constant, info := info }
-
-open Lean.Elab.Command in
-/-- `#theorem`/`#lemma := script` validates and records each script step. -/
-elab_rules : command
-| `(command|
-    $kind:declarationKind $[@[$attrs:attrInstance,*]]? $name:ident
-      $[$bs:bracketedBinder]* : $type:term := script $stmts:scriptStmts
-  ) => do
-    let kind := declarationKindOfSyntax kind.raw
-    let declarationName := name.getId.toString
-    let declName := (← getCurrNamespace) ++ name.getId
-    let commandStx ← getRef
-    let code := String.Pos.Raw.extract (← getFileMap).source
-      (commandStx.getPos?.getD 0) (commandStx.getTailPos?.getD (commandStx.getPos?.getD 0))
-    resetScriptState
-    resetExprJsonState
-    pushBoxTag declarationName
-    let tactics ← collectRecordTactics (scriptStmtsToArray stmts)
-    let seq : TSyntax ``tacticSeq := ⟨buildTacticSeq tactics⟩
-    let defCmd ← `(command|
-      $[@[$attrs,*]]? def $name $[$bs]* : $type := by $seq:tacticSeq
-    )
-    elabCommand defCmd
-    Lean.Elab.addDeclarationRangesFromSyntax declName (← getRef) name.raw
-    let moduleName ← getMainModule
-    let proofPath := Extension.proofOutputPath moduleName declName
-    let expressions ← getExprJsonTable
-    liftCoreM <| exportBoxToFile (Name.mkSimple declarationName) proofPath code expressions
-    modifyEnv fun env => registerScriptArtifact env declName proofPath
-    addRecordedDeclaration kind name declName proofPath
-
-open Lean.Elab.Command in
-/-- `#theorem`/`#lemma := by` accepts arbitrary Lean tactics and exports source only. -/
-elab_rules : command
-| `(command|
-    $kind:declarationKind $[@[$attrs:attrInstance,*]]? $name:ident
-      $[$bs:bracketedBinder]* : $type:term := by $seq:tacticSeq
-  ) => do
-    let kind := declarationKindOfSyntax kind.raw
-    let declName := (← getCurrNamespace) ++ name.getId
-    if let some tacticName := findScriptTacticAtom? seq.raw then
-      throwErrorAt tacticName "`:= by` cannot use Proof-Script tactics; use ordinary Lean tactics"
-    let commandStx ← getRef
-    let code := String.Pos.Raw.extract (← getFileMap).source
-      (commandStx.getPos?.getD 0) (commandStx.getTailPos?.getD (commandStx.getPos?.getD 0))
-    let defCmd ← `(command|
-      $[@[$attrs,*]]? def $name $[$bs]* : $type := by $seq:tacticSeq
-    )
-    elabCommand defCmd
-    Lean.Elab.addDeclarationRangesFromSyntax declName (← getRef) name.raw
-    collectDeclarationReferences declName
-    let moduleName ← getMainModule
-    let proofPath := Extension.proofOutputPath moduleName declName
-    liftCoreM <| exportCodeOnlyProofToFile proofPath code
-    addRecordedDeclaration kind name declName proofPath
+end ProofScript

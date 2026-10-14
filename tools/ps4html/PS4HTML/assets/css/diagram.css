@@ -1,0 +1,25 @@
+:root {
+    --diagram-accent:  #2563eb;
+    --diagram-light:   #bfdbfe;
+    --diagram-bg:      #eff6ff;
+    --diagram-muted:   #94a3b8;
+}
+.strategy-block.diagram {
+    background: var(--diagram-bg);
+    position: relative;
+    padding: 12px var(--strategy-content-inset) 10px var(--strategy-content-indent);
+}
+.strategy-block.diagram:hover { box-shadow: 0 0 2px rgba(37, 99, 235, 0.25); }
+.strategy-block.diagram .annotation-icon .codicon { color: var(--diagram-accent); }
+.diagram-figure { margin: 8px 16px; }
+.diagram-zoom-stage { overflow-x: auto; padding: 12px 0; }
+.diagram-zoom-stage svg { display: block; max-width: none; margin: 0 auto; transition: width 0.15s ease, height 0.15s ease; }
+.inline-latex-figure { position: static; text-align: center; }
+.inline-latex-figure .diagram-zoom-bar { top: 12px; right: 12px; }
+.inline-latex-figure figcaption { margin-top: 14px; color: var(--text-color); font-size: 14px; font-weight: 650; }
+.diagram-zoom-bar { position: absolute; top: 15px; right: 12px; display: flex; align-items: center; gap: 8px; font-size: 12px; font-family: 'Consolas', monospace; color: var(--diagram-muted); z-index: 2; background: var(--diagram-bg); padding: 4px 10px; border-radius: 6px; opacity: 0.55; transition: opacity 0.2s; }
+.diagram-zoom-bar:hover { opacity: 1; }
+.diagram-zoom-bar input[type="range"] { width: 100px; height: 4px; -webkit-appearance: none; appearance: none; background: var(--diagram-light); border-radius: 2px; outline: none; cursor: pointer; }
+.diagram-zoom-bar input[type="range"]::-webkit-slider-thumb { -webkit-appearance: none; appearance: none; width: 14px; height: 14px; border-radius: 50%; background: var(--diagram-accent); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); cursor: pointer; }
+.diagram-zoom-bar input[type="range"]::-moz-range-thumb { width: 14px; height: 14px; border-radius: 50%; background: var(--diagram-accent); border: 2px solid #fff; box-shadow: 0 1px 3px rgba(0,0,0,0.12); cursor: pointer; }
+.diagram-zoom-value { min-width: 30px; text-align: right; }

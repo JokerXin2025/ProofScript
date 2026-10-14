@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 240">
+  <rect width="720" height="240" rx="24" fill="#f8fafc"/>
+  <g font-family="system-ui, sans-serif" text-anchor="middle">
+    <g transform="translate(35 70)"><rect width="170" height="100" rx="14" fill="#dbeafe" stroke="#60a5fa" stroke-width="2"/><text x="85" y="46" fill="#1e3a8a" font-size="20" font-weight="700">Lean source</text><text x="85" y="72" fill="#475569" font-size="13">ProofScript</text></g>
+    <g transform="translate(275 70)"><rect width="170" height="100" rx="14" fill="#ede9fe" stroke="#a78bfa" stroke-width="2"/><text x="85" y="46" fill="#4c1d95" font-size="20" font-weight="700">Page JSON</text><text x="85" y="72" fill="#475569" font-size="13">components + proofs</text></g>
+    <g transform="translate(515 70)"><rect width="170" height="100" rx="14" fill="#dcfce7" stroke="#4ade80" stroke-width="2"/><text x="85" y="46" fill="#14532d" font-size="20" font-weight="700">HTML site</text><text x="85" y="72" fill="#475569" font-size="13">Mitar renderer</text></g>
+    <path d="M215 120h48m-14-10 14 10-14 10M455 120h48m-14-10 14 10-14 10" fill="none" stroke="#64748b" stroke-width="3"/>
+  </g>
+</svg>

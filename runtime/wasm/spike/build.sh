@@ -67,7 +67,7 @@ cat > "$out/build-report.json" <<EOF
   "emscripten": "$emcc_version",
   "sources": ["ProofScript/Computation/Json.lean", "runtime/wasm/spike/Spike.lean"],
   "entry": "proof_script_spike",
-  "abi": "proof-script-json-v1",
+  "abi": "proofscript-json-v1",
   "artifacts": {
     "wasmBytes": $wasm_bytes,
     "moduleBytes": $module_bytes,

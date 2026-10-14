@@ -1,0 +1,57 @@
+/*---------------------------------------------------------------------------------------------
+ *  Copyright (c) Microsoft Corporation. All rights reserved.
+ *  Licensed under the MIT License. See License.txt in the project root for license information.
+ *--------------------------------------------------------------------------------------------*/
+
+@font-face {
+	font-family: "codicon";
+	font-display: block;
+	src: url("./codicon.ttf") format("truetype");
+}
+
+.codicon[class*='codicon-'] {
+	font: normal normal normal 24px/1 codicon;
+	display: inline-block;
+	text-decoration: none;
+	text-rendering: auto;
+	text-align: center;
+	-webkit-font-smoothing: antialiased;
+	-moz-osx-font-smoothing: grayscale;
+	user-select: none;
+	-webkit-user-select: none;
+	-ms-user-select: none;
+}
+
+/*---------------------
+ *  Modifiers
+ *-------------------*/
+
+.codicon-modifier-disabled {
+	opacity: 0.5;
+}
+
+.codicon-modifier-hidden {
+	opacity: 0;
+}
+
+/*---------------------
+ *  Icons
+ *-------------------*/
+
+.codicon-move:before { content: "\eb22" }
+.codicon-close:before { content: "\ea76" }
+.codicon-check:before { content: "\eab2" }
+.codicon-check-all:before { content: "\ebb1" }
+.codicon-warning:before { content: "\ea6c" }
+.codicon-error:before { content: "\ea87" }
+.codicon-file-code:before { content: "\eae9" }
+.codicon-file-symlink-file:before { content: "\eaee" }
+.codicon-arrow-right:before { content: "\ea9c" }
+.codicon-comment-discussion-quote:before { content: "\ec5b" }
+.codicon-workspace-unknown:before { content: "\ebc3" }
+.codicon-info:before { content: "\ea74" }
+.codicon-chevron-down:before { content: "\eab4" }
+.codicon-triangle-right:before { content: "\eb70" }
+.codicon-symbol-color:before { content: "\eb5c" }
+.codicon-globe:before { content: "\eb01" }
+.codicon-home:before { content: "\eb06" }

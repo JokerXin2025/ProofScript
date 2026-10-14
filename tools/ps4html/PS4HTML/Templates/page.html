@@ -1,0 +1,75 @@
+<!DOCTYPE html>
+<html lang="${html_language}" data-default-language="${default_language}" data-project-base-url="${project_base_url}" overflow-y: scroll;>
+
+<head>
+
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${title}</title>
+
+    <link rel="stylesheet" href="${asset_root}css/codicon.css">
+    <link rel="stylesheet" href="${asset_root}css/basic.css">
+    <link rel="stylesheet" href="${asset_root}css/step.css">
+    <link rel="stylesheet" href="${asset_root}css/goal.css">
+    <link rel="stylesheet" href="${asset_root}css/strategy.css">
+    <link rel="stylesheet" href="${asset_root}css/sundry.css">
+    <link rel="stylesheet" href="${asset_root}css/animation.css">
+    <link rel="stylesheet" href="${asset_root}css/diagram.css?v=2">
+    <link rel="stylesheet" href="${asset_root}css/references.css">
+    <link rel="stylesheet" href="${asset_root}css/proof-text.css">
+    <link rel="stylesheet" href="${asset_root}css/media.css">
+    <link rel="stylesheet" href="${asset_root}css/code-flip.css?v=2">
+    <link rel="stylesheet" href="${asset_root}css/screen-warning.css">
+    <link rel="stylesheet" href="${asset_root}css/lean2tex.css">
+    <link rel="stylesheet" href="${asset_root}css/computation.css">
+
+    <script defer src="${asset_root}js/katex.js"></script>
+    <script defer src="${asset_root}js/diagram.js?v=4"></script>
+    <script defer src="${asset_root}js/animation.js"></script>
+    <script defer src="${asset_root}js/equation_size.js"></script>
+    <script defer src="${asset_root}js/code-flip.js"></script>
+    <script defer src="${asset_root}js/references.js"></script>
+    <script defer src="${asset_root}js/lean2tex.js"></script>
+    <script defer src="${asset_root}js/proof-indent.js"></script>
+    <script defer src="${asset_root}js/language-switcher.js"></script>
+    <script defer src="${asset_root}js/theorem-dependencies.js"></script>
+    <script defer src="${asset_root}js/computation.js?v=5"></script>
+    <script defer src="${asset_root}js/fibonacci-computation.js?v=5"></script>
+    <script defer src="${asset_root}js/e8-computation.js?v=5"></script>
+    <script defer src="${asset_root}js/e8-root-walk.js?v=1"></script>
+    <script defer src="${asset_root}js/formula-instance-computation.js?v=3"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+
+</head>
+
+<body>
+
+    <div id="device-warning">
+        <div class="warning-content">
+            <div class="warning-icon"><i class="codicon codicon-move"></i></div>
+            <h2 class="warning-title">${mobile_title}</h2>
+            <p class="warning-desc">
+                ${mobile_desc}
+            </p>
+        </div>
+    </div>
+
+    <div class="page-layout">
+${navigation}
+        <main id="main-content" class="proof-container">
+
+${contents}
+
+        </main>
+    </div>
+
+<script>
+window.addEventListener('load', function(){
+    setTimeout(function(){ window.dispatchEvent(new Event('resize')) }, 500);
+});
+</script>
+
+</body>
+</html>
