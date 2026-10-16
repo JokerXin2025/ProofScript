@@ -30,7 +30,7 @@ STRATEGIES = {
 }
 
 
-def rule_strategy(step, previous, subsequent, proof, *, language, path=(), index=None, style=""):
+def rule_strategy(step, proof, *, language, path=(), index=None, style=""):
     config = STRATEGIES.get(step["_ruleId"])
     branch_list = step["branches"]
     if not branch_list:
@@ -46,6 +46,6 @@ def rule_strategy(step, previous, subsequent, proof, *, language, path=(), index
     for position, branch in enumerate(branch_list, start=1):
         label = (f"{case_label} {to_roman(position)}" + ("," if lang == "en" else "")) if config else branch["name"]
         children.append(render_details(True, html.escape(label), "",
-            proof.render(branch["proof"], path + (f"{index}:{branch['name']}",))))
+            proof.render_branch(branch["proof"], position - 1, path + (f"{index}:{branch['name']}",))))
     title = config[1 if lang == "zh" else 2] if config else step["_ruleId"].rsplit(".", 1)[-1]
     return render_strategy("", html.escape(title), "\n".join(children), style=style)

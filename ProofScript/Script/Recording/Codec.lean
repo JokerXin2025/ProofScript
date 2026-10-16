@@ -28,6 +28,17 @@ def snapshotExpression (expr : Expr) : TacticM RecordedValue := do
     let table ← getExprJsonTable
     return .expression { json, table, references := Expr.getUsedConstants expr }
 
+/-- Snapshot the selected goal's type as an ordinary optional expression value.
+    No remaining goal is represented by `null`, independently of capture failure. -/
+def goalSnapshot (goal : Option MVarId := none) : TacticM RecordedValue := do
+  let goal ← match goal with
+    | some goal => pure (some goal)
+    | none => pure (← getUnsolvedGoals).head?
+  match goal with
+  | none => return .optional none
+  | some goal => goal.withContext do
+    return .optional (some (← snapshotExpression (← goal.getType)))
+
 /-- Elaborate and fully export before restoring the temporary elaboration state. -/
 def expression (raw : Syntax) : TacticM RecordedValue := withMainContext do
   snapshotExpression (← elabTerm raw none)
@@ -54,19 +65,19 @@ class RecordParam (shape : ParamShape) where
   capture : ParamInput shape → TacticM RecordedValue
 
 instance (name : Name) [RecordCategory name] : RecordParam (.category name) where
-  schema := RecordCategory.schema (name := name)
-  capture := RecordCategory.capture (name := name)
+  schema := RecordCategory.schema name
+  capture := RecordCategory.capture
 
 instance (shape : ParamShape) [RecordParam shape] : RecordParam (.array shape) where
-  schema := .array (RecordParam.schema (shape := shape))
+  schema := .array (RecordParam.schema shape)
   capture values := do
-    return .array (← values.mapM (RecordParam.capture (shape := shape)))
+    return .array (← values.mapM RecordParam.capture)
 
 instance (shape : ParamShape) [RecordParam shape] : RecordParam (.optional shape) where
-  schema := .optional (RecordParam.schema (shape := shape))
+  schema := .optional (RecordParam.schema shape)
   capture
     | none => pure (.optional none)
-    | some value => return .optional (some (← RecordParam.capture (shape := shape) value))
+    | some value => return .optional (some (← RecordParam.capture value))
 
 /-- Typeclass selection happens at the generated call site; a later plan can erase the
     heterogeneous inputs into closures without doing runtime category-string dispatch. -/

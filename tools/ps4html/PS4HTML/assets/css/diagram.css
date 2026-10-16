@@ -4,13 +4,13 @@
     --diagram-bg:      #eff6ff;
     --diagram-muted:   #94a3b8;
 }
-.strategy-block.diagram {
+.proof-strategy.diagram {
     background: var(--diagram-bg);
     position: relative;
     padding: 12px var(--strategy-content-inset) 10px var(--strategy-content-indent);
 }
-.strategy-block.diagram:hover { box-shadow: 0 0 2px rgba(37, 99, 235, 0.25); }
-.strategy-block.diagram .annotation-icon .codicon { color: var(--diagram-accent); }
+.proof-strategy.diagram:hover { box-shadow: 0 0 2px rgba(37, 99, 235, 0.25); }
+.proof-strategy.diagram .annotation-icon .codicon { color: var(--diagram-accent); }
 .diagram-figure { margin: 8px 16px; }
 .diagram-zoom-stage { overflow-x: auto; padding: 12px 0; }
 .diagram-zoom-stage svg { display: block; max-width: none; margin: 0 auto; transition: width 0.15s ease, height 0.15s ease; }

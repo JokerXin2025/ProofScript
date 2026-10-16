@@ -1,12 +1,9 @@
-import ProofScript.Script.Basic
-import ProofScript.Script.RenderInfo
-import ProofScript.Lean2TeX.Command
-import ProofScript.Lean2TeX.Basic
-import ProofScript.Page.Component.Theorem
+import ProofScript.Info.Commands
+import ProofScript.Defaults
+import ProofScript.Mathlib.Info
 import ProofScript.Page.Command
 import ProofScript.Page.Component.ProofText
 import ProofScript.Page.Component.Latex
 import ProofScript.Page.Component.Figure
 import ProofScript.Page.Component.References
 import ProofScript.Page.Component.Computation
-import ProofScript.Mathlib.Scripts

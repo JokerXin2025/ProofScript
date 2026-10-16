@@ -1,4 +1,4 @@
-import ProofScript.Script.Config
+import ProofScript.Script.Command
 
 open Lean
 open Parser.Tactic (tacticSeq1Indented)
@@ -223,11 +223,13 @@ elab "run_recorded_step" source:scriptTactic call:tactic : tactic => do
   let registrations := scriptTacticRegistrations (← getEnv)
   let some (registration, sourceCall) := registeredTacticCall registrations source.raw
     | throwErrorAt source "recorded tactic has no matching registration"
+  unless registration.recordingKind == some call.raw.getKind do
+    throwErrorAt call "recorder changed after this script call was converted; rebuild the recording call"
   let execution ← match rewriteTacticCall sourceCall registration.name
       (scriptTacticName registration.name) registration.executionKind with
     | .ok rewritten => pure rewritten
     | .error message => throwErrorAt source "{message}"
-  withRecordingRule registration.ruleId execution <|
+  withRecordingRegistration registration execution <|
     Elab.Tactic.withTacticInfoContext source.raw <| evalTactic call.raw
 
 /-! ## `:= script` Syntax -/
@@ -287,7 +289,7 @@ private partial def validateAndUnderscore {m : Type → Type}
     let body := t[3]
     let mut newInner : Array Syntax := Array.empty
     for x in flattenTactics body do
-      newInner := newInner.push (← validateAndUnderscore (m := m) registrations x)
+      newInner := newInner.push (← validateAndUnderscore registrations x)
     let newBody := buildTacticSeq newInner
     return Syntax.node t.getHeadInfo ``Parser.Tactic.case #[t[0], t[1], t[2], newBody]
   else
@@ -316,30 +318,11 @@ def appendStrategyCases (t : Syntax) (nodes : List String) : Syntax :=
   t.setArg 2 <| changeNodeKind call call.getKind <|
     call.getArgs.push (mkAtomFrom call "_strategy_cases") |>.push (Syntax.mkStrLit encoded call.getHeadInfo)
 
-/-- Merge the recorded strategy metadata and ordered case proofs into its placeholder. -/
-private def mergeStrategyBoxes (mainTag : String) (stepName : String)
-    (nodes : List String) : Elab.Tactic.TacticM Unit := do
-  let mainName := mainTag
-  let mut branches := #[]
-  for node in nodes do
-    let nodeName := mainTag ++ "_" ++ node
-    let proof ← takeBox nodeName
-    branches := branches.push (Json.mkObj [
-      ("name", Json.str node), ("proof", Json.arr proof)])
-  replaceStrategyPlaceholder mainName stepName (Json.mkObj [("branches", Json.arr branches)])
-
-private def mergeRecordedStrategy (name : String) (nodes : String) : Elab.Tactic.TacticM Unit := do
-  let tag ← currentRecordingTag
-  let actualNodes ← takeResolvedBranches (nodes.splitOn "\n")
-  mergeStrategyBoxes tag name actualNodes
-
 local elab "_next_strategy_case" : tactic => advanceStrategyCase
 
-local elab "_merge_strategy" name:str nodes:str : tactic =>
-  mergeRecordedStrategy name.getString nodes.getString
+local elab "_merge_strategy" : tactic => Recording.finishRecordingStrategy
 
 private structure PendingRecordedStrategy where
-  name : String
   nodes : List String
   completed : Nat := 0
 
@@ -361,8 +344,7 @@ partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m
         if let some pending := pendingStrategy then
           if pending.completed == pending.nodes.length then
             out := out.push (← `(tactic| _next_strategy_case)).raw
-            out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit pending.name)
-              $(Syntax.mkStrLit (String.intercalate "\n" pending.nodes)))).raw
+            out := out.push (← `(tactic| _merge_strategy)).raw
             pendingStrategy := none
             needsAdvance := false
       let isBullet := inner.getKind == ``scriptBullet
@@ -370,7 +352,7 @@ partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m
           Syntax.node inner.getHeadInfo ``Lean.cdot #[inner[0], inner[1]]
         else inductionAltToCase inner
       let bodyIdx := if isBullet then 1 else 3
-      let body ← collectRecordTactics (m := m) (scriptStmtsToArray caseStx[bodyIdx])
+      let body ← collectRecordTactics (scriptStmtsToArray caseStx[bodyIdx])
       let caseStx' := caseStx.setArg bodyIdx (buildTacticSeq body)
       if needsAdvance && pendingStrategy.isSome then
         out := out.push (← `(tactic| _next_strategy_case)).raw
@@ -384,9 +366,8 @@ partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m
         out := out.push (← `(tactic| _next_strategy_case)).raw
         needsAdvance := false
         match pendingStrategy with
-        | some pending =>
-            let encoded := String.intercalate "\n" pending.nodes
-            out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit pending.name) $(Syntax.mkStrLit encoded))).raw
+        | some _ =>
+            out := out.push (← `(tactic| _merge_strategy)).raw
             pendingStrategy := none
         | none => pure ()
       let calls := flattenTactics inner
@@ -402,10 +383,10 @@ partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m
             let nodes := registration.continuation.map nodes.take |>.getD nodes
             if nodes.isEmpty then
               withRef t <| throwError m!"strategy `{registration.ruleId}` requires at least one `| case =>` or `·` branch"
-            pendingStrategy := some { name := registration.name, nodes }
+            pendingStrategy := some { nodes }
             needsAdvance := false
         | none => pure ()
-        let t' ← validateAndUnderscore (m := m) registrations t
+        let t' ← validateAndUnderscore registrations t
         let t' := match selected with
           | some registration =>
               if registration.strategy then
@@ -416,9 +397,8 @@ partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m
   if needsAdvance then
     out := out.push (← `(tactic| _next_strategy_case)).raw
     match pendingStrategy with
-    | some pending =>
-        let encoded := String.intercalate "\n" pending.nodes
-        out := out.push (← `(tactic| _merge_strategy $(Syntax.mkStrLit pending.name) $(Syntax.mkStrLit encoded))).raw
+    | some _ =>
+        out := out.push (← `(tactic| _merge_strategy)).raw
         pendingStrategy := none
     | none => pure ()
   return out

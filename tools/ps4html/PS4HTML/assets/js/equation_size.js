@@ -1,6 +1,6 @@
 function alignAndScaleMath() {
     // 1. 获取所有的推导行
-    const blocks = document.querySelectorAll('.step-block');
+    const blocks = document.querySelectorAll('.proof-step');
     
     // 2. 将它们按父元素分组（确保不同的推导模块之间互不影响）
     const groups = new Map();
@@ -19,8 +19,8 @@ function alignAndScaleMath() {
 
         // 【第一轮遍历】：重置样式，并测量每一侧所需的“物理最大宽度”
         groupBlocks.forEach(block => {
-            const lhs = block.querySelector('.step-lhs');
-            const rhs = block.querySelector('.step-rhs');
+            const lhs = block.querySelector('.proof-calc-lhs');
+            const rhs = block.querySelector('.proof-calc-rhs');
 
             if (lhs) {
                 lhs.style.flex = '0 0 auto';      // 临时收缩到最小
@@ -38,8 +38,8 @@ function alignAndScaleMath() {
         // flex: 1 1 {基础宽度}px 
         // 这表示：保底分配最大内容宽度，然后将剩余的屏幕空白 1:1 绝对平分给两侧
         groupBlocks.forEach(block => {
-            const lhs = block.querySelector('.step-lhs');
-            const rhs = block.querySelector('.step-rhs');
+            const lhs = block.querySelector('.proof-calc-lhs');
+            const rhs = block.querySelector('.proof-calc-rhs');
 
             if (lhs) lhs.style.flex = `1 1 ${maxLhsWidth}px`;
             if (rhs) rhs.style.flex = `1 1 ${maxRhsWidth}px`;
@@ -48,7 +48,7 @@ function alignAndScaleMath() {
 
     // 4. 【第三轮遍历】：超长缩放保护（防止手机窄屏超出）
     // 此时浏览器已经完成了排版，如果屏幕不够大导致实际空间小于内容空间，按比例缩放文字
-    const mathContainers = document.querySelectorAll('.step-lhs, .step-rhs');
+    const mathContainers = document.querySelectorAll('.proof-calc-lhs, .proof-calc-rhs');
     mathContainers.forEach(container => {
         const availableWidth = container.offsetWidth;
         const actualWidth = container.scrollWidth;
@@ -57,6 +57,7 @@ function alignAndScaleMath() {
             container.style.transform = `scale(${availableWidth / actualWidth})`;
         }
     });
+    document.dispatchEvent(new Event('ps4html:layoutchange'));
 }
 
 // ============== 绑定事件监听 ==============

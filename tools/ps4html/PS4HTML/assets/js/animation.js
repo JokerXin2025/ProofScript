@@ -1,6 +1,6 @@
 document.addEventListener (
     'DOMContentLoaded', () => {
-        const blocks = document.querySelectorAll('.step-block');
+        const blocks = document.querySelectorAll('.proof-step');
         let currentParent = null;
         let currentIndex = 1;
         blocks.forEach (

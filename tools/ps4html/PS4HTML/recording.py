@@ -1,10 +1,22 @@
-"""Versioned recording contracts and the legacy consumer-boundary adapter."""
+"""Recording contracts and ordinary step fields."""
 
 import math
+from decimal import Decimal
 
-PROOF_SCHEMA_VERSION = "0.1.0"
-SUPPORTED_RECORDING_VERSIONS = {"0.0.0", PROOF_SCHEMA_VERSION}
-RESERVED = {"_ruleId", "_goal_", "_pending_strategy_", "branches"}
+PROOF_SCHEMA_VERSION = "0.0.0"
+RESERVED = {"_ruleId", "branches"}
+
+
+def proof_steps(records):
+    """Read one JSON object per script step."""
+    if not isinstance(records, list) or not records:
+        raise ValueError("proof must contain at least one step")
+    if any(not isinstance(record, dict) for record in records):
+        raise ValueError("proof records must be objects")
+    for index, step in enumerate(records):
+        if not isinstance(step.get("_ruleId"), str) or not step["_ruleId"]:
+            raise ValueError(f"proof record {index} must contain a rule ID")
+    return records
 
 
 def validate_schema(schema):
@@ -61,11 +73,13 @@ def validate_value(value, schema, path):
     if kind == "json":
         valid = True
     elif kind == "expression":
-        valid = isinstance(value, dict) and set(value) == {"$ref"} and isinstance(value["$ref"], str)
+        valid = isinstance(value, dict) and (
+            set(value) == {"$ref"} and isinstance(value["$ref"], str) or
+            isinstance(value.get("kind"), str) and type(value.get("isProp")) is bool)
     elif kind in {"string", "name", "syntax"}:
         valid = isinstance(value, str)
     elif kind == "number":
-        valid = type(value) in (int, float) and (type(value) is int or math.isfinite(value))
+        valid = type(value) in (int, float, Decimal) and (type(value) is int or math.isfinite(value))
     elif kind == "boolean":
         valid = type(value) is bool
     elif kind == "literal":
@@ -94,12 +108,8 @@ def validate_value(value, schema, path):
         raise ValueError(f"Recorded field {path!r} does not match {kind} schema")
 
 
-def validate_fields(step, fields, version=PROOF_SCHEMA_VERSION):
-    if version not in SUPPORTED_RECORDING_VERSIONS:
-        raise ValueError(f"Unsupported proof schema version: {version}")
-    if fields is None or version == "0.0.0":
-        # Old handwritten recorders did not emit the new semantic fields. Validate
-        # their original renderer/template requirements instead of inventing data.
+def validate_fields(step, fields):
+    if fields is None:
         return
     for field in fields:
         name = field["name"]
@@ -108,35 +118,6 @@ def validate_fields(step, fields, version=PROOF_SCHEMA_VERSION):
         if step[name] is None and field["nullable"]:
             continue
         validate_value(step[name], field["schema"], name)
-
-
-def _legacy_value(value, schema):
-    if value is None:
-        return None
-    kind = schema["kind"]
-    if kind == "optional":
-        return _legacy_value(value, schema["element"])
-    if kind == "array":
-        values = value if isinstance(value, list) else [value]
-        return [_legacy_value(item, schema["element"]) for item in values]
-    if kind == "object" and isinstance(value, dict):
-        fields = {field["name"]: field["schema"] for field in schema["fields"]}
-        return {key: _legacy_value(item, fields[key]) if key in fields else item
-                for key, item in value.items()}
-    return value
-
-
-def adapt_legacy_record(step, fields, version):
-    """Normalize historical singleton arrays only when the proof declares 0.0.0.
-
-    A new-version scalar is never silently accepted as an array. Historical rules
-    without contracts keep their original shape and renderer behavior.
-    """
-    if version != "0.0.0" or fields is None:
-        return step
-    schemas = {field["name"]: field["schema"] for field in fields}
-    return {key: _legacy_value(value, schemas[key]) if key in schemas else value
-            for key, value in step.items()}
 
 
 def schema_has_path(schema, parts):
@@ -182,16 +163,14 @@ def validate_slots(texts, fields):
         if any("}" not in fragment for fragment in text.split("${")[1:]):
             raise ValueError("Unclosed template slot")
         for slot in re.findall(r"\$\{([^}]+)\}", text):
-            if slot == "goal" or slot in schemas:
+            if slot in schemas:
                 continue
             root, *parts = slot.split(".")
             if root not in schemas or not schema_has_path(schemas[root], parts):
                 raise ValueError(f"Unknown recorded template field {slot!r}")
 
 
-def slot_value(step, previous, key):
-    if key == "goal":
-        return previous["_goal_"]
+def slot_value(step, key):
     if key in step:
         return step[key]
     value = step

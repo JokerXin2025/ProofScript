@@ -2,7 +2,7 @@ import html
 from PS4HTML.engine import render_annotation
 
 
-def rule_admit(admit, previous, subsequent, proof, *, language):
+def rule_admit(admit, proof, *, language):
     text = admit["reason"]
     if not isinstance(text, str):
         raise ValueError("admit.reason must be a string")

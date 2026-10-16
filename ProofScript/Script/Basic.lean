@@ -1,5 +1,5 @@
-import ProofScript.Script.Config
-import ProofScript.Script.RenderInfo
+import ProofScript.Script.Command
+import ProofScript.Info.Theorem
 import ProofScript.Script.Script
 import ProofScript.Script.Record
 import ProofScript.Page.Component.Core
@@ -8,112 +8,31 @@ import ProofScript.Page.Component.Latex
 open Lean Meta Parser Elab Tactic
 open ProofScript
 
-
 script_macro «assumption»
 "assumption" => `(tactic| assumption)
-
-script_info «assumption» {
-  template := [{
-    lang := "zh", tag := "«assumption»",
-    content := ""
-  }, {
-    lang := "en", tag := "«assumption»",
-    content := ""
-  }]
-}
 
 script_macro «change»
 "change" equation:term loc:(location)? => `(tactic|
   change $equation $[$loc:location]?
 )
 
-script_info «change» {
-  template := [{
-    lang := "zh", tag := "改写目标",
-    content := "待证目标即 ${equation_before}"
-  }, {
-    lang := "en", tag := "«change»",
-    content := ""
-  }]
-}
-
 script_macro «contradiction»
 "contradiction" => `(tactic| contradiction)
-
-script_info «contradiction» {
-  template := [{
-    lang := "zh", tag := "«contradiction»",
-    content := ""
-  }, {
-    lang := "en", tag := "«contradiction»",
-    content := ""
-  }]
-}
 
 script_macro «exfalso»
 "exfalso" => `(tactic| exfalso)
 
-script_info «exfalso» {
-  template := [{
-    lang := "zh", tag := "«exfalso»",
-    content := ""
-  }, {
-    lang := "en", tag := "«exfalso»",
-    content := ""
-  }]
-}
-
 script_macro «omega»
 "omega" => `(tactic| omega)
-
-script_info «omega» {
-  template := [{
-    lang := "zh", tag := "整数算术",
-    content := ""
-  }, {
-    lang := "en", tag := "«omega»",
-    content := ""
-  }]
-}
 
 script_macro «rfl»
 "rfl" => `(tactic| rfl)
 
-script_info «rfl» {
-  template := [{
-    lang := "zh", tag := "自反性",
-    content := ""
-  }, {
-    lang := "en", tag := "«rfl»",
-    content := ""
-  }]
-}
-
 script_macro «symm»
 "symm" => `(tactic| symm)
 
-script_info «symm» {
-  template := [{
-    lang := "zh", tag := "对称性",
-    content := ""
-  }, {
-    lang := "en", tag := "«symm»",
-    content := ""
-  }]
-}
-
 script_macro «trivial»
 "trivial" => `(tactic| trivial)
-
-script_info «trivial» {
-  template := [{
-    lang := "zh", tag := "显然",
-    content := ""
-  }, {
-    lang := "en", tag := "«trivial»",
-    content := ""
-  }]
-}
 
 script_macro «simp» (params := [config(timing := once), args(timing := before)])
 "simp" config:optConfig args:simpArgs loc:(location)? =>
@@ -122,45 +41,15 @@ script_macro «simp» (params := [config(timing := once), args(timing := before)
       simp $config:optConfig only [$rules,*] $[$loc:location]?)
   | _ => Macro.throwUnsupported
 
-script_info «simp» {
-  template := [{
-    lang := "zh", tag := "化简",
-    content := ""
-  }, {
-    lang := "en", tag := "«simp»",
-    content := ""
-  }]
-}
-
 script_macro «rw» (params := [config(timing := once), rules(timing := before)])
 "rw" config:optConfig rules:rwRuleSeq loc:(location)? => `(tactic|
   rw $config:optConfig $rules:rwRuleSeq $[$loc:location]?
 )
 
-script_info «rw» {
-  template := [{
-    lang := "zh", tag := "代换",
-    content := ""
-  }, {
-    lang := "en", tag := "«rw»",
-    content := ""
-  }]
-}
-
 script_macro «unfold»
 "unfold" definitions:(colGt ident)+ => `(tactic|
   unfold $definitions*
 )
-script_info «unfold» {
-  template := [{
-    lang := "zh", tag := "展开定义",
-    content := ""
-  }, {
-    lang := "en", tag := "«unfold»",
-    content := ""
-  }]
-}
-
 
 /-! ## Script-Steps -/
 
@@ -191,16 +80,6 @@ script_elab «have» (intro := [h])
   let (_, rest) ← rest.intro1P
   replaceMainGoal [rest]
 
-script_info «have» {
-  template := [{
-    lang := "zh", tag := "引入事实",
-    content := "${h}"
-  }, {
-    lang := "en", tag := "«have»",
-    content := "${h}"
-  }]
-}
-
 script_elab «exact»
 "exact" value:term => withMainContext do
   let goal ← getMainGoal
@@ -209,16 +88,6 @@ script_elab «exact»
   rejectProofParameters value expression
   goal.assign expression
   replaceMainGoal []
-
-script_info «exact» {
-  template := [{
-    lang := "zh", tag := "«exact»",
-    content := ""
-  }, {
-    lang := "en", tag := "«exact»",
-    content := ""
-  }]
-}
 
 private partial def exactAndProj? (value target : Expr) : MetaM (Option Expr) :=
   withIncRecDepth do
@@ -257,16 +126,6 @@ script_elab «exact_proj»
   goal.assign proof
   replaceMainGoal []
 
-script_info «exact_proj» {
-  template := [{
-    lang := "zh", tag := "投影",
-    content := "待证目标蕴涵于已知条件“${value_before}”之中"
-  }, {
-    lang := "en", tag := "«exact_proj»",
-    content := ""
-  }]
-}
-
 script_elab «intro» (intro := [h])
 "intro" h:(colGt ident)+ => do
   for h in h do withMainContext do
@@ -283,16 +142,6 @@ script_elab «intro» (intro := [h])
     | _ =>
       throwError "intro failed: the current goal has no binder to introduce."
 
-script_info «intro» {
-  template := [{
-    lang := "zh", tag := "«intro»",
-    content := ""
-  }, {
-    lang := "en", tag := "«intro»",
-    content := ""
-  }]
-}
-
 script_elab «left»
 "left" => withMainContext do
   let goal ← getMainGoal
@@ -302,16 +151,6 @@ script_elab «left»
   let newMVarIds ← goal.apply (mkConst ``Or.inl)
   replaceMainGoal newMVarIds
 
-script_info «left» {
-  template := [{
-    lang := "zh", tag := "确定目标",
-    content := ""
-  }, {
-    lang := "en", tag := "«left»",
-    content := ""
-  }]
-}
-
 script_elab «right»
 "right" => withMainContext do
   let goal ← getMainGoal
@@ -320,16 +159,6 @@ script_elab «right»
     throwError "`right` can only be used with propositions connected by `∨`"
   let newMVarIds ← goal.apply (mkConst ``Or.inr)
   replaceMainGoal newMVarIds
-
-script_info «right» {
-  template := [{
-    lang := "zh", tag := "确定目标",
-    content := ""
-  }, {
-    lang := "en", tag := "«right»",
-    content := ""
-  }]
-}
 
 private def unpackProof (h : TSyntax `term) : TacticM (MVarId × FVarId) := withMainContext do
   let proof ← instantiateMVars <| ← elabTerm h none
@@ -372,16 +201,6 @@ script_elab «unpack_and» (intro := [names], clear := [h])
     remainder := nextRemainder
   replaceMainGoal [goal]
 
-script_info «unpack_and» {
-  template := [{
-    lang := "zh", tag := "拆分合取",
-    content := ""
-  }, {
-    lang := "en", tag := "«unpack_and»",
-    content := ""
-  }]
-}
-
 script_elab «unpack_iff» (intro := [h₁, h₂], clear := [h])
 "unpack_iff" "⟨" h₁:ident "," h₂:ident "⟩" ":=" h:term => withMainContext do
   let (goal, fvarId) ← unpackProof h
@@ -399,16 +218,6 @@ script_elab «unpack_iff» (intro := [h₁, h₂], clear := [h])
     Elab.Term.addLocalVarInfo h₁ first
     Elab.Term.addLocalVarInfo h₂ second
   replaceMainGoal [subgoal.mvarId]
-
-script_info «unpack_iff» {
-  template := [{
-    lang := "zh", tag := "拆分等价",
-    content := ""
-  }, {
-    lang := "en", tag := "«unpack_iff»",
-    content := ""
-  }]
-}
 
 script_elab «obtain_exist» (intro := [h₁, h₂], clear := [h])
 "obtain_exist" "⟨" h₁:ident "," h₂:ident "⟩" ":=" h:term => withMainContext do
@@ -428,16 +237,6 @@ script_elab «obtain_exist» (intro := [h₁, h₂], clear := [h])
     Elab.Term.addLocalVarInfo h₂ second
   replaceMainGoal [subgoal.mvarId]
 
-script_info «obtain_exist» {
-  template := [{
-    lang := "zh", tag := "解构存在性",
-    content := ""
-  }, {
-    lang := "en", tag := "«obtain_exist»",
-    content := ""
-  }]
-}
-
 script_elab «obtain_exist'» (intro := [h₁, h₂, h₃], clear := [h])
 "obtain_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":=" h:term => do
   -- Keep the intermediate proof off user binder source spans and out of recording.
@@ -446,16 +245,6 @@ script_elab «obtain_exist'» (intro := [h₁, h₂, h₃], clear := [h])
     script_obtain_exist ⟨$h₁, $proof⟩ := $h
     script_unpack_and ⟨$h₂, $h₃⟩ := $proof
   )
-
-script_info «obtain_exist'» {
-  template := [{
-    lang := "zh", tag := "解构存在性",
-    content := ""
-  }, {
-    lang := "en", tag := "«obtain_exist'»",
-    content := ""
-  }]
-}
 
 script_elab «funext»
 "funext" arg:ident => withMainContext do
@@ -472,16 +261,6 @@ script_elab «funext»
     evalTactic <| ← `(tactic| funext $(mkIdent xName))
   | _, _ => throwError "`funext` can only be used on function equality goals"
 
-script_info «funext» {
-  template := [{
-    lang := "zh", tag := "函数外延性",
-    content := ""
-  }, {
-    lang := "en", tag := "By function extensionality,",
-    content := ""
-  }]
-}
-
 script_elab «provide»
 "provide" data:term => withMainContext do
   let goal ← getMainGoal
@@ -494,16 +273,6 @@ script_elab «provide»
   else if target.isAppOfArity ``Exists 2 then
     evalTactic <| ← `(tactic| exists $data:term)
   else throwError "`provide` can only be used in the `data` branch of `witness` or on an existential goal"
-
-script_info «provide» {
-  template := [{
-    lang := "zh", tag := "选取",
-    content := "${data_before}"
-  }, {
-    lang := "en", tag := "«provide»",
-    content := "${data_before}"
-  }]
-}
 
 script_elab «apply» (clear := [h])
 "apply" h:term => withMainContext do
@@ -536,34 +305,12 @@ script_elab «apply» (clear := [h])
   goal.assign (mkApp applied premiseMVar)
   replaceMainGoal [premiseMVar.mvarId!]
 
-script_info «apply» {
-  template := [{
-    lang := "zh", tag := "应用定理",
-    content := "${h}"
-  }, {
-    lang := "en", tag := "Applying the theorem,",
-    content := "${h}"
-  }]
-}
-
 script_macro quot_induction (intro := [a])
 "quot_induction" q:term "with" a:ident => `(tactic|
   refine Quot.inductionOn $q:term (fun $a:ident => ?_)
 )
 
-script_info «quot_induction» {
-  template := [{
-    lang := "zh", tag := "商归纳",
-    content := ""
-  }, {
-    lang := "en", tag := "By quotient induction,",
-    content := ""
-  }]
-}
-
-
 /-! ## Script-Strategy -/
-
 
 /-! ### Assertions -/
 
@@ -577,16 +324,6 @@ script_elab «claim» (intro := [h], strategy := true, continuation := 1,
   let restMVar ← goal.assert h.getId type proofMVar
   let (_, restMVar') ← restMVar.intro1P
   replaceMainGoal [proofMVar.mvarId!, restMVar']
-
-script_info «claim» {
-  template := [{
-    lang := "zh", tag := "先证明断言",
-    cases := [{name := "proof", tag := "证明", title := ""}]
-  }, {
-    lang := "en", tag := "Proving an intermediate claim,",
-    cases := [{name := "proof", tag := "Proof", title := ""}]
-  }]
-}
 
 open Term (addLocalVarInfo) in
 private def claimExist (names : Array (TSyntax `ident)) (type : TSyntax `term) : TacticM Unit :=
@@ -631,29 +368,11 @@ script_elab «claimExistTwo» (intro := [h₁, h₂], strategy := true, continua
   params := [h₁(context := continuation), h₂(context := continuation)])
 "claim_exist" "⟨" h₁:ident "," h₂:ident "⟩" ":" type:term =>
   claimExist #[h₁, h₂] type
-script_info «claimExistTwo» {
-  template := [{
-    lang := "zh", tag := "先证明存在性断言",
-    cases := [{name := "proof", tag := "证明", title := ""}]
-  }, {
-    lang := "en", tag := "Proving an existential claim,",
-    cases := [{name := "proof", tag := "Proof", title := ""}]
-  }]
-}
 
 script_elab «claimExistThree» (intro := [h₁, h₂, h₃], strategy := true, continuation := 1,
   params := [h₁(context := continuation), h₂(context := continuation), h₃(context := continuation)])
 "claim_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":" type:term =>
   claimExist #[h₁, h₂, h₃] type
-script_info «claimExistThree» {
-  template := [{
-    lang := "zh", tag := "先证明存在性断言",
-    cases := [{name := "proof", tag := "证明", title := ""}]
-  }, {
-    lang := "en", tag := "Proving an existential claim,",
-    cases := [{name := "proof", tag := "Proof", title := ""}]
-  }]
-}
 
 /-! ### Existential Construction -/
 
@@ -673,24 +392,6 @@ script_elab «witness» (strategy := true)
     replaceMainGoal [m₁, m₂]
   | _ =>
     throwError "unexpected error occurred during executing `witness`"
-script_info «witness» {
-  color := (some "#166a80", some "#9ac7d0", some "#eff8fa"),
-  template := [{
-    lang := "zh", tag := "构造性证明",
-    introducer := {tag := "目标拆解", content := "将目标拆分为数据构造和性质证明两个子目标"},
-    cases := [
-      {name := "data", tag := "子目标 I", title := ""},
-      {name := "proof", tag := "子目标 II", title := ""}
-    ]
-  }, {
-    lang := "en", tag := "As a constructive proof,",
-    introducer := {tag := "To construct the proof,", content := "split the goal into data construction and proof subgoals"},
-    cases := [
-      {name := "data", tag := "Subgoal I,", title := ""},
-      {name := "proof", tag := "Subgoal II,", title := ""}
-    ]
-  }]
-}
 
 /-! ### Goal Decomposition: Conjunction -/
 
@@ -703,23 +404,6 @@ script_elab «split_and» (strategy := true)
   else
     let mvarIds ← goal.apply (mkConst ``And.intro)
     replaceMainGoal mvarIds
-script_info «split_and» {
-  template := [{
-    lang := "zh", tag := "拆分合取",
-    introducer := {tag := "目标拆解", content := "将目标拆分为子目标逐一证明"},
-    cases := [
-      {name := "left", tag := "子目标 I", title := ""},
-      {name := "right", tag := "子目标 II", title := ""}
-    ]
-  }, {
-    lang := "en", tag := "To split the conjunction,",
-    introducer := {tag := "To decompose the goal,", content := "decompose the goal into subgoals and prove them one by one"},
-    cases := [
-      {name := "left", tag := "Subgoal I,", title := ""},
-      {name := "right", tag := "Subgoal II,", title := ""}
-    ]
-  }]
-}
 
 private partial def splitAndRec (mvarId : MVarId)
                                 : MetaM (List MVarId) := do
@@ -748,9 +432,6 @@ script_elab «split_and!» (strategy := true)
     leaf.setTag tagName
     i := i + 1
   replaceMainGoal leaves
-script_info «split_and!» {
-  renderer := «strategy»
-}
 
 /-! ### Goal Decomposition: Equivalence -/
 
@@ -770,23 +451,6 @@ script_elab «split_iff» (strategy := true)
     replaceMainGoal [m₁', m₂']
   | _ =>
     throwError "unexpected error occurred during executing `split_iff`"
-script_info «split_iff» {
-  template := [{
-    lang := "zh", tag := "拆分充分必要",
-    introducer := {tag := "目标拆解", content := "将目标拆分为充分性和必要性两个子目标"},
-    cases := [
-      {name := "suffice", tag := "子目标 I", title := ""},
-      {name := "necess", tag := "子目标 II", title := ""}
-    ]
-  }, {
-    lang := "en", tag := "To split the equivalence,",
-    introducer := {tag := "To decompose the goal,", content := "split the equivalence into sufficiency and necessity"},
-    cases := [
-      {name := "suffice", tag := "Subgoal I,", title := ""},
-      {name := "necess", tag := "Subgoal II,", title := ""}
-    ]
-  }]
-}
 
 /-! ### Case Analysis on Disjunctions -/
 
@@ -819,34 +483,16 @@ script_elab «cases_by» (clear := [h], strategy := true)
       replaceMainGoal [leftGoal.mvarId, rightGoal.mvarId]
   | _ =>
     throwError "unexpected error occurred during executing `cases_by`"
-script_recorder «cases_by» (fields := #[
+script_recorder «cases_by» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "h", schema := .expression },
   { name := "subject", schema := .expression, nullable := false }])
 "cases_by" h:term "_strategy_cases" strategyCases:str => withMainContext do
-  recordStrategy "cases_by" (strategyCases.getString.splitOn "\n")
-    [] (parameters := { parameters := #[
-      ProofScript.Recording.param (.category `term) "h" .before h,
-      { name := "subject", timing := .before, onFailure := .required,
+  recordStrategy (strategyCases.getString.splitOn "\n")
+    (before := #[
+      ProofScript.Recording.param (.category `term) "h" h,
+      { name := "subject", onFailure := .required,
         collectReferences := false, capture := ProofScript.Recording.expressionType h.raw }
-    ] })
-
-script_info «cases_by» {
-  template := [{
-    lang := "zh", tag := "分类讨论",
-    introducer := {tag := "分类依据", content := "对命题 ${subject} 的不同情形分别讨论"},
-    cases := [
-      {name := "left", tag := "情形 I", title := ""},
-      {name := "right", tag := "情形 II", title := ""}
-    ]
-  }, {
-    lang := "en", tag := "By cases,",
-    introducer := {tag := "As the case distinction,", content := "consider the possible cases of ${subject}"},
-    cases := [
-      {name := "left", tag := "In Case I,", title := ""},
-      {name := "right", tag := "In Case II,", title := ""}
-    ]
-  }]
-}
+    ])
 
 script_elab «cases_by!» (clear := [h], strategy := true)
 "cases_by!" h:term => withMainContext do
@@ -863,9 +509,6 @@ script_elab «cases_by!» (clear := [h], strategy := true)
     tagged := tagged ++ [leaf]
     i := i + 1
   replaceMainGoal tagged
-script_info «cases_by!» {
-  renderer := «strategy»
-}
 
 /-! ### Case Analysis on Propositions or Inductive Types -/
 
@@ -888,9 +531,6 @@ script_elab «cases_on» (clear := [value], strategy := true)
     throwError "`cases_on` cannot be used on a proof of a proposition; pass the proposition itself"
   else
     evalTactic <| ← `(tactic| cases $value:term)
-script_info «cases_on» {
-  renderer := «strategy»
-}
 
 /-! ### Proof by Contradiction -/
 
@@ -911,31 +551,16 @@ script_elab «contra» (intro := [h], strategy := true)
     newMVarId.setTag `proof
     replaceMainGoal [newMVarId]
 
-script_recorder «contra» (fields := #[
+script_recorder «contra» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "h", schema := .expression },
   { name := "hypothesis", schema := .expression, nullable := false }])
 "contra" h:ident "_strategy_cases" strategyCases:str => do
-  recordStrategy "contra" (strategyCases.getString.splitOn "\n") []
-    (parameters := { parameters := #[
-      ProofScript.Recording.param (.category `ident) "h" .after h,
-      { name := "hypothesis", timing := .after, onFailure := .required,
+  recordStrategy (strategyCases.getString.splitOn "\n")
+    (after := #[
+      ProofScript.Recording.param (.category `ident) "h" h,
+      { name := "hypothesis", onFailure := .required,
         collectReferences := false, capture := ProofScript.Recording.expressionType h.raw }
-    ] })
-
-script_info «contra» {
-  color := (some "#a33b45", some "#ddb0b4", some "#fcf2f2"),
-  template := [{
-    lang := "zh", tag := "反证法",
-    inline := true,
-    introducer := {tag := "假设", content := "假设 ${hypothesis}，推得矛盾"},
-    cases := [{name := "proof", tag := "", title := ""}]
-  }, {
-    lang := "en", tag := "By contradiction,",
-    inline := true,
-    introducer := {tag := "For the contrary assumption,", content := "suppose ${hypothesis} and derive a contradiction."},
-    cases := [{name := "proof", tag := "", title := ""}]
-  }]
-}
+    ])
 
 /-! ### Induction -/
 
@@ -943,25 +568,6 @@ script_macro «induction» (clear := [n], strategy := true)
 "induction" n:ident => `(tactic|
   induction $n:ident
 )
-
-script_info «induction» {
-  color := (some "#2b6a4a", some "#a3c2b1", some "#f2f7f4"),
-  template := [{
-    lang := "zh", tag := "数学归纳法",
-    introducer := {tag := "归纳对象", content := "对变量 ${n} 使用数学归纳法"},
-    cases := [
-      {name := "zero", tag := "基础情形", title := "验证命题对 $0$ 成立"},
-      {name := "succ", tag := "归纳步骤", title := "假设命题对 $k$ 成立，下面证明命题对 $k+1$ 成立"}
-    ]
-  }, {
-    lang := "en", tag := "By induction,",
-    introducer := {tag := "On the induction variable,", content := "on the natural number ${n}, apply mathematical induction."},
-    cases := [
-      {name := "zero", tag := "In the base case,", title := "verify that the proposition holds for $0$"},
-      {name := "succ", tag := "In the inductive step,", title := "suppose the proposition holds for $k$, then prove it for $k+1$"}
-    ]
-  }]
-}
 
 /-! ### Complete Induction -/
 
@@ -979,24 +585,6 @@ script_macro «complete_induction» (clear := [n], strategy := true)
 "complete_induction" n:ident => `(tactic|
   induction $n:ident using strongInductionOn
 )
-script_info «complete_induction» {
-  color := (some "#61519a", some "#bdb3d8", some "#f6f3fa"),
-  template := [{
-    lang := "zh", tag := "强数学归纳法",
-    introducer := {tag := "归纳对象", content := "对自然数 ${n} 使用强数学归纳法。"},
-    cases := [
-      {name := "zero", tag := "基础情形", title := "验证命题对 $0$ 成立"},
-      {name := "succ", tag := "归纳步骤", title := "假设命题对所有小于 $k+1$ 的自然数成立，证明 $k+1$ 的情形"}
-    ]
-  }, {
-    lang := "en", tag := "By strong induction,",
-    introducer := {tag := "On the induction variable,", content := "on the natural number ${n}, apply strong induction."},
-    cases := [
-      {name := "zero", tag := "In the base case,", title := "verify the proposition for $0$"},
-      {name := "succ", tag := "In the inductive step,", title := "suppose the proposition holds for all smaller numbers, then prove it for $k+1$"}
-    ]
-  }]
-}
 
 /-! ### Arbitrary Constructor -/
 
@@ -1017,11 +605,6 @@ script_elab «constructor» (strategy := true)
   rejectOverlappingConstructor <| ← goal.getType
   let goals ← goal.constructor
   replaceMainGoal goals
-
-script_info «constructor» {
-  renderer := «strategy»,
-  color := (some "#a26423", some "#dfc39d", some "#fdf8ee")
-}
 
 private partial def constructorFieldNames (type : Expr) : List Name :=
   match type with
@@ -1048,44 +631,30 @@ script_elab «constructor!» (strategy := true)
   rejectOverlappingConstructor <| ← goal.getType
   replaceMainGoal <| ← applyNamedConstructor goal ctor
 
-script_info «constructor!» {
-  renderer := «strategy»,
-  color := (some "#a26423", some "#dfc39d", some "#fdf8ee")
-}
-
-
 /-! ## Metadata -/
-
 
 /-! ### Remark -/
 
 script_elab «remark» (clear := [text])
 "remark" text:str => fun _ => pure ()
 
-script_info «remark» {
-  renderer := «remark»
-}
-
 /-! ### SVG -/
 
 script_elab «svg» (clear := [code])
 "svg" code:str => fun _ => pure ()
-
-script_info «svg» {
-  renderer := «diagram»
-}
 
 /-! LaTeX (Compiled to SVG) -/
 
 script_elab «latex»
 "latex" _metadata:componentMeta _code:str => fun _ => pure ()
 
-script_recorder «latex» (fields := #[
+script_recorder «latex» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "metadata", schema := .json, nullable := false },
   { name := "language", schema := .string, nullable := false },
   { name := "source", schema := .string, nullable := false },
   { name := "svg", schema := .json, nullable := false }])
-"latex" metadata:componentMeta code:str => do
+"latex" metadata:componentMeta code:str => ProofScript.Recording.withRecordingStep fun step => do
+  step.recordGoal "goal_before"
   let metadata ←
     match parseComponentMetadata metadata.raw with
     | .ok value => pure value
@@ -1093,18 +662,12 @@ script_recorder «latex» (fields := #[
   let svg ←
     writeTextResource "svg" "svg" "image/svg+xml" <| ←
       compileLatexToSvg code.getString
-  recordStep [] (parameters := { parameters := #[
-    { name := "metadata", timing := .once, onFailure := .required,
-      capture := pure (.scalar (componentMetadataJson metadata)) },
-    { name := "language", timing := .once, onFailure := .required, capture := pure (.scalar "latex") },
-    { name := "source", timing := .once, onFailure := .required,
-      capture := pure (.scalar (Json.str code.getString)) },
-    { name := "svg", timing := .once, onFailure := .required, capture := pure (.scalar svg) }
-  ] })
-
-script_info «latex» {
-  renderer := «media»
-}
+  step.recordJson "metadata" (componentMetadataJson metadata)
+  step.recordJson "language" "latex"
+  step.recordJson "source" (Json.str code.getString)
+  step.recordJson "svg" svg
+  executeRecordedStep
+  step.recordGoal "goal_after"
 
 /-! Informal Proof -/
 
@@ -1116,10 +679,6 @@ script_elab «admit» (clear := [reason])
 
 macro "admit" reason:str : term => `(term| script admit $reason:str)
 
-script_info «admit» {
-  renderer := «admit»
-}
-
 /-! ### Manual Citation -/
 
 private def citeTheorem (thm : TSyntax `term) : TacticM Unit := withMainContext do
@@ -1127,26 +686,20 @@ private def citeTheorem (thm : TSyntax `term) : TacticM Unit := withMainContext 
   let some (declaration, _) := expression.getAppFn.const?
   | throwErrorAt thm "`cite` requires a theorem declaration"
   let env ← getEnv
-  unless (findTheoremInfo env declaration).isSome do
-    throwErrorAt thm m!"`{declaration}` is not a literature theorem"
-  recordRefsFromExpr expression
+  match Info.resolveTheoremInfo env { moduleName := env.mainModule } declaration with
+  | .error error =>
+    if error.message == "theorem metadata is not configured" then
+      throwErrorAt thm m!"`{declaration}` is not a literature theorem"
+    else throwErrorAt thm error.render
+  | .ok _ => pure ()
+  unless ← referencesEnabled do return
+  for constant in Expr.getUsedConstants expression do
+    addTheoremRef constant
 
 script_elab «cite» (params := [thm(codec := expression, timing := once, field := "theorem", failure := required)])
 "cite" thm:term => do citeTheorem thm; fun _ => pure ()
 
-script_info «cite» {
-  template := [{
-    lang := "zh", tag := "引用定理",
-    content := "${theorem}"
-  }, {
-    lang := "en", tag := "Citing the theorem,",
-    content := "${theorem}"
-  }]
-}
-
-
 /-! ## Calculation Chains -/
-
 
 script_macro «renderCalc»
 "calc" steps:calcSteps => do
@@ -1220,12 +773,13 @@ syntax (name := recordedCalcProof) "_recorded_calc_proof%" num term : term
 /-- Recording elaborator for `_calc`: record the initial term and every chain step.
     `init` is the left side of the first relation; `chain` contains
     `{relation, rhs, proof}` entries, with proofs containing `?_` recorded as holes. -/
-script_recorder «renderCalc» (fields := #[
+script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "init", schema := .expression, nullable := false },
   { name := "chain", nullable := false, schema := .array (.object [
       ("relation", .expression), ("rhs", .expression),
       ("proof", .union [.expression, .object [("kind", .literal "hole")]])]) }])
-"calc" steps:calcSteps => withMainContext do
+"calc" steps:calcSteps => withMainContext <| ProofScript.Recording.withRecordingStep fun step => do
+  step.recordGoal "goal_before"
   let chain ← liftMacroM <| parseCalcSteps steps
   let views ← Elab.Term.mkCalcStepViews steps
   let wrapped ← views.mapIdxM fun index view => do
@@ -1252,26 +806,19 @@ script_recorder «renderCalc» (fields := #[
       let some (rel, _, rhs) := decomposeCalcRelation (← instantiateMVars type)
         | throwErrorAt relTerm "calc: cannot extract a binary relation from the step"
       let proof ← if calcContainsSyntheticHole prf.raw then
-          pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar "hole")])
+          pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar (json% "hole"))])
         else ProofScript.Recording.snapshotExpression proof
       values := values.push (.object [
         ("relation", ← ProofScript.Recording.snapshotExpression rel),
         ("rhs", ← ProofScript.Recording.snapshotExpression rhs), ("proof", proof)])
     return .array values
   let _ ← withCalcProofs do
-    recordStep [] (parameters := { parameters := #[
-      { name := "init", timing := .after, onFailure := .required, capture := captureInit },
-      { name := "chain", timing := .after, onFailure := .required, capture := captureChain }
-    ] }) (execute := withScriptMode <| evalTactic (← `(tactic| script_calc $recordedSteps:calcSteps)))
-
-
-script_info «renderCalc» {
-  renderer := «calc»
-}
-
+    withScriptMode <| evalTactic (← `(tactic| script_calc $recordedSteps:calcSteps))
+    step.captureField "init" captureInit
+    step.captureField "chain" captureChain
+  step.recordGoal "goal_after"
 
 /-! ## Inference Chains -/
-
 
 /-! Follow the native `calc` layout: the first step is wrapped in its own
     `withPosition` and the remaining steps share a second `withPosition` that
@@ -1418,7 +965,7 @@ private def parseInferSteps (steps : Syntax)
     chain := chain.push (R, prf)
   return (P, chain)
 
-script_recorder «infer» (fields := #[
+script_recorder «infer» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "init", schema := .expression, nullable := false },
   { name := "chain", nullable := false, schema := .array (.object [
       ("rhs", .expression), ("proof", .union [.expression, .object [("kind", .literal "hole")]])]) }])
@@ -1432,19 +979,14 @@ script_recorder «infer» (fields := #[
       let proof ←
         -- Later tactic proofs need a preceding result that does not exist at this phase.
         if inferContainsSyntheticHole prf.raw || (i > 0 && inferIsTacticProof prf.raw) then
-          pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar "hole")])
+          pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar (json% "hole"))])
         else
           ProofScript.Recording.snapshotExpression (← elabTerm prf (some rhsExpr))
       values := values.push (.object [
         ("rhs", ← ProofScript.Recording.snapshotExpression rhsExpr), ("proof", proof)])
     return .array values
-  recordStep [] (parameters := { parameters := #[
-    { name := "init", timing := .once, onFailure := .required,
+  recordStep (before := #[
+    { name := "init", onFailure := .required,
       capture := ProofScript.Recording.expression init.raw },
-    { name := "chain", timing := .once, onFailure := .required, capture := captureChain }
-  ] })
-
-
-script_info «infer» {
-  renderer := «infer»
-}
+    { name := "chain", onFailure := .required, capture := captureChain }
+  ])

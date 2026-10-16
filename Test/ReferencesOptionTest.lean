@@ -1,5 +1,7 @@
 import ProofScript
 
+project_info "Test.ReferencesOptionTest" { title := "ReferencesOptionTest" }
+
 theorem option_ref (P : Prop) (h : P) : P := h
 theorem_info option_ref {tags := ["option"]}
 

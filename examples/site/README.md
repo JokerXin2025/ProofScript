@@ -7,6 +7,8 @@ This project demonstrates every ProofScript component currently rendered by PS4H
 - build-time code highlighting through Pygments, with plain-text fallback for unknown languages;
 - theorem components and proof-tree rendering;
 - cross-module theorem references and the references component.
+- proof-derived dependency navigation with theorem and lemma bodies sharing mouse interaction with their navigation;
+- a single explicit project ID, `"PS4HTMLDemo"`, shared by the theorem library, gallery and dependency examples;
 - a real Lean/Wasm Fibonacci computation with a range control, chart, timing, loading, and error states.
 
 Build it from this directory:
@@ -56,3 +58,33 @@ To render the existing ProofScript JSON without compiling Lean again:
 ```bash
 ps4html make --cache
 ```
+
+The theorem library includes an ordinary Lean theorem with explicit `theorem_info.project`,
+a recorded lemma using it, and a theorem on the Dependencies page using that lemma. The
+ordinary theorem remains an unlinked dependency node; the exported lemma has a reverse link
+to the other page. Dependencies are direct references in the final proof, filtered by the
+frozen `ProjectId`. Reference collection is independent of this graph.
+
+Move the mouse over a theorem to show its navigation. Moving to that navigation preserves
+the source selection so its links can be clicked. Moving outside both areas hides it after
+150 ms; another theorem switches immediately. Scroll and layout changes recheck the saved
+mouse position. Hash navigation alone does not select a theorem.
+
+From the repository root, check the interaction controller and the generated site with Node 22+
+and Chrome (`CHROME` may specify a different browser executable):
+
+```bash
+node Test/test_theorem_navigation_browser.mjs
+node Test/test_theorem_site_browser.mjs
+```
+
+The generated-site check uses the published HTML, CSS, JS and matching exported proof facts,
+including cross-page reverse edges, lemma language switching and navigation clicks. It loads
+the page's normal KaTeX CDN assets, so network access is required. Internal Python test scripts
+were removed after acceptance; they are not part of the build.
+
+Info bundles use protocol `4.0.0`, theorem manifest `4`, and snapshot payload `3`. To migrate
+older exports, rebuild with `lake build PS4HTMLDemo:ps4html`; `--cache` never upgrades exports
+or invokes Lean. If an old installation used real directories at the build/input release-link
+paths, archive that project's `.PS4HTML` directory before rebuilding. Do not edit protocol
+versions or add empty dependency arrays to old JSON. See the [migration notes](../../docs/Theorem-Navigation-Refactor-Plan-zh.md).

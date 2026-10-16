@@ -5,10 +5,12 @@ import shutil
 import fcntl
 import tempfile
 from contextlib import contextmanager
+from decimal import Decimal
 from pathlib import Path
+from urllib.parse import quote as quote_url_path
 from PS4HTML.engine import render_index
-from PS4HTML.page import PageRenderer, build_label_index, build_theorem_dependency_index, directory_modules, discover_pages
-from PS4HTML.schema import SCHEMA_VERSION
+from PS4HTML.page import PageRenderer, build_label_index, directory_modules, discover_pages
+from PS4HTML.theorem_graph import TheoremGraph
 from PS4HTML.project import PS4HTMLError, find_project_root
 from PS4HTML.assets import publish_assets
 from PS4HTML.i18n import DEFAULT_LANGUAGE
@@ -31,7 +33,7 @@ def make():
     return root / ".PS4HTML" / "build"
 
 
-def build_library(package: str, library: str, modules_and_sources: list[str]):
+def build_library(package: str, library: str, modules_and_sources: list[str], *, source_root=None):
     """Called by the Lake facet after Lake has built this library's Lean artifacts."""
     root = find_project_root(Path.cwd())
     if len(modules_and_sources) % 2:
@@ -53,15 +55,56 @@ def build_library(package: str, library: str, modules_and_sources: list[str]):
                 source = Path(source_name)
                 if not source.is_file():
                     raise PS4HTMLError(f"Missing Lean source for {name}: {source}")
-                _compile_source(root, source, environment)
+                _compile_source(root, source, environment, source_root=source_root)
+            exporter = environment.get("PROOF_SCRIPT_EXPORTER")
+            if not exporter:
+                raise PS4HTMLError("Missing Lean Info exporter; build through the Lake ps4html facet")
+            _run_lake([exporter, str(export_root), *sorted(modules)], root, environment)
+            index = json.loads((export_root / "info/index.json").read_text())
+            original_pages = {artifact["path"]: json.loads(
+                (export_root / artifact["path"].removeprefix(".ProofScript/")).read_text(), parse_float=Decimal)
+                for artifact in index["artifacts"] if artifact["kind"] == "page"}
             _build_computations(root, export_root)
+            _seal_resources(export_root, original_pages=original_pages)
             rendered = stage / "site"
             render_site(root, rendered, modules, export_root)
-            snapshot = root / ".PS4HTML" / "inputs" / package / library / ".ProofScript"
-            _replace_tree(export_root, snapshot)
-            _replace_tree(rendered, output)
+            _publish_release(root, package, library, stage)
             _write_project_index(root)
     return output
+
+
+def _publish_release(root, package, library, stage):
+    """One atomic pointer selects matching input and HTML trees; failed staging is never visible."""
+    import hashlib
+    releases = root / ".PS4HTML" / "releases" / package / library
+    releases.mkdir(parents=True, exist_ok=True)
+    identity = hashlib.sha256()
+    for path in sorted(stage.rglob("*")):
+        if path.is_file():
+            identity.update(path.relative_to(stage).as_posix().encode())
+            identity.update(path.read_bytes())
+    release = releases / identity.hexdigest()
+    if not release.exists():
+        with tempfile.TemporaryDirectory(dir=releases) as temporary:
+            prepared = Path(temporary) / "release"
+            shutil.copytree(stage, prepared)
+            prepared.rename(release)
+    current = releases / "current"
+    next_pointer = releases / "current.next"
+    next_pointer.unlink(missing_ok=True)
+    next_pointer.symlink_to(release.name, target_is_directory=True)
+    # Public aliases remain stable across releases and resolve through the one current pointer.
+    for alias, target in (
+        (root / ".PS4HTML" / "inputs" / package / library / ".ProofScript", current / ".ProofScript"),
+        (root / ".PS4HTML" / "build" / package / library, current / "site"),
+    ):
+        alias.parent.mkdir(parents=True, exist_ok=True)
+        if alias.is_symlink():
+            continue
+        if alias.exists():
+            raise PS4HTMLError(f"Expected a release link at {alias}; remove the directory before rebuilding")
+        alias.symlink_to(os.path.relpath(target, alias.parent), target_is_directory=True)
+    next_pointer.replace(current)
 
 
 def _safe_module_name(name: str) -> bool:
@@ -69,6 +112,60 @@ def _safe_module_name(name: str) -> bool:
     return (isinstance(name, str) and all(part and part != ".." for part in name.split("."))
             and not any(char in name for char in "/\\\0")
             and not any(ord(char) < 32 or ord(char) == 127 for char in name))
+
+
+def _seal_resources(export_root, *, original_pages=None):
+    """Seal finalized computation pages and binary resources after Lean has checked source digests."""
+    import hashlib
+    from PS4HTML.info import digest
+    index_path = export_root / "info" / "index.json"
+    index = json.loads(index_path.read_text())
+    entries = {entry["path"]: entry for entry in index["files"]}
+    for artifact in index["artifacts"]:
+        path = artifact["path"].removeprefix(".ProofScript/")
+        document = json.loads((export_root / path).read_text(), parse_float=Decimal)
+        published = digest(document)
+        if published != artifact["contentDigest"]:
+            if artifact["kind"] != "page":
+                raise PS4HTMLError(f"Proof changed after Lean export: {path}")
+            original = (original_pages or {}).get(artifact["path"])
+            if original is None or not _only_computations_finalized(original, document):
+                raise PS4HTMLError(f"Unexpected page change after Lean export: {path}")
+            artifact["publishedDigest"] = published
+            artifact["transform"] = "finalize-computations"
+            entries[path]["digest"] = published
+    for path in sorted((export_root / "resources").rglob("*")):
+        if path.is_file():
+            relative = path.relative_to(export_root).as_posix()
+            entries[relative] = {"path": relative, "sha256": hashlib.sha256(path.read_bytes()).hexdigest()}
+    index["files"] = list(entries.values())
+    index_path.write_text(json.dumps(index, ensure_ascii=False, indent=2))
+
+
+def _only_computations_finalized(original, published):
+    """The computation finalizer may replace execution resources, preserving all page metadata."""
+    import copy
+    normalized = copy.deepcopy(published)
+    before = original.get("components", [])
+    after = normalized.get("components", [])
+    if len(before) != len(after):
+        return False
+    for source, target in zip(before, after):
+        source_value = source.get("data", {}).get("computation", {}).get("value")
+        target_value = target.get("data", {}).get("computation", {}).get("value")
+        if not isinstance(source_value, dict) or not isinstance(target_value, dict):
+            continue
+        old, new = source_value.get("execution", {}), target_value.get("execution", {})
+        if old == new:
+            continue
+        if old.get("backend") != "wasm" or old.get("status") != "pending" or new.get("status") != "ready":
+            return False
+        if any(old.get(key) != new.get(key) for key in ("backend", "bundleId", "entry", "wrapper")):
+            return False
+        if not all(isinstance(new.get(key), dict) and "$resource" in new[key] for key in ("manifest", "module", "wasm")):
+            return False
+        target_value["execution"] = old
+    return normalized == original
 
 
 @contextmanager
@@ -104,16 +201,23 @@ def _publish_render(root, output, export_root=None):
     staging = root / ".PS4HTML" / "staging"
     staging.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=staging) as temporary:
-        rendered = Path(temporary) / "site"
-        render_site(root, rendered, export_root=export_root)
-        _replace_tree(rendered, output)
+        stage = Path(temporary)
+        rendered = stage / "site"
+        if export_root is not None and output.parent.parent == root / ".PS4HTML" / "build":
+            cached = stage / ".ProofScript"
+            shutil.copytree(export_root, cached)
+            render_site(root, rendered, export_root=cached)
+            _publish_release(root, output.parent.name, output.name, stage)
+        else:
+            render_site(root, rendered, export_root=export_root)
+            _replace_tree(rendered, output)
 
 
 def _write_project_index(root):
     index = root / ".PS4HTML" / "build" / "index.html"
     index.parent.mkdir(parents=True, exist_ok=True)
     sites = sorted(index.parent.glob("*/*/index.html")) + sorted(index.parent.glob("cached-project/index.html"))
-    links = "".join(f'<li><a href="{path.relative_to(index.parent)}">{path.parent.name}</a></li>' for path in sites)
+    links = "".join(f'<li><a href="{quote_url_path(path.relative_to(index.parent).as_posix())}">{path.parent.name}</a></li>' for path in sites)
     next_index = index.with_name("index.html.next")
     next_index.write_text(f'<!doctype html><meta charset="utf-8"><title>PS4HTML</title><ul>{links}</ul>', encoding="utf-8")
     next_index.replace(index)
@@ -121,22 +225,23 @@ def _write_project_index(root):
 
 def render_site(root, build_root, modules=None, export_root=None):
     """Render already exported JSON without invoking Lean or computation tools."""
-    _validate_render_inputs(export_root or root / ".ProofScript")
+    bundle = _validate_render_inputs(export_root or root / ".ProofScript")
     print("Discovering cached pages...", flush = True)
-    all_pages = discover_pages(root, export_root)
+    all_pages = discover_pages(root, export_root, bundle=bundle)
+    theorem_graph = TheoremGraph.from_bundle(bundle, all_pages)
     pages = [page for page in all_pages if modules is None or page.module in modules]
     if not pages:
         raise PS4HTMLError("No ProofScript pages found for this library")
-    project_info = load_project_info(export_root or root / ".ProofScript", modules)
+    project_info = load_project_info(export_root or root / ".ProofScript", modules, bundle=bundle)
     language = DEFAULT_LANGUAGE
     _publish_runtime_assets(build_root)
     _publish_computation_resources(root, build_root, export_root)
     labels = build_label_index(pages)
-    theorem_dependencies = build_theorem_dependency_index(pages, root, export_root)
     renderer = PageRenderer(
         root, build_root, labels, pages,
-        default_language=language, theorem_dependencies=theorem_dependencies, export_root=export_root,
+        default_language=language, theorem_graph=theorem_graph, export_root=export_root,
         project_info=project_info,
+        bundle=bundle,
     )
     pages_by_module = {page.module: page for page in pages}
     render_pages = {page.module: page for page in pages if "." in page.module}
@@ -185,226 +290,25 @@ def render_site(root, build_root, modules=None, export_root=None):
     return build_root
 
 
-def load_project_info(export_root, modules=None):
-    export_root = Path(export_root)
-    records = []
-    for path in sorted(export_root.glob("projects/**/*.json")):
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if not isinstance(data, dict) or not isinstance(data.get("module"), str) or not isinstance(data.get("ProjectInfo"), dict):
-            raise PS4HTMLError(f"Invalid project_info record: {path}")
-        if modules is None or data["module"] in modules:
-            records.append((path, data["ProjectInfo"]))
-    if len(records) > 1:
-        raise PS4HTMLError("project_info may only be configured once: " + ", ".join(str(path) for path, _ in records))
-    project_info = records[0][1] if records else {}
-    project_file = export_root / "project.json"
-    project_file.write_text(
-        json.dumps({"schemaVersion": SCHEMA_VERSION, "ProjectInfo": project_info}, ensure_ascii=False, indent=2),
-        encoding="utf-8",
-    )
-    document = json.loads(project_file.read_text(encoding="utf-8"))
-    if document.get("schemaVersion") != SCHEMA_VERSION or not isinstance(document.get("ProjectInfo"), dict):
-        raise PS4HTMLError(f"Invalid project metadata: {project_file}")
-    return document["ProjectInfo"]
+def load_project_info(export_root, modules=None, *, bundle=None):
+    from PS4HTML.info import InfoBundle
+    bundle = bundle or InfoBundle(export_root)
+    pages = [artifact for artifact in bundle.artifacts.values()
+             if artifact["kind"] == "page" and (modules is None or artifact["module"] in modules)]
+    if not pages:
+        return {}
+    roots = {page["module"].split(".")[0] for page in pages}
+    root_page = next((page for page in pages if page["module"] in roots), None)
+    selected = root_page if root_page is not None else (pages[0] if len(pages) == 1 else None)
+    if selected is None or selected.get("projectId") is None:
+        return {}
+    return bundle.projects(selected["snapshotId"]).get(selected["projectId"], {})
 
 
 def _validate_render_inputs(export_root):
-    """Require each proof module's resolved rendering rules before publishing."""
-    from PS4HTML.render_rules import (load_effective_rules, validate_record, validate_rules,
-                                     validate_template, template_language)
-    from Lean2TeX.configuration import ConfigurationIndex
-    from PS4HTML.recording import SUPPORTED_RECORDING_VERSIONS, validate_contract
-    root = Path(export_root)
-    modules = {}
-    for path in root.glob("rendering/modules/**/*.json"):
-        data = json.loads(path.read_text(encoding="utf-8"))
-        if data.get("schemaVersion") not in SUPPORTED_RECORDING_VERSIONS:
-            raise PS4HTMLError(f"Unsupported render module manifest: {path}")
-        modules[data["module"]] = data
-    if not modules:
-        raise PS4HTMLError("Missing rendering module manifests")
-    try:
-        snapshots = load_effective_rules(root)
-        lean2tex_configs = ConfigurationIndex(root)
-    except (OSError, ValueError) as error:
-        raise PS4HTMLError(f"Invalid rendering inputs: {error}") from error
-    events_by_module = {}
-    event_files = {}
-    for event_path in (*root.glob("tactics/**/*.json"), *root.glob("strategys/**/*.json")):
-        data = json.loads(event_path.read_text(encoding="utf-8"))
-        if data.get("schemaVersion") not in SUPPORTED_RECORDING_VERSIONS or not isinstance(data.get("events"), list):
-            raise PS4HTMLError(f"Unsupported script_info event file: {event_path}")
-        if data["module"] not in modules:
-            raise PS4HTMLError(f"Missing module manifest for {event_path}")
-        sequences = [event["sequence"] for event in data["events"]]
-        if sequences != sorted(set(sequences)):
-            raise PS4HTMLError(f"Out-of-order script_info events in {event_path}")
-        key = (data["module"], event_path.relative_to(root).parts[0])
-        if key in event_files:
-            raise PS4HTMLError(f"Duplicate script_info event file for {key}: {event_path}")
-        event_files[key] = event_path
-        events_by_module.setdefault(data["module"], []).extend(data["events"])
-    for owner, manifest in modules.items():
-        for entry in manifest.get("registrations", []):
-            if manifest["schemaVersion"] == "0.1.0" and "recordedFields" not in entry:
-                raise PS4HTMLError(f"Missing recordedFields contract in {owner}")
-            try:
-                validate_contract(entry.get("recordedFields"))
-            except ValueError as error:
-                raise PS4HTMLError(f"Invalid recording contract in {owner}: {error}") from error
-            if entry.get("owner") != owner:
-                raise PS4HTMLError(f"Invalid registration owner in {owner}")
-            directory = "strategys" if entry.get("strategy") else "tactics"
-            if any(event.get("ruleId") == entry.get("ruleId") for event in events_by_module.get(owner, ())):
-                if (owner, directory) not in event_files:
-                    raise PS4HTMLError(f"Missing {directory} event file for {owner}")
-    def incoming_rules(module):
-        seen, visiting, ordered = set(), set(), []
-
-        def visit(name):
-            if name in visiting:
-                raise PS4HTMLError(f"Cyclic rendering imports in {module}: {name}")
-            if name in seen:
-                return
-            if name not in modules:
-                raise PS4HTMLError(f"Missing rendering module manifest for {name}")
-            visiting.add(name)
-            for parent in modules[name].get("imports", []):
-                visit(parent)
-            visiting.remove(name)
-            seen.add(name)
-            ordered.append(name)
-
-        for imported in modules[module].get("imports", []):
-            visit(imported)
-
-        def imports(owner, ancestor):
-            pending, visited = [owner], set()
-            while pending:
-                current = pending.pop()
-                if current == ancestor:
-                    return True
-                if current in visited:
-                    continue
-                visited.add(current)
-                pending.extend(modules[current].get("imports", []))
-            return False
-
-        merged, writers = {}, {}
-        for owner in ordered:
-            for event in sorted(events_by_module.get(owner, ()), key=lambda entry: entry["sequence"]):
-                rule_id, fields = event.get("ruleId"), event.get("fields")
-                if not isinstance(rule_id, str) or not isinstance(fields, dict):
-                    raise PS4HTMLError(f"Invalid script_info event in {owner}")
-                values = merged.setdefault(rule_id, {})
-                for key, value in fields.items():
-                    if key == "template":
-                        try:
-                            languages = [template_language(item) for item in value]
-                        except (TypeError, ValueError):
-                            languages = []
-                        if not languages or any(not lang for lang in languages) or len(set(languages)) != len(languages):
-                            raise PS4HTMLError(f"Invalid script_info template in {owner}")
-                        registration = next((r for module in modules.values()
-                                             for r in module.get("registrations", []) if r["ruleId"] == rule_id), None)
-                        if registration is None:
-                            raise PS4HTMLError(f"Unknown script_info registration {rule_id} in {owner}")
-                        try:
-                            validate_template(value, registration["strategy"])
-                        except ValueError as error:
-                            raise PS4HTMLError(f"Invalid script_info template in {owner}: {error}") from error
-                        keys = [f"template.{lang}" for lang in languages]
-                    else:
-                        keys = [key]
-                    for field in keys:
-                        previous = writers.get((rule_id, field), set())
-                        conflicts = [old for old in previous if old != owner and
-                                     not imports(owner, old) and not imports(old, owner)]
-                        if conflicts:
-                            raise PS4HTMLError(f"Conflicting script_info {rule_id}.{field} in {owner} and {conflicts[0]}")
-                        writers[(rule_id, field)] = {old for old in previous if not imports(owner, old)} | {owner}
-                    if key == "template":
-                        existing = values.setdefault("template", [])
-                        positions = {template_language(item): index for index, item in enumerate(existing)}
-                        for item in value:
-                            language = template_language(item)
-                            if language in positions:
-                                existing[positions[language]] = item
-                            else:
-                                existing.append(item)
-                    else:
-                        values[key] = value
-        return merged
-
-    for proof_path in root.glob("proofs/**/*.json"):
-        document = json.loads(proof_path.read_text(encoding="utf-8"))
-        if "proof" not in document:
-            continue
-        if document.get("schemaVersion") not in SUPPORTED_RECORDING_VERSIONS:
-            raise PS4HTMLError(f"Unsupported proof version in {proof_path}")
-        proof_module = document.get("module")
-        if not isinstance(proof_module, str) or proof_module not in modules:
-            raise PS4HTMLError(f"Invalid proof module in {proof_path}")
-        try:
-            lean2tex_configs.effective(proof_module)
-        except (OSError, ValueError, json.JSONDecodeError) as error:
-            raise PS4HTMLError(f"Invalid Lean2TeX configuration for {proof_module}: {error}") from error
-        rules_path, snapshot = snapshots.get(proof_module, (None, None))
-        if snapshot is None:
-            raise PS4HTMLError(f"Missing effective rules for {proof_module}")
-        try:
-            configured = validate_rules(snapshot, proof_module,
-                                        modules[proof_module].get("imports"))
-        except (OSError, ValueError) as error:
-            raise PS4HTMLError(f"Invalid effective rules {rules_path}: {error}") from error
-        merged = incoming_rules(proof_module)
-        if any(key not in configured or configured[key]["fields"] != value
-               for key, value in merged.items()):
-            raise PS4HTMLError(f"Effective rule fields disagree with imported script_info in {proof_module}")
-        visible = set()
-        pending = [proof_module]
-        while pending:
-            owner = pending.pop()
-            if owner in visible:
-                continue
-            visible.add(owner)
-            pending.extend(modules[owner].get("imports", []))
-        registrations = {
-            entry["ruleId"]: entry for owner in visible
-            for entry in modules[owner].get("registrations", [])
-        }
-        if set(configured) != set(registrations):
-            raise PS4HTMLError(f"Effective rules do not cover visible registrations in {proof_module}")
-        for rule_id, entry in configured.items():
-            registration = registrations[rule_id]
-            if entry["strategy"] != registration["strategy"]:
-                raise PS4HTMLError(f"Strategy classification differs for {rule_id}")
-            if entry.get("recordedFields") != registration.get("recordedFields"):
-                raise PS4HTMLError(f"Recording contract differs for {rule_id}")
-            default_fields = ({"renderer": "strategy"} if registration["strategy"] else
-                              {"template": [{"lang": "zh", "tag": registration["name"], "content": ""}]})
-            if rule_id not in merged and entry["fields"] != default_fields:
-                raise PS4HTMLError(f"Invalid default rendering rule for {rule_id}")
-
-        def check_records(records, path=()):
-            for index, record in enumerate(records):
-                if not isinstance(record, dict) or index % 2 == 0:
-                    continue
-                rule_id = record.get("_ruleId")
-                if not isinstance(rule_id, str):
-                    raise PS4HTMLError(f"Missing recorded rule ID in {proof_path}, {path} step {index}")
-                if rule_id not in configured:
-                    raise PS4HTMLError(f"Missing rendering rule for {rule_id} in {proof_module}")
-                try:
-                    validate_record(configured[rule_id], record, records[index - 1], document["schemaVersion"])
-                except ValueError as error:
-                    raise PS4HTMLError(f"Invalid recorded step {proof_path}, {path} index {index}: {error}") from error
-                if configured[rule_id]["fields"].get("display") is False:
-                    continue
-                for branch in record.get("branches", []):
-                    if isinstance(branch, dict) and isinstance(branch.get("proof"), list):
-                        check_records(branch["proof"], path + (f"{index}:{branch['name']}",))
-        check_records(document["proof"])
+    """Validate the completed bundle and every step, including hidden and embedded proofs."""
+    from PS4HTML.info import InfoBundle
+    return InfoBundle(export_root)
 
 
 def _diagnostic_summary(diagnostics):
@@ -451,10 +355,10 @@ def _run_lake(command, project_root, environment=None):
         raise PS4HTMLError(f"Lean build failed:\n{''.join(output)}")
 
 
-def _compile_source(project_root, source, environment=None):
+def _compile_source(project_root, source, environment=None, *, source_root=None):
     print(f"\n[PS4HTML] Exporting {source}", flush=True)
     _run_lake(
-        [os.environ.get("LEAN", "lean"), str(source)],
+        [os.environ.get("LEAN", "lean"), "--root", str(source_root or project_root), str(source)],
         project_root, environment,
     )
 

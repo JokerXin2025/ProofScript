@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 card.classList.add('is-flipped');
                 requestAnimationFrame(() => {
                     inner.style.height = `${Math.max(frontHeight, minimumCodeHeight)}px`;
+                    document.dispatchEvent(new Event('ps4html:layoutchange'));
                 });
             } else {
                 const frontHeight = Number(inner.dataset.frontHeight);
@@ -27,6 +28,7 @@ document.addEventListener('DOMContentLoaded', () => {
                     if (!inner.classList.contains('flipped')) {
                         inner.style.height = '';
                         delete inner.dataset.frontHeight;
+                        document.dispatchEvent(new Event('ps4html:layoutchange'));
                     }
                 }, 550);
             }
@@ -36,6 +38,7 @@ document.addEventListener('DOMContentLoaded', () => {
             button.title = flipped
                 ? (button.dataset.backTitle || '返回证明')
                 : (button.dataset.frontTitle || '查看 Lean 源码');
+            document.dispatchEvent(new Event('ps4html:layoutchange'));
         });
 
         inner.addEventListener('transitionend', event => {
@@ -43,6 +46,7 @@ document.addEventListener('DOMContentLoaded', () => {
                 inner.style.height = '';
                 delete inner.dataset.frontHeight;
             }
+            document.dispatchEvent(new Event('ps4html:layoutchange'));
         });
     });
 });

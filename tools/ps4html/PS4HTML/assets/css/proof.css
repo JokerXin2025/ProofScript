@@ -1,0 +1,121 @@
+.theorem-proof {
+    --proof-indent: 20px;
+    --proof-inset: 12px;
+    scroll-margin-top: 24px;
+}
+
+.proof-indent-control {
+    position: absolute;
+    top: 28px;
+    right: calc(100% + 3px);
+    z-index: 2;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    width: 18px;
+    color: var(--text-muted);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    font-size: 9px;
+    font-weight: 600;
+    opacity: 0;
+    transition: opacity 0.2s ease;
+}
+
+.proof-indent-control:has(.proof-indent-slider:hover),
+.proof-indent-control:has(.proof-indent-slider:focus-visible) {
+    opacity: 1;
+}
+
+.proof-indent-value {
+    min-width: 18px;
+    text-align: center;
+}
+
+.proof-indent-slider {
+    width: 76px;
+    height: 4px;
+    margin: 34px -29px;
+    transform: rotate(90deg);
+    -webkit-appearance: none;
+    appearance: none;
+    border-radius: 2px;
+    outline: none;
+    background: #bfdbfe;
+    cursor: ns-resize;
+}
+
+.proof-indent-slider::-webkit-slider-thumb {
+    width: 14px;
+    height: 14px;
+    -webkit-appearance: none;
+    appearance: none;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: var(--current-step-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+    cursor: ns-resize;
+}
+
+.proof-indent-slider::-moz-range-thumb {
+    width: 14px;
+    height: 14px;
+    box-sizing: border-box;
+    border: 2px solid #fff;
+    border-radius: 50%;
+    background: var(--current-step-color);
+    box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+    cursor: ns-resize;
+}
+
+.proof-children {
+    margin: 12px 0;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    transition: 0.25s;
+}
+
+.proof-tag {
+    display: inline-flex;
+    align-items: center;
+    line-height: 1;
+    font-size: 12px;
+    font-family: system-ui, -apple-system, sans-serif;
+    font-weight: 600;
+    margin-left: 8px;
+    margin-right: 16px;
+    border-radius: 6px;
+    padding: 8px 10px;
+    letter-spacing: 0.27px;
+}
+.proof-tag.default {
+    background: var(--tag-color-background);
+    color: var(--tag-color);
+}
+
+.proof-status.pass {
+    color: var(--proof-mark-pass-color-light);
+}
+.proof-status.sorry {
+    color: var(--proof-mark-warning-color-light);
+}
+.proof-status.error {
+    color: var(--proof-mark-error-color-light);
+}
+
+.proof-reference-link {
+    color: var(--ref-color);
+    margin: 0 4px;
+    border-bottom: 1px dashed var(--ref-color); 
+    transition: 0.25s;
+}
+.proof-reference-link:hover {
+    border-bottom-style: solid;
+}
+
+.proof-qed {
+    text-align: right; 
+    font-size: 24px;
+    margin: 12px;
+}

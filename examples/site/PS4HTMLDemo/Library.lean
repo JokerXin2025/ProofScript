@@ -1,6 +1,6 @@
 import ProofScript
 
-project_info {
+project_info "PS4HTMLDemo" {
   title := "PS4HTML 完整组件展示",
   authors := ["PS4HTML Contributors"],
   description := "一个由 ProofScript 编写并由 PS4HTML 生成的交互式形式化数学展示项目。",
@@ -16,7 +16,7 @@ namespace PS4HTMLDemo.Library
 = 参考定理库 <library>
 
 本模块提供主展示页面所引用的基础结果。定理元数据会跨模块保存在环境中，
-当另一个 `@theorem` 使用这些结果时，ProofScript 会自动把它们加入参考文献暂存区。
+同项目定理的最终证明引用会进入依赖图；可选的参考文献收集独立工作。
 "#
 
 @theorem andLeft (P Q : Prop) (h : P ∧ Q) : P := script
@@ -27,6 +27,15 @@ theorem_info andLeft {
   name := "合取左投影",
   tags := ["logic", "projection"]
 }
+
+-- Ordinary Lean theorems need explicit project ownership to enter the project graph.
+theorem ordinaryIdentity (P : Prop) (h : P) : P := h
+theorem_info ordinaryIdentity { project := "PS4HTMLDemo", name := "普通 Lean 恒等定理" }
+
+@lemma identityLemma (P : Prop) (h : P) : P := script
+  apply (ordinaryIdentity P)
+  assumption
+theorem_info identityLemma { name := "普通定理的 lemma 包装" }
 
 @text r#"
 上面的证明展示了一个最小但完整的 theorem component。主页面会引用

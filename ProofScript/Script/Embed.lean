@@ -1,6 +1,6 @@
 import ProofScript.Script.Script
 import ProofScript.Script.ScriptDB
-import ProofScript.Script.RenderInfo
+import ProofScript.Info.Commands
 
 open Lean
 open Lean.Elab.Tactic (evalTactic)
@@ -56,9 +56,8 @@ script_recorder embed
   let ruleId ← getRecordingRule
   let tag ← currentRecordingTag
   let boxName := tag
-  -- ① 前导目标记录器 → 主 box
+  -- ① 目标快照与其他字段一起写入单个步骤对象。
   let goalJson ← Lean.Elab.Tactic.withMainContext <| Expr2JSON (← GetGoal) { withTypes := true }
-  appendBoxItem boxName (Json.mkObj [("_goal_", goalJson)])
   -- ② elaborate 定理应用 → 头常量、结论类型、参数
   let e ← Lean.Elab.Tactic.withMainContext <| Lean.Elab.Tactic.elabTerm proof none
   let e ← Lean.instantiateMVars e
@@ -76,7 +75,7 @@ script_recorder embed
       catch _ => pure false
       pure (Json.str (if isProof then "proof" else "data")))
   -- ③ Replay the persisted script in a child recording box.
-  let proofJson ← match findScript (← getEnv) c with
+  let (proofJson, bindings) ← match findScript (← getEnv) c with
     | some data => do
         let (_, stmts) := scriptDataParts data
         let recTactics ← collectRecordTactics stmts
@@ -85,25 +84,39 @@ script_recorder embed
         let subGoal ← Lean.Elab.Tactic.withMainContext <| mkReplayGoal fullType
         let subTag := tag ++ "_embed_" ++ h.getId.toString
         ensureBox subTag
-        pushBoxTag subTag
+        pushRecordingTag subTag
         let subGoals ← try
             Lean.Elab.Tactic.evalTacticAt seq' subGoal.mvarId!
           finally
-            popBoxTag
+            popRecordingTag
         unless subGoals.isEmpty do
           throwError "embed: 被嵌入定理的证明未闭合（剩余目标）"
         let subName := subTag
-        let proofArr ← takeBox subName
-        pure (Json.arr proofArr)
-    | none => Lean.Elab.Tactic.withMainContext <| Expr2JSON e
+        let (proofArr, bindings) ← takeBoxWithContracts subName
+        pure (Json.arr proofArr, bindings.map fun binding =>
+          { binding with path := #[.field "proof"] ++ binding.path })
+    | none => do
+        let expression ← Lean.Elab.Tactic.withMainContext <| Expr2JSON e
+        pure (expression, #[])
   -- ④ 引入 h
   evalTactic (← `(tactic| have $h:ident := $proof:term))
   let hValue ← Recording.isolatedCapture (Recording.expression h.raw)
   let hJson ← Recording.commitValue hValue
+  let afterGoal ← Recording.isolatedCapture (Recording.goalSnapshot)
+  let afterGoalJson ← Recording.commitValue afterGoal
   -- ⑤ 参数记录器 → 主 box
-  let fields := [("h", hJson), ("type", typeJson), ("theorem", Json.str c.toString),
-                  ("args", argsJson), ("argKinds", argKindsJson), ("proof", proofJson)]
-  appendBoxItem boxName (paramsRecJson fields ruleId)
+  let step := json% {
+    _ruleId: $ruleId,
+    goal_before: $goalJson,
+    goal_after: $afterGoalJson,
+    h: $hJson,
+    type: $typeJson,
+    "theorem": $(c.toString),
+    args: $argsJson,
+    argKinds: $argKindsJson,
+    proof: $proofJson
+  }
+  appendBoxItem boxName step bindings
 
 script_info embed { renderer := embed }
 

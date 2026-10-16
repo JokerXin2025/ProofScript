@@ -47,12 +47,8 @@ def parseComponentMetadata (stx : Syntax) : Except String ComponentMetadata := d
 
 def componentMetadataJson (metadata : ComponentMetadata) := toJson metadata
 
-def sourceLocation (stx : Syntax) : CoreM SourceLocation := do
-  return {
-    file := ← getFileName
-    start := (stx.getPos?.getD 0).byteIdx
-    stop := (stx.getTailPos?.getD (stx.getPos?.getD 0)).byteIdx
-  }
+def sourceLocation (stx : Syntax) : CoreM Foundation.SourceLocation := do
+  return Foundation.SourceLocation.ofSyntax (← getFileName) stx
 
 /-- Adds component data to the current page. Custom component modules can use this
     after implementing their own syntax, validation, and JSON representation. -/

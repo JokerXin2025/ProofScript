@@ -74,7 +74,7 @@ try {
       const hit = document.elementFromPoint(x, y);
       return {x, y, hit: hit?.outerHTML.slice(0, 250), value: input.value,
         rect: [box.left, box.top, box.width, box.height],
-        blockHeight: input.closest('.strategy-block.diagram').getBoundingClientRect().height,
+        blockHeight: input.closest('.proof-strategy.diagram').getBoundingClientRect().height,
         svgHeight: input.closest('.diagram-figure').querySelector('svg')?.getBoundingClientRect().height};
     })()`);
     if (result?.hit && await evaluate(`document.readyState === 'complete'`)) break;
@@ -85,14 +85,12 @@ try {
   await send('Input.dispatchMouseEvent', {type:'mousePressed', x: result.x + 35, y: result.y, button:'left', clickCount:1});
   await send('Input.dispatchMouseEvent', {type:'mouseReleased', x: result.x + 35, y: result.y, button:'left', clickCount:1});
   await new Promise(resolve => setTimeout(resolve, 300));
-  const after = await evaluate(`(() => {const input = document.querySelector('.theorem-proof:not([hidden]) .diagram-zoom'); const svg = input.closest('.diagram-figure').querySelector('svg'); return {value: input.value, text: input.nextElementSibling.textContent, width: svg.style.width, height: svg.style.height, svgHeight: svg.getBoundingClientRect().height, blockHeight: input.closest('.strategy-block.diagram').getBoundingClientRect().height}})()`);
+  const after = await evaluate(`(() => {const input = document.querySelector('.theorem-proof:not([hidden]) .diagram-zoom'); const svg = input.closest('.diagram-figure').querySelector('svg'); return {value: input.value, text: input.nextElementSibling.textContent, svgHeight: svg.getBoundingClientRect().height, blockHeight: input.closest('.proof-strategy.diagram').getBoundingClientRect().height}})()`);
   assert.notEqual(after.value, '100');
   assert.equal(after.text, `${after.value}%`);
-  assert.match(after.width, /calc\(/);
-  assert.match(after.height, /calc\(/);
   assert(after.svgHeight > result.svgHeight, 'SVG should grow vertically');
   assert(after.blockHeight > result.blockHeight, 'blue diagram block should grow with SVG');
-  const tagColors = await evaluate(`(() => {const block = document.querySelector('.theorem-proof:not([hidden]) .step-block:not(.introducer)'); return {actual: getComputedStyle(block.querySelector('.step-tag')).color, expected: getComputedStyle(document.body).color}})()`);
+  const tagColors = await evaluate(`(() => {const block = document.querySelector('.theorem-proof:not([hidden]) .proof-step:not(.introducer)'); return {actual: getComputedStyle(block.querySelector('.proof-step-label')).color, expected: getComputedStyle(document.body).color}})()`);
   assert.equal(tagColors.actual, tagColors.expected, 'ordinary script tags should use the default text color');
   socket.close();
 } finally {

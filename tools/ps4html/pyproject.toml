@@ -9,7 +9,7 @@ description = "An automatic informalization tool for mathematical proofs in Lean
 requires-python = ">=3.11"
 readme = "README.md"
 license = {file = "PS4HTML/LICENSE-APACHE-2.0.txt"}
-dependencies = ["Pygments>=2.18,<3"]
+dependencies = ["Pygments>=2.18,<3", "jsonschema>=4.18,<5"]
 
 [project.scripts]
 ps4html = "PS4HTML.cli:main"

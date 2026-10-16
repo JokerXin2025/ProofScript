@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proofscript.local/schema/recording-proof-0.1.0.json",
-  "title": "ProofScript recording proof document 0.1.0",
+  "$id": "https://proofscript.local/schema/recording-proof-0.0.0.json",
+  "title": "ProofScript recording proof document 0.0.0",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -10,7 +10,7 @@
   ],
   "properties": {
     "schemaVersion": {
-      "const": "0.1.0"
+      "const": "0.0.0"
     },
     "module": {
       "type": "string",
@@ -42,7 +42,7 @@
     },
     "proof": {
       "type": "array",
-      "minItems": 2,
+      "minItems": 1,
       "items": {
         "$ref": "#/$defs/record"
       }
@@ -55,70 +55,41 @@
   },
   "additionalProperties": false,
   "$defs": {
-    "expressionRef": {
+    "record": {
       "type": "object",
       "required": [
-        "$ref"
+        "_ruleId"
       ],
       "properties": {
-        "$ref": {
+        "_ruleId": {
           "type": "string",
-          "pattern": "^e[0-9]+$"
+          "minLength": 1
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": [
+              "name",
+              "proof"
+            ],
+            "properties": {
+              "name": {
+                "type": "string",
+                "minLength": 1
+              },
+              "proof": {
+                "type": "array",
+                "items": {
+                  "$ref": "#/$defs/record"
+                }
+              }
+            },
+            "additionalProperties": false
+          }
         }
       },
-      "additionalProperties": false
-    },
-    "record": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": [
-            "_goal_"
-          ],
-          "properties": {
-            "_goal_": {
-              "$ref": "#/$defs/expressionRef"
-            }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": [
-            "_ruleId"
-          ],
-          "properties": {
-            "_ruleId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "branches": {
-              "type": "array",
-              "items": {
-                "type": "object",
-                "required": [
-                  "name",
-                  "proof"
-                ],
-                "properties": {
-                  "name": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "proof": {
-                    "type": "array",
-                    "items": {
-                      "$ref": "#/$defs/record"
-                    }
-                  }
-                },
-                "additionalProperties": false
-              }
-            }
-          },
-          "additionalProperties": true
-        }
-      ]
+      "additionalProperties": true
     }
   }
 }

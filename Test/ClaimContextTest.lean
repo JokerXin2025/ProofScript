@@ -44,11 +44,6 @@ example (P : Prop) (hp : P) (Q : P → Prop) (hq : Q hp) : Q hp ∧ Q hp := scri
     | proof => exact hq
     exact (fun (_ : Q hp) => hc) (default : Q hp)
 
-@theorem replayClaimContext (P : Prop) (hp : P) (Q : P → Prop)
-    (hq : Q hp) [Inhabited (Q hp)] : Q hp ∧ Q hp := script
-  embed recordedClaimContext P hp Q hq as result
-  exact result
-
 open Lean Elab Command in
 run_cmd do
   let path := ProofScript.proofOutputPath `Test.ClaimContextTest `recordedClaimContext
@@ -73,7 +68,7 @@ run_cmd do
       | throwError "missing claim proof branch"
     let proof ← ofExcept (claimProof.getObjValAs? (Array Json) "proof")
     unless !proof.isEmpty do throwError "empty claim proof"
-     unless (claim.getObjVal? "h").isOk do throwError "missing claimed hypothesis"
+    unless (claim.getObjVal? "h").isOk do throwError "missing claimed hypothesis"
     unless entries.any (fun j =>
         (j.getObjValAs? String "_ruleId").toOption == some "ProofScript.Script.Basic.exact") do
       throwError "continuation escaped {branch}"

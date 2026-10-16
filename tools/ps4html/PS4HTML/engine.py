@@ -1,5 +1,6 @@
 from string import Template
 from pathlib import Path
+from urllib.parse import quote as quote_url_path
 from textwrap import indent
 import os
 import html
@@ -7,6 +8,7 @@ from contextvars import ContextVar
 from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
 from PS4HTML.i18n import normalize_language, tr
+from PS4HTML.recording import proof_steps
 
 _CURRENT_LANGUAGE = ContextVar("ps4html_language", default="zh")
 
@@ -63,7 +65,7 @@ def render_annotation(sort, icon, content):
         content = content
     )
 
-def render_proof(proof_state, title, content, file_name, lines_count, code, anchor = "", language="zh", default_language="zh"):
+def render_proof(proof_state, title, content, file_name, lines_count, code, anchor = "", language="zh", default_language="zh", theorem_id=""):
     return TEMPLATE_PROOF.substitute(
         proof_state = proof_state,
         title = html.escape(title),
@@ -72,6 +74,7 @@ def render_proof(proof_state, title, content, file_name, lines_count, code, anch
         lines_count = lines_count,
         code = code,
         anchor = html.escape(anchor, quote = True),
+        theorem_id = html.escape(theorem_id, quote=True),
         language = language,
         hidden = "" if language == default_language else "hidden",
         indent_title = tr("proof.indent_title", language),
@@ -142,7 +145,7 @@ def _render_project_index_nodes(nodes, current_dir, prefix):
         path = (*prefix, name)
         page = node["page"]
         output_path = page.output_path if page is not None else _module_output_path(path)
-        href = os.path.relpath(output_path, current_dir)
+        href = quote_url_path(os.path.relpath(output_path, current_dir))
         label = (
             f'<a href="{html.escape(href, quote=True)}">'
             f'<span class="module-index-tree-mark" aria-hidden="true"></span>{html.escape(name)}</a>'
@@ -178,7 +181,9 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
             tree_html = _render_context_siblings(tree, current_dir, current_parts, ())
         else:
             parent_name = parent_path[-1]
-            parent_href = os.path.relpath(_module_output_path(parent_path), current_dir)
+            parent_page = parent_node["page"]
+            parent_output = parent_page.output_path if parent_page is not None else _module_output_path(parent_path)
+            parent_href = quote_url_path(os.path.relpath(parent_output, current_dir))
             parent_label = (
                 f'<a class="module-tree-parent" href="{html.escape(parent_href, quote = True)}">'
                 f'<span class="module-tree-node-mark" aria-hidden="true"></span>{html.escape(parent_name)}</a>'
@@ -249,7 +254,7 @@ def _module_tree_label(name, page, current_dir: Path, is_current: bool, path):
     classes = "module-tree-node is-current" if is_current else "module-tree-node"
     current_attr = ' aria-current="page"' if is_current else ""
     mark = '<span class="module-tree-node-mark" aria-hidden="true"></span>'
-    href = os.path.relpath(page.output_path if page is not None else _module_output_path(path), current_dir)
+    href = quote_url_path(os.path.relpath(page.output_path if page is not None else _module_output_path(path), current_dir))
     return f'<a class="{classes}" href="{html.escape(href, quote = True)}"{current_attr}>{mark}{html.escape(name)}</a>'
 
 
@@ -263,9 +268,8 @@ class ProofEngine:
 
     def __init__(self, data, language="zh", project_root: Path | None = None,
                  expression_resolver=None, resource_loader=None, resource_stack=(), rules=None,
-                 lean2tex_config: EffectiveConfiguration | None = None, proof_version="0.1.0"):
+                 lean2tex_config: EffectiveConfiguration | None = None, step_rules=None):
         self.data = data
-        self.proof_version = proof_version
         self.language = normalize_language(language)
         self.project_root = project_root
         self.expression_resolver = expression_resolver
@@ -273,6 +277,10 @@ class ProofEngine:
         self.resource_stack = tuple(resource_stack)
         self.rules = rules or {}
         self.materialized = rules is not None
+        self.step_rules = step_rules
+        self._structural_parent = ("proof",)
+        self._structural_step = None
+        self.current_rule = None
         # The page supplies a proof-module snapshot; direct callers may pass an
         # empty configuration when no Lean export tree is involved.
         self.renderer = Expr2TeX.from_config(lean2tex_config) if lean2tex_config is not None else Expr2TeX()
@@ -309,33 +317,42 @@ class ProofEngine:
     def text(self, key, **values):
         return tr(key, self.language, **values)
 
-    def render(self, steps, path=()):
-        self.validate(steps)
+    def render(self, steps, path=(), binding_parent=None):
+        steps = proof_steps(steps)
+        previous_parent, previous_step, previous_rule = self._structural_parent, self._structural_step, self.current_rule
+        if binding_parent is not None:
+            self._structural_parent = binding_parent
         token = _CURRENT_LANGUAGE.set(self.language)
         html_blocks = []
         try:
-            for i in range(1, len(steps) // 2 + 1):
-                is_last_step = (i == len(steps) // 2)
-                previous = self.resolve(steps[2 * i - 2])
-                step = self.resolve(steps[2 * i - 1])
-                subsequent = self.resolve(steps[2 * i]) if not is_last_step else {}
-
+            for index, step in enumerate(steps):
                 rule_id = step.get("_ruleId")
-                rule = self.rules.get(rule_id)
+                self._structural_step = self._structural_parent + (index,)
+                rule = self.step_rules.get(self._structural_step) if self.step_rules is not None else self.rules.get(rule_id)
+                self.current_rule = rule
                 if rule is not None:
                     from PS4HTML.render_rules import render_rule
-                    rendered = render_rule(rule, steps[2 * i - 1], steps[2 * i - 2],
-                                           steps[2 * i] if not is_last_step else {},
-                                           self, path, 2 * i - 1)
+                    rendered = render_rule(rule, step, self, path, index)
                     if rendered:
                         html_blocks.append(rendered)
                     continue
 
                 raise ValueError(f"No rendering rule for recorded ID {rule_id!r}")
         finally:
+            self._structural_parent, self._structural_step, self.current_rule = previous_parent, previous_step, previous_rule
             _CURRENT_LANGUAGE.reset(token)
 
         return "\n".join(html_blocks)
+
+    def render_branch(self, steps, branch_index, path):
+        if self.step_rules is None:
+            return self.render(steps, path)
+        return self.render(steps, path, binding_parent=self._structural_step + ("branches", branch_index, "proof"))
+
+    def render_embedded(self, steps, path):
+        if self.step_rules is None:
+            return self.render(steps, path)
+        return self.render(steps, path, binding_parent=self._structural_step + ("proof",))
 
     def resolve(self, value):
         if self.expression_resolver is None:
@@ -344,19 +361,9 @@ class ProofEngine:
 
     @staticmethod
     def validate(steps):
-        if not isinstance(steps, list) or len(steps) < 2:
-            raise ValueError("proof must contain at least one goal and one step")
-        for index, record in enumerate(steps):
-            if not isinstance(record, dict):
-                raise ValueError(f"proof record {index} must be an object")
-            if index % 2 == 0:
-                if "_goal_" not in record:
-                    raise ValueError(f"proof record {index} must be a goal")
-            else:
-                if not isinstance(record.get("_ruleId"), str) or not record["_ruleId"]:
-                    raise ValueError(f"proof record {index} must contain a rule ID")
+        proof_steps(steps)
 
-    def make(self, title, file_name, lines_count, code, anchor = "", state = None, language=None, default_language="zh"):
+    def make(self, title, file_name, lines_count, code, anchor = "", state = None, language=None, default_language="zh", theorem_id=""):
         previous_language = self.language
         if language is not None:
             self.language = normalize_language(language)
@@ -367,11 +374,11 @@ class ProofEngine:
 
         state = PASS if state is None else state
         if state == PASS:
-            proof_state = '<sup class="proof-mark pass"><i class="codicon codicon-check-all"></i></sup>'
+            proof_state = '<sup class="proof-status pass"><i class="codicon codicon-check-all"></i></sup>'
         elif state == SORRY:
-            proof_state = '<sup class="proof-mark sorry"><i class="codicon codicon-warning"></i></sup>'
+            proof_state = '<sup class="proof-status sorry"><i class="codicon codicon-warning"></i></sup>'
         elif state == ERROR:
-            proof_state = '<sup class="proof-mark error"><i class="codicon codicon-error"></i></sup>'
+            proof_state = '<sup class="proof-status error"><i class="codicon codicon-error"></i></sup>'
 
         return render_proof(
             proof_state = proof_state,
@@ -383,4 +390,5 @@ class ProofEngine:
             anchor = anchor,
             language = normalize_language(language or previous_language),
             default_language = normalize_language(default_language),
+            theorem_id = theorem_id,
         )

@@ -1,20 +1,9 @@
-import ProofScript.Script.Recording.Shape
+import ProofScript.Script.Recording.Parser
 import Lean.Elab.Command
+import Lean.Parser.Syntax
 
 namespace ProofScript.Recording
 open Lean Elab Command
-
-/-- Parser extraction and semantic shape are deliberately separate. -/
-inductive ParamParser where
-  | category (name : Name)
-  | array (element : ParamParser) (separated : Bool)
-  | optional (element : ParamParser)
-  deriving Repr, Inhabited, BEq
-
-def ParamParser.shape : ParamParser → ParamShape
-  | .category name => .category name
-  | .array element _ => .array element.shape
-  | .optional element => .optional element.shape
 
 partial def normalizeParam (stx : Syntax) : Except String ParamParser := do
   let kind := stx.getKind
@@ -38,22 +27,10 @@ where
       throw "compound parameter sequence requires a named category and recorder instance"
     normalizeParam parts[0]!
 
-/-- Registration signatures retain parser extraction for supported shapes and structural
-    syntax for unsupported parsers. Two unsupported parsers must not match merely because
-    both lack a shape. Only immutable metadata is persisted, never capture actions. -/
-inductive ParamParserSignature where
-  | normalized (parser : ParamParser)
-  | unsupported (parser : Syntax)
-  deriving Repr, Inhabited, BEq
-
 def paramParserSignature (stx : Syntax) : ParamParserSignature :=
   match normalizeParam stx with
   | .ok parser => .normalized parser
   | .error _ => .unsupported stx
-
-def ParamParserSignature.shape? : ParamParserSignature → Option ParamShape
-  | .normalized parser => some parser.shape
-  | .unsupported _ => none
 
 partial def ParamParser.shapeTerm : ParamParser → CommandElabM (TSyntax `term)
   | .category name => `(term| ProofScript.Recording.ParamShape.category $(quote name))

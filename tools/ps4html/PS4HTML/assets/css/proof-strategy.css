@@ -1,0 +1,56 @@
+.proof-strategy {
+    --rule-tag-color: var(--cases-color);
+    --rule-tag-border: var(--cases-color-light);
+    --rule-left-border: var(--border-color);
+    --rule-background: transparent;
+    box-sizing: border-box;
+    border-radius: 8px;
+    padding: 0 var(--proof-inset) 8px var(--proof-indent);
+    transition: background-color 0.25s, box-shadow 0.25s;
+    border-left: 1.5px solid var(--rule-left-border, var(--border-color));
+    padding-left: calc(var(--proof-indent) - 2px);
+    background: var(--rule-background, transparent);
+}
+.proof-rule-wrapper {
+    color: var(--rule-tag-color);
+    border-left: 2px solid var(--rule-left-border);
+    background: var(--rule-background);
+}
+.proof-strategy:hover {
+    box-shadow: 0 0 2px rgba(0, 0, 0, 0.3);
+    background: var(--rule-background, rgba(255, 255, 255, 0.5));
+}
+.proof-strategy.remark {
+    background: var(--remark-color-background);
+    padding: 12px var(--strategy-content-inset) 10px var(--strategy-content-indent);
+    border-left: 0;
+}
+.proof-strategy.cause {
+    background: var(--cause-color-background);
+    padding: 12px var(--strategy-content-inset) 10px var(--strategy-content-indent);
+    border-left: 0;
+}
+
+.annotation-icon {
+    display: block;
+    line-height: 2;
+}
+.proof-strategy .annotation-icon .codicon {
+    font-size: 14px;
+}
+.proof-strategy.remark .annotation-icon .codicon {
+    color: var(--remark-color);
+}
+.proof-strategy.cause .annotation-icon .codicon {
+    color: var(--cause-color);
+}
+
+.annotation-content {
+    line-height: 1.75;
+}
+
+.proof-strategy > .proof-tag {
+    color: var(--rule-tag-color, var(--cases-color));
+    border: 1px solid var(--rule-tag-border, var(--cases-color-light));
+    margin: 20px 0 0 calc(var(--strategy-content-indent) - var(--proof-indent));
+}

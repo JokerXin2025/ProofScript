@@ -21,15 +21,11 @@ def doubleValue (request : ComputationRequest) : Except String ComputationRespon
   function := chooseOffset,
   payload := r#"{"inputs":[{"value":false,"output":112},{"value":true,"output":128}]}"#}
 
-#check __proofScript_chooseOffset
-
 @computation {
   metadata := (title := "Typed computation", label := "typed-computation"),
   renderer := "proofscript/test-json-v1",
   function := doubleValue,
   payload := r#"{"input":{"value":21}}"#}
-
-#check __proofScript_doubleValue
 
 @computation {
   payload := r#"{"inputs":[{"value":false,"output":112}]}"#,
@@ -87,5 +83,20 @@ error: @computation requires a function with exactly one explicit argument
   renderer := "proofscript/test-json-v1",
   function := twoArguments,
   payload := r#"{}"#}
+
+-- Re-exporting into a fresh staging root must keep the page manifest reference stable.
+run_cmd do
+  let env ← Lean.getEnv
+  for component in (ProofScript.getPageState env).components do
+    if component.data.kind == "computation" then
+      let execution ← Lean.ofExcept <| component.data.value.getObjVal? "execution"
+      let entry ← Lean.ofExcept <| execution.getObjValAs? String "entry"
+      let manifest ← Lean.ofExcept <| execution.getObjValAs? String "manifest"
+      let expected := ProofScript.Computation.pendingEntryPath env.mainModule.toString entry
+      unless manifest == expected.toString do
+        throwError "computation page contains a physical staging path"
+      let physical ← Lean.Elab.Command.liftIO <| ProofScript.activeOutputPath expected
+      unless ← Lean.Elab.Command.liftIO physical.pathExists do
+        throwError "computation manifest was not written into the active output root"
 
 page_end

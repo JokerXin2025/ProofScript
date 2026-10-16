@@ -12,50 +12,8 @@ partial def commitValue : RecordedValue → TacticM Json
   | .array values => return Json.arr (← values.mapM commitValue)
   | .object fields => return Json.mkObj (← fields.mapM fun (name, value) => do
       return (name, ← commitValue value))
-  | .optional none => pure Json.null
+  | .optional none => pure (json% null)
   | .optional (some value) => commitValue value
-
-def captureFields (plan : RecordingPlan) (before : Bool)
-    (contextGoal : ContextSelector → TacticM (Option Lean.MVarId) := fun role => do
-      if role == .main then return (← getGoals).head?
-      return none) : TacticM (List (String × Json)) := do
-  if let .error message := plan.validate then
-    throwError "{message}"
-  let mut fields := []
-  for parameter in plan.parameters do
-    let selected := match parameter.timing with
-      | .once | .before => before
-      | .after => !before
-      | .both => true
-    if selected then
-      let key := if parameter.timing == .both then
-        parameter.name ++ (if before then "_before" else "_after")
-        else parameter.name
-      let result ← tryCapture do
-        let goal? ← contextGoal parameter.context
-        if goal?.isNone && parameter.context != .main then
-          throwError "recording context {repr parameter.context} has no goal"
-        if let some goal := goal? then
-          let goals ← getGoals
-          try
-            setGoals (goal :: goals.erase goal)
-            parameter.capture
-          finally
-            setGoals goals
-        else
-          parameter.capture
-      let value ← match result with
-        | .success value => do
-          if parameter.collectReferences && (← referencesEnabled) then
-            for name in value.references do
-              addTheoremRef name
-          commitValue value
-        | .failed message =>
-          if parameter.onFailure == .required then
-            throwError "failed to record parameter `{parameter.name}`: {message}"
-          pure Json.null
-      fields := fields ++ [(key, value)]
-  return fields
 
 /-- Roll back all Lean recording and execution state on failure, including record headers,
     expression exports, references, goals, and strategy bookkeeping. External IO is excluded. -/
@@ -67,13 +25,40 @@ def withRollback (action : TacticM α) : TacticM α := do
     saved.restore
     throw ex
 
-/-- Execute a normal step between the two capture phases. The consumer controls where
-    fields are committed (e.g. JsonBox); strategy steps can call captureFields around
-    their own branch-resolution logic. -/
-def runPlan (plan : RecordingPlan) (execute : TacticM Unit)
-    (commit : List (String × Json) → TacticM Unit) : TacticM Unit := withRollback do
-  commit (← captureFields plan true)
-  execute
-  commit (← captureFields plan false)
+/-- Options for a direct capture; plan captures pass their declared policies. -/
+structure CaptureOptions where
+  goal : Option MVarId := none
+  onFailure : FailurePolicy := .required
+  collectReferences : Bool := true
+
+/-- Focus a capture on an explicit goal, or the current goal when available. -/
+def withCaptureGoal (goal : Option MVarId) (action : TacticM α) : TacticM α := do
+  let goals ← getGoals
+  match goal.or goals.head? with
+  | none => action
+  | some goal =>
+    try
+      setGoals (goal :: goals.erase goal)
+      goal.withContext action
+    finally
+      setGoals goals
+
+/-- Return a self-contained value, restoring temporary elaboration even on success. -/
+def captureValue (field : String) (capture : TacticM RecordedValue)
+    (failure : FailurePolicy := .required) : TacticM RecordedValue := do
+  match ← tryCapture capture with
+  | .success value => return value
+  | .failed message =>
+    if failure == .required then
+      throwError "failed to record parameter `{field}`: {message}"
+    return .scalar (json% null)
+
+/-- Commit expression tables and enabled references as one recoverable operation. -/
+def commitCapturedValue (value : RecordedValue) (collectReferences : Bool := true) : TacticM Json :=
+  withRollback do
+    if collectReferences && (← referencesEnabled) then
+      for name in value.references do
+        addTheoremRef name
+    commitValue value
 
 end ProofScript.Recording

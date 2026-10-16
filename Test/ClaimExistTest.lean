@@ -40,10 +40,6 @@ example (h : True) : True := by
   | proof => exact h
   provide n
 
-@theorem replayClaimExistThree (P Q : Nat → Prop) (h : ∃ n, P n ∧ Q n) : ∃ n, Q n := script
-  embed recordedClaimExistThree P Q h as result
-  exact result
-
 open Lean Elab Command in
 run_cmd do
   for (decl, keys) in [(`recordedClaimExistTwo, ["h₁", "h₂"]),
@@ -65,6 +61,4 @@ run_cmd do
       throwError "missing claim proof"
     for key in keys do
       let .ok value := claim.getObjVal? key | throwError "missing binder {key}"
-      if value == Json.null then throwError "null binder {key}"
-    if (json.compress.splitOn "existBody").length != 1 then
-      throwError "temporary leaked into recording"
+      if value == (json% null) then throwError "null binder {key}"

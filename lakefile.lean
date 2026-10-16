@@ -10,15 +10,19 @@ require mathlib from git
 @[default_target]
 lean_lib ProofScript
 
+lean_exe proofscriptExport where
+  root := `ProofScript.Output.Main
+  supportInterpreter := true
+
 @[default_target]
 lean_lib Test where
   roots := #[
     `Test.BasicRestrictionsTest, `Test.CasesByTermTest,
-    `Test.CiteTest0,
+    `Test.CiteTest,
     `Test.ClaimContextTest, `Test.ClaimExistTest,
-    `Test.MultiIntroUnpackTest, `Test.UnpackTermTest,
+    `Test.UnpackTermTest,
     `Test.ObtainExistTest, `Test.CalcTest,
-    `Test.CalcExecutionCounter, `Test.NativeTacticIsolationTest,
+    `Test.NativeTacticIsolationTest,
     `Test.NestedStrategyTest,
     `Test.CustomComponentTest, `Test.ComputationComponentTest,
     `Test.ExprJSONFieldsTest, `Test.InferRecordingTest,
@@ -26,11 +30,17 @@ lean_lib Test where
     `Test.PaperExtensionTest,
     `Test.ReferencesOptionTest, `Test.RecordingReferencesTest,
     `Test.RecordingSessionTest, `Test.RecorderSelectionTest,
-    `Test.RecordingKernelTest, `Test.RecordingPlanTest,
     `Test.RecordingNormalizeTest, `Test.RecordingConfigTest,
     `Test.RecordingComplexRules, `Test.RecordingComplexTest,
     `Test.RecordingRegistrationTest,
-    `Test.TacticRewriteTest
+    `Test.RecordingAPIRules, `Test.RecordingAPITest,
+    `Test.TacticRewriteTest,
+    `Test.InfoCoreAPITest, `Test.InfoAPITest,
+    `Test.TheoremDependencyContractTest,
+    `Test.TheoremDependencyProbeSupport, `Test.TheoremDependencyProbeTest,
+    `Test.TheoremDependencyFactsTest, `Test.TheoremDependencyModuleTest,
+    `Test.TheoremDependencyConflict, `Test.TheoremDependencyImportTest,
+    `Test.TheoremDependencyExportTest
   ]
 
 /-- Build the complete HTML site for the requested Lean library. -/
@@ -38,9 +48,12 @@ library_facet ps4html (lib) : FilePath := do
   let mods ← (← lib.modules.fetch).await
   let jobs ← mods.mapM fun mod => mod.leanArts.fetch
   let arts := Job.collectArray jobs
+  let some exporter ← findLeanExe? `proofscriptExport | error "ProofScript Info exporter not found"
+  let exporterJob ← exporter.fetch
   let root ← getRootPackage
   let pkg := lib.pkg
   arts.mapM fun _ => do
+    let exporterPath ← exporterJob.await
     let names := mods.map (·.name.toString)
     let sources := mods.map (·.leanFile.toString)
     let output := root.dir / ".PS4HTML" / "build" / pkg.baseName.toString / lib.name.toString / "index.html"
@@ -50,8 +63,10 @@ library_facet ps4html (lib) : FilePath := do
     let some backend := backend | error "ProofScript package not found in Lake workspace"
     proc {
       cmd := python
-      args := #["-m", "PS4HTML", "_build-library", pkg.baseName.toString, lib.name.toString] ++ (names.zip sources).flatMap fun (name, source) => #[name, source]
+      args := #["-m", "PS4HTML", "_build-library", pkg.baseName.toString, lib.name.toString,
+        "--source-root", lib.rootDir.toString] ++ (names.zip sources).flatMap fun (name, source) => #[name, source]
       cwd := root.dir
       env := (← getAugmentedEnv).push ("PYTHONPATH", some backend.toString)
+        |>.push ("PROOF_SCRIPT_EXPORTER", some exporterPath.toString)
     }
     return output

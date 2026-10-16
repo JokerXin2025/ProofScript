@@ -1,4 +1,4 @@
-<section class="theorem-proof" id="${anchor}" data-language-panel="${language}" ${hidden}>
+<section class="theorem-proof" id="${anchor}" data-theorem-id="${theorem_id}" data-language-panel="${language}" ${hidden}>
   <h2>
     <span>
       ${proof_state}
@@ -16,7 +16,7 @@
   <div class="proof-flip">
     <div class="proof-flip-inner">
       <div class="proof-flip-front">
-        <div class="goal-content">
+        <div class="proof-children">
 
 ${content}
 
@@ -36,5 +36,5 @@ ${code}
     </div>
   </div>
 
-  <div class="qed">□</div>
+  <div class="proof-qed">□</div>
 </section>

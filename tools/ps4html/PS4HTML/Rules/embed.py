@@ -3,7 +3,7 @@ import html
 from PS4HTML.engine import render_details, render_step
 
 
-def rule_embed(step, previous, subsequent, proof, *, language, path=(), index=None):
+def rule_embed(step, proof, *, language, path=(), index=None):
     theorem = step["theorem"]
     proof_value = step["proof"]
     args = step["args"]
@@ -19,7 +19,7 @@ def rule_embed(step, previous, subsequent, proof, *, language, path=(), index=No
     summary = ", ".join(value for value in argument_text if value)
 
     if isinstance(proof_value, list):
-        content = proof.render(proof_value, path + (f"{index}:embed",))
+        content = proof.render_embedded(proof_value, path + (f"{index}:embed",))
     else:
         if not isinstance(proof_value, dict):
             raise ValueError("embed.proof must be an expression or a proof array")

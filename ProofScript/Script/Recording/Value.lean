@@ -9,7 +9,7 @@ open Lean
 structure ExprSnapshot where
   json : Json
   /-- Export-local reference table; kept with the snapshot because isolated capture rolls
-      back the shared export table. `commitValue` merges these tables. -/
+      back the shared export table. `RecordingStep.recordValue` merges these tables. -/
   table : Json
   references : Array Name
 
@@ -27,13 +27,13 @@ inductive CaptureResult where
   | failed (message : String)
 
 /-- Inspect a value before commit. Expression references still belong to the snapshot's
-    local table; use `commitValue` when writing to a shared proof export. -/
+    local table; use `RecordingStep.recordValue` when writing to a proof export. -/
 partial def RecordedValue.toJson : RecordedValue → Json
   | .scalar json => json
   | .expression snapshot => snapshot.json
   | .array values => Json.arr (values.map RecordedValue.toJson)
   | .object fields => Json.mkObj (fields.map fun (name, value) => (name, value.toJson))
-  | .optional none => Json.null
+  | .optional none => (json% null)
   | .optional (some value) => value.toJson
 
 partial def RecordedValue.references : RecordedValue → Array Name

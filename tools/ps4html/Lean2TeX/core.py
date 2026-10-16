@@ -5,7 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from .expr import flatten_app
-from .configuration import ConfigurationIndex, EffectiveConfiguration
+from .configuration import EffectiveConfiguration
 from .macros import MacroRegistry
 from .model import DisplayNode, RenderDiagnostic
 from .renderer import LayoutRenderer
@@ -14,7 +14,7 @@ from .variable import VariableAllocator
 
 
 class Expr2TeX:
-    """Compatibility facade over the semantic converter and layout renderer."""
+    """Public expression conversion, TeX rendering, and diagnostics."""
 
     def __init__(self, registry: MacroRegistry | None = None, allocator: VariableAllocator | None = None):
         self.registry = registry or MacroRegistry()
@@ -27,11 +27,6 @@ class Expr2TeX:
     def from_config(cls, config: EffectiveConfiguration) -> Expr2TeX:
         """Create independent per-proof allocation and diagnostic state."""
         return cls(config.registry, VariableAllocator(list(config.variables)))
-
-    @classmethod
-    def from_export(cls, export_root: str | Path, module: str) -> Expr2TeX:
-        """Load the Lean-owned configuration visible to a proof module."""
-        return cls.from_config(ConfigurationIndex(export_root).effective(module))
 
     def reset(self) -> None:
         self.allocator.reset()
@@ -67,15 +62,14 @@ class Expr2TeX:
     def render(
         self,
         node: dict,
-        role: str = "only",
+        *,
         parent: str = "Text",
-        styles: tuple[str, ...] = ("Root",),
         fvars: dict[str, str] | None = None,
         bvar_env: list[str] | None = None,
         style: str = "formula",
         language: str = "zh",
     ) -> str:
-        """Render ExprJSON while retaining the historical call signature."""
+        """Render ExprJSON using the requested style and language."""
         display = self.convert(node, fvars, bvar_env)
         return self.render_display(display, style, parent=parent, language=language)
 
@@ -92,6 +86,7 @@ class Expr2TeX:
         return self.render(relation)
 
 
-def load(export_root: str | Path, module: str) -> Expr2TeX:
-    """Load Lean-owned configuration visible to a proof module."""
-    return Expr2TeX.from_export(export_root, module)
+def load(export_root: str | Path, module: str, *, snapshot_id=None) -> Expr2TeX:
+    """Load a consumed module view, or explicitly select one persisted snapshot."""
+    from PS4HTML.info import InfoBundle
+    return Expr2TeX.from_config(InfoBundle(export_root).configuration(module, snapshot_id))

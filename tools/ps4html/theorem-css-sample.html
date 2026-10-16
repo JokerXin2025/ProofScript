@@ -4,23 +4,19 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>PS4HTML Theorem-Proof CSS Sample</title>
-
   <link rel="stylesheet" href="PS4HTML/assets/css/codicon.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/basic.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/step.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/goal.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/strategy.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/sundry.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/animation.css">
+  <link rel="stylesheet" href="PS4HTML/assets/css/layout.css">
+  <link rel="stylesheet" href="PS4HTML/assets/css/proof.css">
+  <link rel="stylesheet" href="PS4HTML/assets/css/proof-step.css">
+  <link rel="stylesheet" href="PS4HTML/assets/css/proof-branch.css">
+  <link rel="stylesheet" href="PS4HTML/assets/css/proof-strategy.css">
+  <link rel="stylesheet" href="PS4HTML/assets/css/proof-motion.css">
   <link rel="stylesheet" href="PS4HTML/assets/css/diagram.css">
-  <link rel="stylesheet" href="PS4HTML/assets/css/proof-text.css">
   <link rel="stylesheet" href="PS4HTML/assets/css/lean2tex.css">
-
   <script defer src="PS4HTML/assets/js/katex.js"></script>
   <script defer src="PS4HTML/assets/js/diagram.js"></script>
   <script defer src="PS4HTML/assets/js/animation.js"></script>
   <script defer src="PS4HTML/assets/js/equation_size.js"></script>
-  <script defer src="PS4HTML/assets/js/lean2tex.js"></script>
   <script defer src="PS4HTML/assets/js/proof-indent.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
   <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/contrib/auto-render.min.js"></script>
@@ -29,368 +25,47 @@
 <body>
   <main id="main-content" class="proof-container">
     <section class="theorem-proof" id="theorem-css-pressure-test">
-      <h2>
-        <span>
-          <sup class="proof-mark pass"><i class="codicon codicon-check-all"></i></sup>
-          Theorem-Proof Module CSS Stress Test
-        </span>
-        <label class="proof-indent-control" title="Adjust the nesting indentation of this proof">
+      <h2><span><sup class="proof-status pass"><i class="codicon codicon-check-all"></i></sup> Theorem-Proof CSS Sample</span>
+        <label class="proof-indent-control" title="Adjust proof indentation">
           <span class="proof-indent-value">20</span>
           <input class="proof-indent-slider" type="range" min="15" max="30" value="20" step="1" aria-label="Proof indentation">
         </label>
       </h2>
-
-      <div class="goal-content">
-
-    <!-- Top-level ordinary step. -->
-    <div class="step-block">
-      <span class="step-tag">At the top level,</span>
-      <span class="step-content">this ordinary step is exposed directly at the outermost level; let $a=b+c$, from which an arbitrary conclusion follows.</span>
-      <span class="final-mark"><i class="codicon codicon-check"></i></span>
-    </div>
-
-    <!-- Top-level remark. -->
-    <div class="strategy-block remark">
-      <span class="annotation-icon"><i class="codicon codicon-comment-discussion-quote"></i></span>
-      <div class="annotation-content">This remark is exposed directly at the outermost level. It has no strategy tag and tests the annotation background, padding, and wrapping of long text. Here is some more meaningless prose: clouds, integers, triangles, and a pigeon that does not exist.</div>
-    </div>
-
-    <!-- Top-level SVG strategy. -->
-    <div class="strategy-block diagram">
-      <span class="annotation-icon"><i class="codicon codicon-symbol-color"></i></span>
-      <div class="annotation-content">
-        <figure class="diagram-figure">
-          <div class="diagram-zoom-bar">
-            <input type="range" min="50" max="100" value="75" step="5" class="diagram-zoom" oninput="updateZoom(this)">
-            <span class="diagram-zoom-value">75%</span>
-          </div>
-          <div class="diagram-zoom-stage">
-            <svg viewBox="0 0 640 180" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Top-level test diagram">
-              <defs>
-                <marker id="arrow-top" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-                  <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
-                </marker>
-              </defs>
-              <rect x="25" y="45" width="145" height="70" rx="12" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
-              <circle cx="320" cy="80" r="49" fill="#f2f7f4" stroke="#2b6a4a" stroke-width="2"/>
-              <path d="M175 80 H260" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow-top)"/>
-              <path d="M370 80 H505" stroke="#c04851" stroke-width="3" stroke-dasharray="8 6" marker-end="url(#arrow-top)"/>
-              <polygon points="560,28 615,128 505,128" fill="#fdf6f6" stroke="#c04851" stroke-width="2"/>
-              <text x="97" y="86" text-anchor="middle" fill="#334155" font-size="18">Top-level SVG</text>
-              <text x="320" y="86" text-anchor="middle" fill="#334155" font-size="18">$P(n)$</text>
-              <text x="560" y="106" text-anchor="middle" fill="#334155" font-size="16">Contradiction</text>
-            </svg>
-          </div>
-        </figure>
-      </div>
-    </div>
-
-    <!-- Top-level details. -->
-    <details class="goal-block" open>
-      <summary>
-        <i class="codicon codicon-triangle-right toggle-icon"></i>
-        <span class="tag default">At the top level,</span>
-        <span class="content">these details are exposed directly and contain a step, a remark, and nested details</span>
-      </summary>
-      <div class="goal-content with-line">
-        <div class="step-block">
-          <span class="step-tag">Within these details,</span>
-          <span class="step-content">take $x=42$, allowing the test text to span an entire line.</span>
+      <div class="proof-children">
+        <div class="proof-step"><span class="proof-step-label">At the top level,</span><span class="proof-step-content">let $a=b+c$.</span></div>
+        <div class="proof-strategy remark"><span class="annotation-icon"><i class="codicon codicon-comment-discussion-quote"></i></span><div class="annotation-content">A top-level remark with a long description to test wrapping and padding.</div></div>
+        <div class="proof-strategy diagram">
+          <span class="annotation-icon"><i class="codicon codicon-symbol-color"></i></span>
+          <div class="annotation-content"><figure class="diagram-figure"><div class="diagram-zoom-bar"><input type="range" min="50" max="100" value="75" step="5" class="diagram-zoom" oninput="updateZoom(this)"><span class="diagram-zoom-value">75%</span></div>
+            <div class="diagram-zoom-stage"><svg viewBox="0 0 300 120" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Sample diagram"><circle cx="60" cy="60" r="35" fill="#dbeafe"/><path d="M100 60 H200" stroke="#2563eb" stroke-width="3"/><circle cx="240" cy="60" r="35" fill="#f2f7f4"/></svg></div>
+          </figure></div>
         </div>
-        <div class="strategy-block remark">
-          <span class="annotation-icon"><i class="codicon codicon-comment-discussion-quote"></i></span>
-          <div class="annotation-content">A remark nested inside the details.</div>
-        </div>
-        <details class="goal-block">
-          <summary>
-            <i class="codicon codicon-triangle-right toggle-icon"></i>
-            <span class="tag default">At the second level,</span>
-            <span class="content">these details are collapsed by default to test the closed state</span>
-          </summary>
-          <div class="goal-content with-line">
-            <div class="step-block unknown">
-              <span class="step-tag unknown">For an unknown step,</span>
-              <span class="step-content">this content appears only after expansion.</span>
-            </div>
+        <details class="proof-branch" open>
+          <summary><i class="codicon codicon-triangle-right proof-branch-toggle"></i><span class="proof-tag default">In Case I,</span><span class="proof-branch-title">test an expanded branch with nested steps</span></summary>
+          <div class="proof-children">
+            <div class="proof-step"><span class="proof-step-label">By substitution,</span><span class="proof-step-content">take $x=42$.</span></div>
+            <div class="proof-strategy cases"><span class="proof-tag cases">By cases,</span><div class="proof-children">
+              <div class="proof-step introducer"><span class="proof-step-label introducer">As the case distinction,</span><span class="proof-step-content">consider $p$ or $\neg p$.</span></div>
+              <details class="proof-branch" open><summary><i class="codicon codicon-triangle-right proof-branch-toggle"></i><span class="proof-tag default">First,</span><span class="proof-branch-title">suppose $p$ holds</span></summary>
+                <div class="proof-children"><div class="proof-step"><span class="proof-step-label">Then,</span><span class="proof-step-content">obtain the first result.</span></div></div>
+              </details>
+              <details class="proof-branch"><summary><i class="codicon codicon-triangle-right proof-branch-toggle"></i><span class="proof-tag default">Second,</span><span class="proof-branch-title">the collapsed case</span></summary>
+                <div class="proof-children"><div class="proof-step unknown"><span class="proof-step-label unknown">Otherwise,</span><span class="proof-step-content">test the unknown state.</span></div></div>
+              </details>
+            </div></div>
           </div>
         </details>
+        <div class="proof-strategy induction"><span class="proof-tag induction">By induction,</span><div class="proof-children">
+          <div class="proof-step"><span class="proof-step-label">On $n$,</span><span class="proof-step-content">apply <span class="proof-reference-link">induction</span>.</span></div>
+          <details class="proof-branch" open><summary><i class="codicon codicon-triangle-right proof-branch-toggle"></i><span class="proof-tag default">Base case,</span><span class="proof-branch-title">compute $f(0)$</span></summary>
+            <div class="proof-children"><div>
+              <div class="proof-step calc"><span class="proof-step-label calc">By calculation,</span><span class="proof-calc-lhs">$f(0)$</span><span class="proof-calc-relation">$$=$$</span><span class="proof-calc-rhs">$0+1$</span><span class="proof-calc-end"></span></div>
+              <div class="proof-step calc"><span class="proof-step-label calc"></span><span class="proof-calc-lhs"></span><span class="proof-calc-relation">$$=$$</span><span class="proof-calc-rhs">$1$</span><span class="proof-calc-end"></span></div>
+            </div></div>
+          </details>
+        </div></div>
       </div>
-    </details>
-
-    <!-- Top-level cases strategy. -->
-    <div class="strategy-block cases">
-      <span class="tag cases">By cases,</span>
-      <div class="goal-content">
-        <div class="step-block">
-          <span class="step-tag">As the case distinction,</span>
-          <span class="step-content">either $p$ holds or it does not; the branches deliberately have different heights.</span>
-        </div>
-
-        <details class="goal-block" open>
-          <summary>
-            <i class="codicon codicon-triangle-right toggle-icon"></i>
-            <span class="tag default">In Case I,</span>
-            <span class="content">suppose that $p$ holds</span>
-          </summary>
-          <div class="goal-content with-line">
-            <div class="step-block">
-              <span class="step-tag">By substitution,</span>
-              <span class="step-content">insert a nonexistent equality and then proceed by contradiction.</span>
-            </div>
-
-            <div class="strategy-block contradiction">
-              <span class="tag contradiction">By contradiction,</span>
-              <div class="goal-content">
-                <div class="step-block">
-                  <span class="step-tag">For the contrary assumption,</span>
-                  <span class="step-content">suppose the conclusion of this branch is false, namely $\neg Q$.</span>
-                </div>
-                <details class="goal-block" open>
-                  <summary>
-                    <i class="codicon codicon-triangle-right toggle-icon"></i>
-                    <span class="tag default">In particular,</span>
-                    <span class="content">$u=v$; after expansion, a remark and an SVG remain nested inside</span>
-                  </summary>
-                  <div class="goal-content with-line">
-                    <div class="strategy-block remark">
-                      <span class="annotation-icon"><i class="codicon codicon-comment-discussion-quote"></i></span>
-                      <div class="annotation-content">Cases &gt; Case I &gt; Contradiction &gt; Details &gt; Remark.</div>
-                    </div>
-                    <div class="strategy-block diagram">
-                      <span class="annotation-icon"><i class="codicon codicon-symbol-color"></i></span>
-                      <div class="annotation-content">
-                        <figure class="diagram-figure">
-                          <div class="diagram-zoom-bar">
-                            <input type="range" min="50" max="100" value="60" step="5" class="diagram-zoom" oninput="updateZoom(this)">
-                            <span class="diagram-zoom-value">60%</span>
-                          </div>
-                          <div class="diagram-zoom-stage">
-                            <svg viewBox="0 0 520 150" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Deeply nested test diagram">
-                              <defs>
-                                <marker id="arrow-deep" markerWidth="10" markerHeight="10" refX="8" refY="3" orient="auto">
-                                  <path d="M0,0 L0,6 L9,3 z" fill="#2563eb"/>
-                                </marker>
-                              </defs>
-                              <circle cx="75" cy="75" r="42" fill="#dbeafe" stroke="#2563eb" stroke-width="2"/>
-                              <circle cx="260" cy="75" r="42" fill="#f2f7f4" stroke="#2b6a4a" stroke-width="2"/>
-                              <circle cx="445" cy="75" r="42" fill="#fdf6f6" stroke="#c04851" stroke-width="2"/>
-                              <path d="M120 75 H210" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow-deep)"/>
-                              <path d="M305 75 H395" stroke="#2563eb" stroke-width="3" marker-end="url(#arrow-deep)"/>
-                              <text x="75" y="81" text-anchor="middle" fill="#334155">A</text>
-                              <text x="260" y="81" text-anchor="middle" fill="#334155">B</text>
-                              <text x="445" y="81" text-anchor="middle" fill="#334155">C</text>
-                            </svg>
-                          </div>
-                        </figure>
-                      </div>
-                    </div>
-                    <div class="step-block">
-                      <span class="step-tag">From the diagram,</span>
-                      <span class="step-content">we obtain $A=C$, for no sensible reason.</span>
-                      <span class="final-mark contradiction">$\to\,$ contradiction</span>
-                    </div>
-                  </div>
-                </details>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="goal-block" open>
-          <summary>
-            <i class="codicon codicon-triangle-right toggle-icon"></i>
-            <span class="tag default">In Case II,</span>
-            <span class="content">suppose that $p$ does not hold and use induction within the branch</span>
-          </summary>
-          <div class="goal-content with-line">
-            <div class="strategy-block induction">
-              <span class="tag induction">By induction,</span>
-              <div class="goal-content">
-                <div class="step-block">
-                  <span class="step-tag">On the natural number $m$,</span>
-                  <span class="step-content">apply <span class="ref-link">mathematical induction</span>.</span>
-                </div>
-                <details class="goal-block" open>
-                  <summary>
-                    <i class="codicon codicon-triangle-right toggle-icon"></i>
-                    <span class="tag default">In the base case,</span>
-                    <span class="content">verify that the proposition holds for $0$</span>
-                  </summary>
-                  <div class="goal-content with-line">
-                    <div class="step-block">
-                      <span class="step-tag">After simplification,</span>
-                      <span class="step-content">$0+0=0$.</span>
-                    </div>
-                  </div>
-                </details>
-                <details class="goal-block" open>
-                  <summary>
-                    <i class="codicon codicon-triangle-right toggle-icon"></i>
-                    <span class="tag default">In the inductive step,</span>
-                    <span class="content">suppose the proposition holds for $k$, then prove it for $k+1$ by arbitrary reasoning</span>
-                  </summary>
-                  <div class="goal-content with-line">
-                    <div class="step-block">
-                      <span class="step-tag">By the induction hypothesis,</span>
-                      <span class="step-content">rewrite everything.</span>
-                      <span class="final-mark induction">$\to\,$ complete</span>
-                    </div>
-                  </div>
-                </details>
-              </div>
-            </div>
-          </div>
-        </details>
-      </div>
-    </div>
-
-    <!-- Top-level contradiction strategy. -->
-    <div class="strategy-block contradiction">
-      <span class="tag contradiction">By contradiction,</span>
-      <div class="goal-content">
-        <div class="step-block">
-          <span class="step-tag">For the contrary assumption,</span>
-          <span class="step-content">this contradiction proof is exposed directly at the outermost level; suppose $1=2$ and prepare to derive a contradiction.</span>
-        </div>
-        <details class="goal-block" open>
-          <summary>
-            <i class="codicon codicon-triangle-right toggle-icon"></i>
-            <span class="tag default">As an intermediate result,</span>
-            <span class="content">nest a case analysis inside the contradiction proof</span>
-          </summary>
-          <div class="goal-content with-line">
-            <div class="strategy-block cases">
-              <span class="tag cases">By cases,</span>
-              <div class="goal-content">
-                <div class="step-block">
-                  <span class="step-tag">As the case distinction,</span>
-                  <span class="step-content">consider $z=0$ and $z\ne0$.</span>
-                </div>
-                <details class="goal-block" open>
-                  <summary>
-                    <i class="codicon codicon-triangle-right toggle-icon"></i>
-                    <span class="tag default">In Case I,</span>
-                    <span class="content">$z=0$</span>
-                  </summary>
-                  <div class="goal-content with-line">
-                    <div class="step-block">
-                      <span class="step-tag">By calculation,</span>
-                      <span class="step-content">we obtain $3=7$.</span>
-                    </div>
-                  </div>
-                </details>
-                <details class="goal-block" open>
-                  <summary>
-                    <i class="codicon codicon-triangle-right toggle-icon"></i>
-                    <span class="tag default">In Case II,</span>
-                    <span class="content">$z\ne0$</span>
-                  </summary>
-                  <div class="goal-content with-line">
-                    <div class="strategy-block remark">
-                      <span class="annotation-icon"><i class="codicon codicon-comment-discussion-quote"></i></span>
-                      <div class="annotation-content">This branch contains only one remark, allowing comparison between subtrees of different heights.</div>
-                    </div>
-                  </div>
-                </details>
-              </div>
-            </div>
-            <div class="step-block">
-              <span class="step-tag">In conclusion,</span>
-              <span class="step-content">neither branch makes sense, so a contradiction follows.</span>
-              <span class="final-mark contradiction">$\to\,$ contradiction</span>
-            </div>
-          </div>
-        </details>
-      </div>
-    </div>
-
-    <!-- Top-level induction strategy. -->
-    <div class="strategy-block induction">
-      <span class="tag induction">By strong induction,</span>
-      <div class="goal-content">
-        <div class="step-block">
-          <span class="step-tag">On the natural number $n$,</span>
-          <span class="step-content">this outermost strategy applies <span class="ref-link">strong induction</span>.</span>
-        </div>
-
-        <details class="goal-block" open>
-          <summary>
-            <i class="codicon codicon-triangle-right toggle-icon"></i>
-            <span class="tag default">In the base case,</span>
-            <span class="content">verify that the proposition holds for $0$ and include a calculation-style step</span>
-          </summary>
-          <div class="goal-content with-line">
-            <div>
-              <div class="step-block calc">
-                <span class="step-tag calc">By calculation,</span>
-                <span class="step-lhs">$f(0)$</span>
-                <span class="step-rel">$$=$$</span>
-                <span class="step-rhs">$0+1$</span>
-                <span class="step-cal-end"></span>
-              </div>
-              <div class="step-block calc">
-                <span class="step-tag calc"></span>
-                <span class="step-lhs"></span>
-                <span class="step-rel">$$=$$</span>
-                <span class="step-rhs">$1$</span>
-                <span class="step-cal-end"></span>
-              </div>
-            </div>
-          </div>
-        </details>
-
-        <details class="goal-block" open>
-          <summary>
-            <i class="codicon codicon-triangle-right toggle-icon"></i>
-            <span class="tag default">In the inductive step,</span>
-            <span class="content">suppose the proposition holds for every $j\le k$, with nested details and a contradiction proof inside</span>
-          </summary>
-          <div class="goal-content with-line">
-            <details class="goal-block" open>
-              <summary>
-                <i class="codicon codicon-triangle-right toggle-icon"></i>
-                <span class="tag default">In particular,</span>
-                <span class="content">$f(k+1)=f(k)+1$</span>
-              </summary>
-              <div class="goal-content with-line">
-                <div class="strategy-block contradiction">
-                  <span class="tag contradiction">By contradiction,</span>
-                  <div class="goal-content">
-                    <div class="step-block">
-                      <span class="step-tag">For the contrary assumption,</span>
-                      <span class="step-content">suppose the recurrence suddenly fails.</span>
-                    </div>
-                    <div class="strategy-block remark">
-                      <span class="annotation-icon"><i class="codicon codicon-comment-discussion-quote"></i></span>
-                      <div class="annotation-content">Induction &gt; Inductive Step &gt; Details &gt; Contradiction &gt; Remark.</div>
-                    </div>
-                    <div class="step-block">
-                      <span class="step-tag">By comparison,</span>
-                      <span class="step-content">the left-hand side is both greater and less than the right-hand side.</span>
-                      <span class="final-mark contradiction">$\to\,$ contradiction</span>
-                    </div>
-                  </div>
-                </div>
-              </div>
-            </details>
-            <div class="step-block">
-              <span class="step-tag">Consequently,</span>
-              <span class="step-content">the proposition holds for $k+1$.</span>
-              <span class="final-mark induction">$\to\,$ complete</span>
-            </div>
-          </div>
-        </details>
-      </div>
-    </div>
-
-    <div class="step-block">
-      <span class="step-tag">Finally,</span>
-      <span class="step-content">all modules under test have appeared; the remaining checks concern bottom spacing and hover borders.</span>
-      <span class="final-mark">$\to\,$ proved</span>
-    </div>
-      </div>
-
-      <div class="qed">□</div>
+      <div class="proof-qed">□</div>
     </section>
   </main>
 </body>

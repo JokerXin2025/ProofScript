@@ -18,6 +18,7 @@
             item.setAttribute("aria-checked", item.dataset.language === language ? "true" : "false");
         });
         window.localStorage.setItem("ps4html-language", language);
+        document.dispatchEvent(new Event("ps4html:layoutchange"));
     }
 
     function closeMenus() {

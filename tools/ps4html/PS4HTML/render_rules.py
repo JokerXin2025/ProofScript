@@ -1,9 +1,7 @@
 """Render one recorded call using its proof module's resolved script_info rules."""
 
 import html
-import json
 import re
-from pathlib import Path
 
 from PS4HTML.engine import render_step, render_strategy, render_details
 from PS4HTML.Rules.calc import rule_calc
@@ -13,8 +11,8 @@ from PS4HTML.Rules.remark import rule_remark
 from PS4HTML.Rules.admit import rule_admit
 from PS4HTML.Rules.embed import rule_embed
 from PS4HTML.Rules.strategy import rule_strategy
-from PS4HTML.recording import (SUPPORTED_RECORDING_VERSIONS, validate_contract,
-                               validate_fields, validate_slots, slot_value, adapt_legacy_record,
+from PS4HTML.recording import (PROOF_SCHEMA_VERSION, validate_contract,
+                               validate_fields, validate_slots, slot_value,
                                slot_schema, validate_value)
 
 
@@ -100,12 +98,11 @@ def template_texts(entries):
                 yield from case["introducer"].values()
 
 
-def validate_record(rule, step, previous, version="0.1.0"):
+def validate_record(rule, step):
     """Check facts supplied by Lean; renderer implementations need not infer missing fields."""
-    if not isinstance(step, dict) or not isinstance(previous, dict) or "_goal_" not in previous:
-        raise ValueError("Recorded step requires its preceding goal")
-    step = adapt_legacy_record(step, rule.get("recordedFields"), version)
-    validate_fields(step, rule.get("recordedFields"), version)
+    if not isinstance(step, dict):
+        raise ValueError("Recorded step must be an object")
+    validate_fields(step, rule.get("recordedFields"))
     fields = rule["fields"]
     if fields.get("display") is False:
         if rule["strategy"]:
@@ -154,7 +151,7 @@ def validate_record(rule, step, previous, version="0.1.0"):
                   if "introducer" in case else [])])
             for text in texts:
                 for name in SLOT.findall(text):
-                    slot_value(step, previous, name)
+                    slot_value(step, name)
     if rule["strategy"]:
         branches = step.get("branches")
         if not isinstance(branches, list) or not branches or any(not isinstance(branch, dict) or
@@ -170,22 +167,8 @@ def validate_record(rule, step, previous, version="0.1.0"):
                     raise ValueError(f"Strategy branches do not match template {entry['lang']!r}")
 
 
-def load_effective_rules(export_root):
-    """Index Lean-owned snapshots by their declared module, not a guessed filesystem name."""
-    snapshots = {}
-    for path in (Path(export_root) / "rendering" / "effective").rglob("*.json"):
-        document = json.loads(path.read_text(encoding="utf-8"))
-        module = document.get("module")
-        if not isinstance(module, str) or not module:
-            raise ValueError(f"Invalid effective rules module in {path}")
-        if module in snapshots:
-            raise ValueError(f"Duplicate effective rules for {module}: {path} and {snapshots[module][0]}")
-        snapshots[module] = (path, document)
-    return snapshots
-
-
 def validate_rules(document, module, imports=None):
-    if not isinstance(document, dict) or document.get("schemaVersion") not in SUPPORTED_RECORDING_VERSIONS or document.get("module") != module:
+    if not isinstance(document, dict) or document.get("schemaVersion") != PROOF_SCHEMA_VERSION or document.get("module") != module:
         raise ValueError(f"Invalid effective rendering rules for {module}")
     if not isinstance(document.get("imports"), list) or any(not isinstance(name, str) for name in document["imports"]):
         raise ValueError(f"Invalid effective rule imports for {module}")
@@ -199,7 +182,7 @@ def validate_rules(document, module, imports=None):
         if not isinstance(entry, dict) or not isinstance(entry.get("ruleId"), str) or not isinstance(entry.get("strategy"), bool) or not isinstance(entry.get("fields"), dict):
             raise ValueError(f"Invalid rule entry for {module}")
         rule_id, fields = entry["ruleId"], entry["fields"]
-        if document["schemaVersion"] == "0.1.0" and "recordedFields" not in entry:
+        if "recordedFields" not in entry:
             raise ValueError(f"Missing recordedFields contract for {rule_id}")
         validate_contract(entry.get("recordedFields"))
         if rule_id in result:
@@ -250,6 +233,8 @@ def _slot(value, proof, schema=None):
         return "—"
     if isinstance(value, dict) and set(value) == {"$ref"}:
         return proof.tex(proof.resolve(value))
+    if isinstance(value, dict) and schema and schema["kind"] == "expression":
+        return proof.tex(value)
     if isinstance(value, dict) and schema and schema["kind"] in {"object", "json"}:
         children = {field["name"]: field["schema"] for field in schema.get("fields", [])}
         return ", ".join(f"{html.escape(key)}: {_slot(item, proof, children.get(key))}"
@@ -261,14 +246,15 @@ def _slot(value, proof, schema=None):
         raise ValueError("Rendering expression must be a recorded expression reference")
 
 
-def _template(text, step, previous, proof):
+def _template(text, step, proof):
     result = []
     last = 0
     for match in SLOT.finditer(text):
         result.append(html.escape(text[last:match.start()]))
         key = match.group(1)
-        value = slot_value(step, previous, key)
-        contract = proof.rules.get(step.get("_ruleId"), {}).get("recordedFields")
+        value = slot_value(step, key)
+        rule = proof.current_rule or proof.rules.get(step.get("_ruleId"), {})
+        contract = rule.get("recordedFields")
         result.append(_slot(value, proof, slot_schema(contract, key)))
         last = match.end()
     result.append(html.escape(text[last:]))
@@ -288,51 +274,48 @@ def _rule_style(fields):
     return ' style="' + html.escape("; ".join(f"{key}: {value}" for key, value in values.items()), quote=True) + '"'
 
 
-def _introducer(entry, step, previous, proof):
+def _introducer(entry, step, proof):
     if not entry or not entry["tag"] and not entry["content"]:
         return ""
-    tag = _template(entry["tag"], step, previous, proof)
-    content = _template(entry["content"], step, previous, proof)
+    tag = _template(entry["tag"], step, proof)
+    content = _template(entry["content"], step, proof)
     return render_step(tag, content, sort="introducer")
 
 
-def render_rule(rule, step, previous, subsequent, proof, path, index):
-    version = proof.proof_version
-    step = adapt_legacy_record(step, rule.get("recordedFields"), version)
+def render_rule(rule, step, proof, path, index):
     fields = rule["fields"]
+    validate_record(rule, step)
     if fields.get("display") is False:
         return ""
-    validate_record(rule, step, previous, version)
     special = fields.get("renderer")
     if special is not None and special != "none":
         if special in ("embed", "strategy"):
             handler = rule_embed if special == "embed" else rule_strategy
             value = step if special == "strategy" else proof.resolve(step)
-            rendered = handler(value, proof.resolve(previous),
-                                  proof.resolve(subsequent), proof, language=proof.language,
+            rendered = handler(value, proof, language=proof.language,
                                   path=path, index=index,
                                   **({"style": _rule_style(fields)} if special == "strategy" else {}))
         else:
-            rendered = SPECIAL_RENDERERS[special](proof.resolve(step), proof.resolve(previous),
-                                                  proof.resolve(subsequent), proof, language=proof.language)
+            rendered = SPECIAL_RENDERERS[special](proof.resolve(step), proof, language=proof.language)
         if special != "strategy" and "color" in fields and any(fields["color"]):
-            return f'<div class="script-renderer"{_rule_style(fields)}>{rendered}</div>'
+            return f'<div class="proof-rule-wrapper"{_rule_style(fields)}>{rendered}</div>'
         return rendered
     entry = _language(fields["template"], proof.language)
-    title = _template(entry["tag"], step, previous, proof)
+    title = _template(entry["tag"], step, proof)
     style = _rule_style(fields)
     if not rule["strategy"]:
-        content = _template(entry["content"], step, previous, proof)
+        content = _template(entry["content"], step, proof)
         return render_step(title, content, style=style)
-    branches = {branch["name"]: branch["proof"] for branch in step["branches"]}
-    children = [_introducer(entry.get("introducer"), step, previous, proof)]
+    branches = {branch["name"]: (index, branch["proof"]) for index, branch in enumerate(step["branches"])}
+    children = [_introducer(entry.get("introducer"), step, proof)]
     for case in entry["cases"]:
         name = case["name"]
-        case_content = _introducer(case.get("introducer"), step, previous, proof)
-        case_content += proof.render(branches[name], path + (f"{index}:{name}",))
+        case_content = _introducer(case.get("introducer"), step, proof)
+        branch_index, branch_proof = branches[name]
+        case_content += proof.render_branch(branch_proof, branch_index, path + (f"{index}:{name}",))
         if not entry.get("inline", False):
             case_content = render_details(True,
-                _template(case["tag"], step, previous, proof),
-                _template(case["title"], step, previous, proof), case_content)
+                _template(case["tag"], step, proof),
+                _template(case["title"], step, proof), case_content)
         children.append(case_content)
     return render_strategy("", title, "\n".join(child for child in children if child), style=style)

@@ -9,4 +9,5 @@ document.addEventListener("DOMContentLoaded", function() {
             return context.command === '\\htmlData';
         },
     });
+    document.dispatchEvent(new Event('ps4html:layoutchange'));
 });

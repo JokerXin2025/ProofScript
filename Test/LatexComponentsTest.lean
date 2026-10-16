@@ -1,5 +1,7 @@
 import ProofScript
 
+project_info "Test.LatexComponentsTest" { title := "LatexComponentsTest" }
+
 @latex (title := "Arbitrary LaTeX", label := "page-latex", placement := "center") r#"
 \begin{tikzpicture}
   \node[draw] (A) at (0,0) {$A$};

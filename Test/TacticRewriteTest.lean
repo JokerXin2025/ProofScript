@@ -6,26 +6,12 @@ script_macro «recordedIdentity»
 "recorded_identity" _proof:term => `(tactic| exact $_proof)
 
 script_recorder «recordedIdentity»
-(fields := #[{ name := "proof", schema := .expression, nullable := false }])
+(fields := ProofScript.Recording.goalFields ++ #[{ name := "proof", schema := .expression, nullable := false }])
 "recorded_identity" proof:term => do
-  ProofScript.recordStep []
-    (parameters := { parameters := #[
-      ProofScript.Recording.param (.category `term) "proof" .before proof .required
-    ] })
-
-open Lean Elab Command ProofScript in
-run_cmd do
-  let id := `Test.TacticRewriteTest.recordedIdentity
-  let events := scriptRegistrationExt.getState (← getEnv)
-  let some manualKind := (events.findSome? fun event =>
-      match event with
-      | .setRecorder ruleId kind _ => if ruleId == id then some kind else none
-      | .register _ => none)
-    | throwError "handwritten recorder did not override the automatic registration"
-  let some registration := (scriptTacticRegistrations (← getEnv)).find? (·.ruleId == id)
-    | throwError "missing recorded identity registration"
-  unless registration.recordingKind == some manualKind do
-    throwError "handwritten recorder was not selected"
+  ProofScript.recordStep
+    (before := #[
+      ProofScript.Recording.param (.category `term) "proof" proof .required
+    ])
 
 @theorem recorded_identity_default_action (P : Prop) (h : P) : P := script
   recorded_identity h

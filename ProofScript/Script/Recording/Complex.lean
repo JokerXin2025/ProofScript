@@ -21,7 +21,7 @@ def captureLocation (value : TSyntax `location) : TacticM RecordedValue := do
     | .targets hypotheses target => do
       pure (false, target, ← hypotheses.mapM expression)
   let (wildcard, target, hypotheses) := data
-  return .object [("kind", .scalar "location"), ("wildcard", .scalar (toJson wildcard)),
+  return .object [("kind", .scalar (json% "location")), ("wildcard", .scalar (toJson wildcard)),
     ("goal", .scalar (toJson target)), ("hypotheses", .array hypotheses)]
 
 def rewriteRulesSchema : ParamSchema := .array (.object [
@@ -46,7 +46,7 @@ def captureSimpArguments (value : TSyntax `simpArgs) : TacticM RecordedValue := 
   let values ← args.getElems.mapM fun arg => do
     let arg := arg.raw
     if arg.getKind == ``Parser.Tactic.simpStar then
-      return RecordedValue.object [("kind", .scalar "star")]
+      return RecordedValue.object [("kind", .scalar (json% "star"))]
     if arg.getKind == ``Parser.Tactic.simpErase then
       let raw := arg[1]
       let captured ← tryCapture (expression raw)
@@ -55,11 +55,11 @@ def captureSimpArguments (value : TSyntax `simpArgs) : TacticM RecordedValue := 
         | .failed _ => none -- Builtin simprocs have names but are not term expressions.
       let label := if raw.isIdent then raw.getId.eraseMacroScopes.toString
         else raw.reprint.getD (reprStr raw)
-      return .object [("kind", .scalar "erase"), ("name", .scalar (toJson label)),
+      return .object [("kind", .scalar (json% "erase")), ("name", .scalar (toJson label)),
         ("expression", .optional value)]
     if arg.getKind == ``Parser.Tactic.simpLemma then
       let phase := if !arg[0].isNone && arg[0][0].getKind == ``Parser.Tactic.simpPre then "pre" else "post"
-      return .object [("kind", .scalar "lemma"), ("phase", .scalar (toJson phase)),
+      return .object [("kind", .scalar (json% "lemma")), ("phase", .scalar (toJson phase)),
         ("reverse", .scalar (toJson (!arg[1].isNone))), ("expression", ← expression arg[2])]
     throwErrorAt arg "unsupported simp argument"
   return .array values
@@ -76,13 +76,13 @@ def captureConfig (value : TSyntax `optConfig) : TacticM RecordedValue := do
     (fun entries item => do
       let value : RecordedValue ← if let some flag := item.bool? then pure (.scalar (toJson flag)) else
         match (⟨item.value⟩ : TSyntax `term) with
-        | `(term| true) => pure (.scalar (toJson true))
-        | `(term| false) => pure (.scalar (toJson false))
+        | `(term| true) => pure (.scalar (json% true))
+        | `(term| false) => pure (.scalar (json% false))
         | `(term| $n:num) => pure (.scalar (toJson n.getNat))
         | `(term| $s:str) => pure (.scalar (toJson s.getString))
         | _ => do
           let text ← syntaxText item.value
-          pure (.object [("kind", .scalar "syntax"), ("text", text)])
+          pure (.object [("kind", .scalar (json% "syntax")), ("text", text)])
       return entries.push (.object [("name", .scalar (toJson item.origOptionName.toString)),
         ("value", value)]))
     (fun _ raw => throwErrorAt raw "invalid explicit tactic configuration")

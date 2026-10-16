@@ -82,12 +82,10 @@ def mergeExprJsonSnapshot {m : Type → Type} [Monad m] [MonadEnv m]
   modifyExprJsonState fun state => { state with nodes }
   return rebaseExprRefs root offset
 
-private def exprRef (id : String) : Json :=
-  Json.mkObj [("$ref", Json.str id)]
+private def exprRef (id : String) := json% { "$ref": $id }
 
 /-- `Nat` → `JSON` number -/
-private def natJson (num : Nat) : Json :=
-  Json.num (fromNat num)
+private def natJson (num : Nat) : Json := Json.num (fromNat num)
 
 /-- `BinderInfo` → `String` -/
 private def binderInfoToString : BinderInfo → String
@@ -109,36 +107,19 @@ private def trySome {α : Type} (m : MetaM α) : MetaM (Option α) :=
     - `param` → parameter level (in polymorphic definition)
     - `mvar`  → meta level (to be solved) -/
 private def levelToJson : Level → Json
-| .zero =>
-  Json.mkObj [("kind", Json.str "level.zero")]
-| .succ u =>
-  Json.mkObj [("kind", Json.str "level.succ"),
-              ("level", levelToJson u)]
-| .max u v =>
-  Json.mkObj [("kind", Json.str "level.max"),
-              ("u", levelToJson u),
-              ("u", levelToJson v)]
-| .imax u v =>
-  Json.mkObj [("kind", Json.str "level.imax"),
-              ("v", levelToJson u),
-              ("v", levelToJson v)]
-| .param name =>
-  Json.mkObj [("kind", Json.str "level.param"),
-              ("name", Json.str name.toString)]
-| .mvar lmvarId =>
-  Json.mkObj [("kind", Json.str "level.mvar"),
-              ("id", Json.str lmvarId.name.toString)]
+| .zero => json% { kind: "level.zero" }
+| .succ u => json% { kind: "level.succ", level: $(levelToJson u) }
+| .max u v => json% { kind: "level.max", u: $(levelToJson u), v: $(levelToJson v) }
+| .imax u v => json% { kind: "level.imax", u: $(levelToJson u), v: $(levelToJson v) }
+| .param name => json% { kind: "level.param", name: $(name.toString) }
+| .mvar lmvarId => json% { kind: "level.mvar", id: $(lmvarId.name.toString) }
 
 /-- `Literal` → `JSON` object
     - `natVal` → natural numeric literal
     - `strVal` → string literal -/
 private def litToJson : Literal → Json
-| .natVal n =>
-  Json.mkObj [("kind", Json.str "literal.nat"),
-              ("value", natJson n)]
-| .strVal s =>
-  Json.mkObj [("kind", Json.str "literal.str"),
-              ("value", Json.str s)]
+| .natVal n => json% { kind: "literal.nat", value: $(natJson n) }
+| .strVal s => json% { kind: "literal.str", value: $s }
 
 /-- `MData` → `JSON` object
     `MData = KVMap`，`m.entries` 是 `(Name, DataValue)` 键值对列表
@@ -153,22 +134,19 @@ private def sourceRangeFromMData (data : MData) : Option Syntax.Range :=
     | .ofSyntax stx => stx.getRange?
     | _ => none
 
-private def binderInfoJson (binderInfo? : Option BinderInfo) : Json :=
-  match binderInfo? with
-  | some binderInfo => Json.str (binderInfoToString binderInfo)
-  | none => Json.null
+private def binderInfoJson : Option BinderInfo → Json
+| some binderInfo => Json.str (binderInfoToString binderInfo)
+| none            => json% null
 
-private def binderIsExplicitJson (binderInfo? : Option BinderInfo) : Json :=
-  match binderInfo? with
-  | some .default => Json.bool true
-  | some _ => Json.bool false
-  | none => Json.null
+private def binderIsExplicitJson : Option BinderInfo → Json
+| some .default => json% true
+| some _        => json% false
+| none          => json% null
 
-private def binderIsTypeclassJson (binderInfo? : Option BinderInfo) : Json :=
-  match binderInfo? with
-  | some .instImplicit => Json.bool true
-  | some _ => Json.bool false
-  | none => Json.null
+private def binderIsTypeclassJson : Option BinderInfo → Json
+| some .instImplicit  => json% true
+| some _              => json% false
+| none                => json% null
 
 private def applicationBinderInfos (expr : Expr) : MetaM (Array (Option BinderInfo)) := do
   let args := expr.getAppArgs
@@ -197,10 +175,8 @@ private def applicationBinderInfos (expr : Expr) : MetaM (Array (Option BinderIn
 mutual
 
 /-- 统一递归入口：为每一个 Expr 节点追加通用语义字段。 -/
-private partial def serializeNode (expr : Expr)
-                                  (cfg : ExprJsonConfig)
-                                  (sourceRange? : Option Syntax.Range := none)
-                                   : MetaM Json := do
+private partial def serializeNode (expr : Expr) (cfg : ExprJsonConfig)
+    (sourceRange? : Option Syntax.Range := none) : MetaM Json := do
   let expr ← Lean.instantiateMVars expr
   let cacheable := sourceRange?.isNone && !cfg.withMData && cfg.withFVarDetails && cfg.withSourceRanges
   if cacheable then
@@ -211,7 +187,7 @@ private partial def serializeNode (expr : Expr)
   let state ← getExprJsonState
   let index := state.nodes.size
   let id := s!"e{index}"
-  let state := { state with nodes := state.nodes.push Json.null }
+  let state := { state with nodes := state.nodes.push (json% null) }
   let state := if cacheable then
       if cfg.withTypes then { state with fullCache := state.fullCache.insert expr id }
       else { state with compactCache := state.compactCache.insert expr id }
@@ -236,11 +212,11 @@ private partial def serializeNode (expr : Expr)
         let fields ← if cfg.withSourceRanges then
           match sourceRange? with
           | some range =>
-              let sourceRange := Json.mkObj [
-                ("file", Json.str (← Lean.getFileName)),
-                ("start", natJson range.start.byteIdx),
-                ("stop", natJson range.stop.byteIdx)
-              ]
+              let sourceRange := json% {
+                file: $(← Lean.getFileName),
+                start: $(natJson range.start.byteIdx),
+                stop: $(natJson range.stop.byteIdx)
+              }
               pure <| fields.insert "sourceRange" sourceRange
           | none => pure fields
         else pure fields
@@ -250,111 +226,110 @@ private partial def serializeNode (expr : Expr)
   return exprRef id
 
 /-- 对 `Expr` 的构造子逐一序列化主体字段。 -/
-private partial def serializeCore (expr : Expr)
-                                   (cfg : ExprJsonConfig)
-                                   (sourceRange? : Option Syntax.Range)
-                                   : MetaM Json := do
+private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
+    (sourceRange? : Option Syntax.Range) : MetaM Json := do
   match expr with
   | .bvar deBruijnIndex =>
-    let data := [("kind", Json.str "bvar"),
-                 ("index", natJson deBruijnIndex)]
-    return Json.mkObj data
+      return json% { kind: "bvar", index: $(natJson deBruijnIndex) }
   | .fvar fvarId => do
-    let decl ← fvarId.getDecl
-    let typeJson ← serializeNode decl.type cfg
-    let mut data := [("kind", Json.str "fvar"),
-                     ("name", Json.str decl.userName.toString),
-                     ("id", Json.str fvarId.name.toString),
-                     ("type", typeJson)]
-    if cfg.withFVarDetails then
-      data := data ++ [("index", natJson decl.index),
-                       ("binderInfo", Json.str (binderInfoToString decl.binderInfo))]
-    if let some v := decl.value? then
-      data := data ++ [("value", ← serializeNode v cfg)]
-    return Json.mkObj data
+      let decl ← fvarId.getDecl
+      let typeJson ← serializeNode decl.type cfg
+      let mut data := [("kind", json% "fvar"),
+                      ("name", Json.str decl.userName.toString),
+                      ("id", Json.str fvarId.name.toString),
+                      ("type", typeJson)]
+      if cfg.withFVarDetails then
+        data := data ++ [("index", natJson decl.index),
+                        ("binderInfo", Json.str (binderInfoToString decl.binderInfo))]
+      if let some v := decl.value? then
+        data := data ++ [("value", ← serializeNode v cfg)]
+      return Json.mkObj data
   | .mvar mvarId => do
-    let mut data := [("kind", Json.str "mvar"),
-                     ("id", Json.str mvarId.name.toString)]
-    match (← trySome mvarId.getDecl) with
-    | some d =>
-      data := data ++ [("name", Json.str d.userName.toString),
-                        ("type", ← serializeNode d.type cfg)]
-    | none => pure ()
-    return Json.mkObj data
+      let mut data := [("kind", json% "mvar"),
+                      ("id", Json.str mvarId.name.toString)]
+      match (← trySome mvarId.getDecl) with
+      | some d =>
+        data := data ++ [("name", Json.str d.userName.toString),
+                          ("type", ← serializeNode d.type cfg)]
+      | none => pure ()
+      return Json.mkObj data
   | .sort u =>
-    let data := [("kind", Json.str "sort"),
-                 ("level", levelToJson u)]
-    return Json.mkObj data
+      return json% { kind: "sort", level: $(levelToJson u) }
   | .const declName us =>
-    let data := [("kind", Json.str "const"),
-                 ("name", Json.str declName.toString),
-                 ("levels", Json.arr (us.map levelToJson).toArray)]
-    return Json.mkObj data
+      return json% {
+        kind: "const",
+        name: $(declName.toString),
+        levels: $((us.map levelToJson).toArray)
+      }
   | .app fn arg =>
-    let args := expr.getAppArgs
-    let binderInfos ← applicationBinderInfos expr
-    let arguments ← args.mapIdxM fun index argument => do
-      let binderInfo? := binderInfos[index]!
-      pure <| Json.mkObj [
-        ("expr", ← serializeNode argument cfg),
-        ("binderInfo", binderInfoJson binderInfo?),
-        ("isExplicit", binderIsExplicitJson binderInfo?),
-        ("isTypeclass", binderIsTypeclassJson binderInfo?)
-      ]
-    let headConstant := match expr.getAppFn.const? with
-      | some (name, _) => Json.str name.toString
-      | none => Json.null
-    let data := [("kind", Json.str "app"),
-                 ("fn", ← serializeNode fn cfg),
-                 ("arg", ← serializeNode arg cfg),
-                 ("headConstant", headConstant),
-                 ("arguments", Json.arr arguments)]
-    return Json.mkObj data
+      let args := expr.getAppArgs
+      let binderInfos ← applicationBinderInfos expr
+      let arguments ← args.mapIdxM fun index argument => do
+        let binderInfo? := binderInfos[index]!
+        pure <| json% {
+          expr: $(← serializeNode argument cfg),
+          binderInfo: $(binderInfoJson binderInfo?),
+          isExplicit: $(binderIsExplicitJson binderInfo?),
+          isTypeclass: $(binderIsTypeclassJson binderInfo?)
+        }
+      let headConstant := match expr.getAppFn.const? with
+        | some (name, _) => Json.str name.toString
+        | none => json% null
+      return json% {
+        kind: "app",
+        fn: $(← serializeNode fn cfg),
+        arg: $(← serializeNode arg cfg),
+        headConstant: $headConstant,
+        arguments: $arguments
+      }
   | .lam binderName binderType body binderInfo =>
-    let data := [("kind", Json.str "lam"),
-                 ("name", Json.str binderName.toString),
-                  ("type", ← serializeNode binderType cfg),
-                  ("body", ← serializeNode body cfg),
-                 ("binderInfo", Json.str (binderInfoToString binderInfo))]
-    return Json.mkObj data
+      return json% {
+        kind: "lam",
+        name: $(binderName.toString),
+        type: $(← serializeNode binderType cfg),
+        body: $(← serializeNode body cfg),
+        binderInfo: $(binderInfoToString binderInfo)
+      }
   | .forallE binderName binderType body binderInfo =>
-    let data := [("kind", Json.str "forall"),
-                 ("name", Json.str binderName.toString),
-                  ("type", ← serializeNode binderType cfg),
-                  ("body", ← serializeNode body cfg),
-                 ("binderInfo", Json.str (binderInfoToString binderInfo))]
-    return Json.mkObj data
+      return json% {
+        kind: "forall",
+        name: $(binderName.toString),
+        type: $(← serializeNode binderType cfg),
+        body: $(← serializeNode body cfg),
+        binderInfo: $(binderInfoToString binderInfo)
+      }
   | .letE declName type value body nondep =>
-    let data := [("kind", Json.str "let"),
-                 ("name", Json.str declName.toString),
-                  ("type", ← serializeNode type cfg),
-                  ("value", ← serializeNode value cfg),
-                  ("body", ← serializeNode body cfg),
-                 ("nondep", Json.bool nondep)]
-    return Json.mkObj data
+      return json% {
+        kind: "let",
+        name: $(declName.toString),
+        type: $(← serializeNode type cfg),
+        value: $(← serializeNode value cfg),
+        body: $(← serializeNode body cfg),
+        nondep: $nondep
+      }
   | .lit lit =>
-    let data := [("kind", Json.str "lit"),
-                 ("lit", litToJson lit)]
-    return Json.mkObj data
+      return json% { kind: "lit", lit: $(litToJson lit) }
   | .mdata data expr =>
       let range? := sourceRangeFromMData data <|> sourceRange?
       let data := data.erase witnessDataGoalMDataKey
       if data.isEmpty then
         serializeCore expr cfg range?
       else if cfg.withMData then
-        let data := [("kind", Json.str "mdata"),
-                     ("data", mdataToJson data),
-                     ("expr", ← serializeNode expr cfg range?)]
-        return Json.mkObj data
+        return json% {
+          kind: "mdata",
+          data: $(mdataToJson data),
+          expr: $(← serializeNode expr cfg range?)
+        }
       else
         serializeCore expr cfg range?
   | .proj typeName idx struct =>
-    let data := [("kind", Json.str "proj"),
-                 ("structName", Json.str typeName.getPrefix.toString),
-                 ("index", natJson idx),
-                 ("fieldName", Json.str typeName.toString),
-                  ("expr", ← serializeNode struct cfg)]
-    return Json.mkObj data
+      return json% {
+        kind: "proj",
+        structName: $(typeName.getPrefix.toString),
+        index: $(natJson idx),
+        fieldName: $(typeName.toString),
+        expr: $(← serializeNode struct cfg)
+      }
 
 end
 

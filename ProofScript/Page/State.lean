@@ -1,4 +1,4 @@
-import ProofScript.Page.Data
+import ProofScript.Page.Model
 
 open Lean
 
@@ -8,7 +8,7 @@ namespace ProofScript
 
 structure PageState where
   components : Array Component := #[]
-  labels : Std.HashMap (ReferenceKind × String) SourceLocation := {}
+  labels : Std.HashMap (ReferenceKind × String) Foundation.SourceLocation := {}
   exported : Bool := false
   deriving Inhabited
 
@@ -34,7 +34,7 @@ def addComponent  (env : Environment)
 def registerLabel (env : Environment)
                   (kind : ReferenceKind)
                   (label : String)
-                  (source : SourceLocation)
+                  (source : Foundation.SourceLocation)
                   : Except String Environment := do
   let state := getPageState env
   if let some previous := state.labels.get? (kind, label) then

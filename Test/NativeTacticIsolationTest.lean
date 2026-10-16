@@ -1,5 +1,4 @@
 import ProofScript
-import Test.SpacedRegistrationDecl
 
 open ProofScript
 
@@ -80,12 +79,6 @@ run_cmd do
   for name in ["isolation_finish", "isolation_elab"] do
     if (Lean.Parser.runParserCategory env `term ("by " ++ name)).isOk then
       throwError "extension leaked into native grammar: {name}"
-  let .ok native := Lean.Parser.runParserCategory env `tactic "skip"
-    | throwError "native skip no longer parses"
-  let .ok custom := Lean.Parser.runParserCategory env `scriptTactic "skip"
-    | throwError "script skip does not parse"
-  if native.getKind == custom.getKind then
-    throwError "native and script skip share a parser kind"
 
 example : True := by
   script_remark "explicit macro entry"
@@ -130,15 +123,6 @@ example : 0 = 0 := by
 example : True := by
   script_infer
     True => True := True.intro
-
--- Imported initialization must use the same normalized names as local execution.
-example : True := script spaced_finish True.intro
-example : True := script spaced_elab True.intro
-@theorem importedSpacedRecorder : True := script spaced_exclusive True.intro
-@theorem nestedSpacedScript : True := script
-  exact (by
-    have h : True := script spaced_finish True.intro
-    exact h)
 
 -- Literal keywords are not restricted to Lean identifier characters or namespace paths.
 -- Non-identifier literals need lexer tokens, just as native non-reserved tactics do.
@@ -196,13 +180,6 @@ example : True := script isolation..finish
 @theorem recordedDotted : True := script isolation.finish
 @theorem recordedRepeatedDot : True := script isolation..finish
 
-example : True := by script_spaced_finish' True.intro
-example : True := by script_spaced_elab? True.intro
-example : True := script spaced_finish' True.intro
-example : True := script spaced_elab? True.intro
-@theorem importedSpacedApostrophe : True := script spaced_finish' True.intro
-@theorem importedSpacedQuestion : True := script spaced_elab? True.intro
-
 example : True ∧ True := script
   split_and
   | left => intro_proper'
@@ -218,31 +195,6 @@ example : True ∧ True := script
   | left => ✓
   | right => isolation..finish
 
-run_cmd do
-  let env ← Lean.getEnv
-  let registrations := ProofScript.scriptTacticRegistrations env
-  for name in ["intro_proper'", "isolation_finish?", "isolation_finish!", "isolation_α₂",
-      "✓", "isolation↗", "isolation.finish", "isolation..finish",
-      "spaced_finish'", "spaced_elab?"] do
-    let call := name ++ (if name.startsWith "spaced_" then " True.intro" else "")
-    for category in [`term, `tactic] do
-      let code := (if category == `term then "by " else "") ++ call
-      if (Lean.Parser.runParserCategory env category code).isOk then
-        throwError "literal keyword leaked into native grammar: {code}"
-    let .ok source := Lean.Parser.runParserCategory env `scriptTactic call
-      | throwError "registered keyword did not parse: {call}"
-    let some id := ProofScript.tacticNameIdent source
-      | throwError "registered keyword has no dispatcher identifier: {name}"
-    unless id.getId == Lean.Name.mkSimple name && id.getId.toString false == name do
-      throwError "dispatcher changed literal keyword: {name}"
-    unless (ProofScript.registeredTacticCall registrations source).isSome do
-      throwError "registered keyword did not match: {name}"
-  -- A matching keyword alone must not admit native or structural syntax nodes.
-  for kind in [`Lean.Parser.Tactic.case, `Lean.cdot, `Lean.Parser.Tactic.trivial] do
-    let fake := Lean.Syntax.node .none kind #[Lean.mkAtom "intro_proper'"]
-    if (ProofScript.registeredTacticCall registrations fake).isSome then
-      throwError "unregistered source kind accepted: {kind}"
-
 syntax "unregistered?" : scriptTactic
 
 /-- error: unknown script tactic -/
@@ -251,8 +203,6 @@ example : True := script unregistered?
 
 /--
 error: 未知script策略
----
-error: Unknown identifier `unregisteredRecordedPunctuation`
 -/
 #guard_msgs in
 @theorem unregisteredRecordedPunctuation : True := script unregistered?

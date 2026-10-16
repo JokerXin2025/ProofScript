@@ -3,7 +3,7 @@ import os
 import re
 from pathlib import Path
 from string import Template
-from urllib.parse import urlparse
+from urllib.parse import urlparse, quote as quote_url_path
 
 from PS4HTML.highlight import highlight_code
 
@@ -157,7 +157,7 @@ class ProofTextRenderer:
             return f'<span class="unresolved-reference" title="{title}">{text}</span>'
         target_file = self.build_root / target.output_path
         current_dir = (self.build_root / self.current_output).parent
-        href = f'{os.path.relpath(target_file, current_dir)}#{target.anchor}'
+        href = f'{quote_url_path(os.path.relpath(target_file, current_dir))}#{quote_url_path(target.anchor)}'
         return f'<a class="page-reference reference-{html.escape(str(kind), quote = True)}" href="{html.escape(href, quote = True)}">{text}</a>'
 
     @staticmethod

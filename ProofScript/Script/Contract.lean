@@ -1,0 +1,46 @@
+import ProofScript.Utils.SHA256
+import ProofScript.Foundation.Name
+import ProofScript.Script.Registry
+
+namespace ProofScript
+
+open Lean
+open scoped Foundation
+
+def recordingContractVersion : String := "1"
+def recordingProtocolVersion : String := "0.0.0"
+
+/-- Immutable invocation metadata; generated parser/elaborator names are not contract identity. -/
+structure RecordingContract where
+  contractVersion : String := recordingContractVersion
+  recordingVersion : String := recordingProtocolVersion
+  ruleId : Name
+  name : String
+  strategy : Bool
+  continuation : Option Nat
+  fields : Option (Array Recording.OutputField)
+  deriving Inhabited
+
+def RecordingContract.ofRegistration (registration : ScriptTacticRegistration) : RecordingContract :=
+  { ruleId := registration.ruleId, name := registration.name, strategy := registration.strategy,
+    continuation := registration.continuation, fields := registration.recordedFields }
+
+def RecordingContract.toJson (contract : RecordingContract) := json% {
+  contractVersion: $(contract.contractVersion),
+  recordingVersion: $(contract.recordingVersion),
+  ruleId: $(contract.ruleId),
+  name: $(contract.name),
+  strategy: $(contract.strategy),
+  continuation: $(contract.continuation),
+  fields: $(contract.fields.map fun fields => fields.map Recording.OutputField.toJson)
+}
+
+def RecordingContract.id (contract : RecordingContract) : String := contract.toJson.sha256
+
+/-- Only presentation validation uses this descriptor; it cannot dispatch execution. -/
+def RecordingContract.registration (contract : RecordingContract) : ScriptTacticRegistration :=
+  { ruleId := contract.ruleId, name := contract.name, strategy := contract.strategy,
+    continuation := contract.continuation, recordedFields := contract.fields,
+    sourceKind := .anonymous, executionKind := .anonymous, recordingKind := none }
+
+end ProofScript

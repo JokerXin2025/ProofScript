@@ -1,7 +1,7 @@
 import ProofScript.Page.Component.Core
 import Lean.Data.Json
-import ProofScript.Page.Path
-import ProofScript.Page.Data
+import ProofScript.Output.Path
+import ProofScript.Page.Model
 import ProofScript.Script.ExprJSON
 
 open Lean
@@ -18,11 +18,11 @@ structure ErrorBody where
   message : String
 deriving ToJson
 
-private def success (value : Json) : Json :=
-  Json.mkObj [("ok", true), ("value", value)]
+private def success (value : Json) := json% { ok: true, value: $value }
 
-private def failure (code message : String) : Json :=
-  Json.mkObj [("ok", false), ("error", toJson ({ code, message } : ErrorBody))]
+private def failure (code message : String) :=
+  let error : ErrorBody := { code, message }
+  json% { ok: false, "error": $error }
 
 /-- Executes a typed pure function behind the `proofscript-json-v1` string ABI. -/
 def invokeJson [FromJson α] [ToJson β]
@@ -51,7 +51,7 @@ structure PendingEntry where
   wrapper : String
   module : String
   functionType : EntryType
-  source : SourceLocation
+  source : Foundation.SourceLocation
 deriving Inhabited, ToJson
 
 def pendingEntryPath (moduleName declaration : String) : FilePath :=
@@ -61,10 +61,12 @@ def pendingEntryPath (moduleName declaration : String) : FilePath :=
     FilePath.mk modulePath / s!"{declarationPath}.json"
 
 def writePendingEntry (entry : PendingEntry) : IO FilePath := do
-  let path ← activeOutputPath (pendingEntryPath entry.module entry.entry)
+  let reference := pendingEntryPath entry.module entry.entry
+  let path ← activeOutputPath reference
   ensureParentDir path
   IO.FS.writeFile path (toJson entry).pretty
-  return path
+  -- Persist a logical reference; a staging directory must not change page content digests.
+  return reference
 
 
 end ProofScript.Computation

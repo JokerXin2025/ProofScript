@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PS4HTML.project import PS4HTMLError
-from PS4HTML.recording import PROOF_SCHEMA_VERSION, SUPPORTED_RECORDING_VERSIONS
+from PS4HTML.recording import PROOF_SCHEMA_VERSION
 
 
 EXPRESSION_ID = re.compile(r"^e[0-9]+$")
@@ -79,11 +79,6 @@ class ExpressionResolver:
         return {key: self.resolve(child, active) for key, child in value.items()}
 
 
-def resolve_expressions(value, expressions: dict):
-    """Compatibility helper for callers that need one resolved expression value."""
-    return ExpressionResolver(expressions).resolve(value)
-
-
 @dataclass(frozen=True)
 class LoadedProof:
     path: Path
@@ -154,7 +149,7 @@ class ResourceLoader:
         if not isinstance(document, dict):
             raise PS4HTMLError(f"Embedded proof JSON must be an object: {path}")
         version = document.get("schemaVersion")
-        if version not in SUPPORTED_RECORDING_VERSIONS:
+        if version != PROOF_SCHEMA_VERSION:
             raise PS4HTMLError(f"Unsupported embedded proof schema version: {version}")
         proof = document.get("proof")
         expressions = document.get("expressions", {})
@@ -165,7 +160,3 @@ class ResourceLoader:
         loaded = LoadedProof(path, version, code, proof, expressions, resolver)
         self.proof_cache[key] = loaded
         return loaded
-
-
-def read_text_resource(value, project_root: Path, media_type: str | None = None) -> str:
-    return ResourceLoader(project_root).read_text(value, media_type)

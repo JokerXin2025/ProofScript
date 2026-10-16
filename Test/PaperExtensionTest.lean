@@ -1,5 +1,7 @@
 import ProofScript
 
+project_info "Test.PaperExtensionTest" { title := "PaperExtensionTest" }
+
 @text r#"
 = ProofText Overview <overview>
 

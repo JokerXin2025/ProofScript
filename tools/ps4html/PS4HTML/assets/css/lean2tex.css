@@ -21,3 +21,10 @@
         transition: none;
     }
 }
+
+/* KaTeX's second vlist row only reserves depth below the baseline. Its
+   transparent cells overlap denominators and combined subscripts; let pointer
+   events reach the actual math in the first row without changing its layout. */
+.katex .vlist-t.vlist-t2 > .vlist-r + .vlist-r {
+    pointer-events: none;
+}

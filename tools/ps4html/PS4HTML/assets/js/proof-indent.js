@@ -16,4 +16,5 @@ function updateProofIndent(input) {
 
     const value = input.closest('.proof-indent-control')?.querySelector('.proof-indent-value');
     if (value) value.textContent = indent;
+    document.dispatchEvent(new Event('ps4html:layoutchange'));
 }

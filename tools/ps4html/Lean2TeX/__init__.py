@@ -5,23 +5,22 @@ Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 将 Lean 表达
 
     **接收证明树的一个子树（JSON 表达式 AST），输出对应的 TeX 代码。**
 
-渲染配置由 Lean 导出到项目的 `.ProofScript/lean2tex/events/`。
+渲染配置由 Lean 冻结并导出到 `.ProofScript/info/snapshots/`，完成清单为 `info/index.json`。
 
 典型用法（作为 PS4HTML 的接口）：
 
     from Lean2TeX import load
 
-    renderer = load(project_root / ".ProofScript", proof_module)
+    renderer = load(export_root, proof_module, snapshot_id=artifact["snapshotId"])
     tex = renderer.render(node)                # node 是 JSON 表达式子树
     display = renderer.convert(node)
     tex = renderer.render_display(display)
 
-每个定理渲染前应调用 `renderer.reset()` 清空变量分配状态（对应原 `resetVarAllocator`）。
+模块只有一个消费快照时可省略 snapshot_id；存在多个快照时必须明确选择。
+每个定理渲染前应调用 `renderer.reset()` 清空变量分配状态。
 """
 
 from __future__ import annotations
-
-from pathlib import Path
 
 from .core import Expr2TeX, load
 from .expr import flatten_app
@@ -37,7 +36,6 @@ __all__ = [
     # 核心接口
     "Expr2TeX",
     "load",
-    "expr2tex",
     "DisplayNode",
     "RenderDiagnostic",
     "SemanticConverter",
@@ -50,16 +48,3 @@ __all__ = [
     "VariableAllocator",
     "VarTypeConfig",
 ]
-
-def expr2tex(
-    node: dict,
-    role: str = "only",
-    parent: str = "Text",
-    styles: tuple[str, ...] = ("Root",),
-    language: str = "zh",
-    *,
-    export_root: str | Path,
-    module: str,
-) -> str:
-    """用证明所属模块的 Lean 导出配置渲染一个表达式。"""
-    return load(export_root, module).render(node, role, parent, styles, language=language)

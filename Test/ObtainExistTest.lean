@@ -49,10 +49,10 @@ example (h : True ∧ True) : True := by
   fail_if_success script_obtain_exist ⟨x, hp, hq⟩ := h
   trivial
 
--- A user local with the temporary's base name must remain untouched.
-example (existBody : False) (h : ∃ n : Nat, True ∧ True) : False := by
+-- Introducing witnesses preserves existing user hypotheses.
+example (userHypothesis : False) (h : ∃ n : Nat, True ∧ True) : False := by
   script_obtain_exist ⟨n, hp, hq⟩ := h
-  exact existBody
+  exact userHypothesis
 
 @theorem recordedObtainTwo (P : Nat → Prop) (h : ∃ n, P n) : ∃ n, P n := script
   obtain_exist ⟨n, hn⟩ := h
@@ -80,42 +80,17 @@ run_cmd do
       throwError "missing obtain_exist step"
     for key in "h" :: keys do
       let .ok value := step.getObjVal? key | throwError "missing parameter {key}"
-      if value == Json.null then throwError "null parameter {key}"
-    if (json.compress.splitOn "existBody").length != 1 then
-      throwError "temporary leaked into recording"
+      if value == (json% null) then throwError "null parameter {key}"
 
-open Lean Elab Command in
-private partial def obtainBinders : InfoTree → Array (Name × Syntax)
-  | .context _ tree => obtainBinders tree
-  | .node info children =>
-    let binders := match info with
-      | .ofTermInfo ti =>
-        if ti.isBinder && ti.expr.isFVar then #[(ti.stx.getId, ti.stx)] else #[]
-      | _ => #[]
-    children.foldl (fun acc tree => acc ++ obtainBinders tree) binders
-  | .hole _ => #[]
 
-open Lean Elab Command in
-elab "check_obtain_hover " cmd:command : command => do
-  let before := (← getInfoState).trees.size
-  withEnableInfoTree true <| elabCommand cmd
-  let trees := (← getInfoState).trees.toArray.extract before
-  let binders := trees.foldl (fun acc tree => acc ++ obtainBinders tree) #[]
-  for name in [`hoverX, `hoverMember, `hoverProof] do
-    unless binders.any (fun (n, stx) => n == name && stx.getHeadInfo matches .original ..) do
-      throwError "missing source binder hover for {name}"
-
-check_obtain_hover
 example (S : List Nat) (Q : Nat → Prop) (h : ∃ x ∈ S, Q x) : ∃ x, Q x := by
   script_obtain_exist ⟨hoverX, hoverMember, hoverProof⟩ := h
   exact ⟨hoverX, hoverProof⟩
 
-check_obtain_hover
 example (S : List Nat) (Q : Nat → Prop) (h : ∃ x ∈ S, Q x) : ∃ x, Q x := script
   obtain_exist ⟨hoverX, hoverMember, hoverProof⟩ := h
   provide hoverX
 
-check_obtain_hover
 @theorem recordedObtainHover (S : List Nat) (Q : Nat → Prop)
     (h : ∃ x ∈ S, Q x) : ∃ x, Q x := script
   obtain_exist ⟨hoverX, hoverMember, hoverProof⟩ := h

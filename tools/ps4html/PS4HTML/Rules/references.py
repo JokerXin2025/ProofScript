@@ -1,5 +1,6 @@
 import os, html, json
 from pathlib import Path
+from urllib.parse import quote as quote_url_path
 from string import Template
 from textwrap import indent
 from PS4HTML.i18n import normalize_language, tr
@@ -42,8 +43,9 @@ def render_references(references, labels, build_root, current_output, language="
         if not isinstance(reference, dict):
             continue
         info = reference.get("info", {})
-        project = info.get("project", {}) if isinstance(info, dict) else {}
-        key = json.dumps(project, ensure_ascii = False, sort_keys = True)
+        project_id = info.get("project") if isinstance(info, dict) else None
+        project = reference.get("project", {})
+        key = project_id
         index = group_indexes.get(key)
         if index is None:
             index = len(groups)
@@ -88,9 +90,10 @@ def _project_rows(project, language="zh"):
             value = _list_value(value)
         if value:
             rows.append(_row(FIELD_LABELS.get(language, FIELD_LABELS["zh"]).get(label_key, label_key), value, key == "base_url"))
-    for pair in project.get("extra", []):
-        if isinstance(pair, list) and len(pair) == 2 and pair[1]:
-            rows.append(_row(pair[0], pair[1]))
+    for key, value in project.get("extra", {}).items():
+        if value is not None:
+            rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value)
+            rows.append(_row(key, rendered))
     return "\n".join(rows)
 
 
@@ -115,7 +118,7 @@ def _render_theorem(position, reference, labels, build_root, current_output, lan
         location = f"{source_name}:{target.line}" if target.line else source_name
         target_file = build_root / target.output_path
         current_dir = (build_root / current_output).parent
-        href = f'{os.path.relpath(target_file, current_dir)}#{target.anchor}'
+        href = f'{quote_url_path(os.path.relpath(target_file, current_dir))}#{quote_url_path(target.anchor)}'
         return TEMPLATE_REFERENCE_THEOREM.substitute(
             href = html.escape(href, quote = True),
             name = html.escape(str(display_name)),

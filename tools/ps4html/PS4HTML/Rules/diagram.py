@@ -13,7 +13,7 @@ def _render_diagram(content):
     return render_annotation(sort="diagram", icon=DIAGRAM_ICON, content=content)
 
 
-def rule_svg(svg, previous, subsequent, proof, *, language):
+def rule_svg(svg, proof, *, language):
     code = svg["code"]
     if not isinstance(code, str):
         raise ValueError("svg.code must be a string")
@@ -23,7 +23,7 @@ def rule_svg(svg, previous, subsequent, proof, *, language):
     return _render_diagram(figure)
 
 
-def rule_latex(value, previous, subsequent, proof, *, language):
+def rule_latex(value, proof, *, language):
     rendered, diagnostics = render_latex(
         value, proof.project_root, proof.resource_loader, inline=True
     )

@@ -1,0 +1,81 @@
+.proof-step {
+    --rule-tag-color: var(--text-color);
+    --rule-tag-border: transparent;
+    --rule-background: transparent;
+    display: flex;
+    flex-wrap: wrap;
+    position: relative;
+    border-radius: 8px;
+    padding: 8px;
+    border: 1px solid transparent;
+    transition: 0.3s;
+    background: var(--rule-background, transparent);
+}
+.proof-step > .proof-step-label {
+    color: var(--rule-tag-color, var(--text-color));
+}
+.proof-step.introducer {
+    --rule-background: transparent;
+}
+.proof-step.introducer > .proof-step-label { color: inherit; }
+.proof-step.calc {
+    align-items: center;
+}
+.proof-step:hover {
+    border-color: var(--current-step-color);
+    box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+}
+
+.proof-step.unknown {
+    background: #fef2f2;
+}
+
+.proof-step.unknown:hover {
+    border-color: var(--current-step-color);
+}
+
+.proof-step-label.unknown {
+    color: var(--proof-mark-error-color-light);
+}
+
+.proof-step-label {
+    height: 24px;
+    display: flex;
+    font-family: 'Consolas', monospace;
+    font-size: 12px;
+    font-weight: 600;
+    align-items: center;
+    margin-left: 6px;
+    margin-right: 16px;
+}
+.proof-step-label.calc {
+    width: 36px;
+    margin-right: 0;
+}
+
+.proof-step-content {
+    flex: 1;
+    align-items: center;
+    line-height: 1.75;
+}
+
+.proof-calc-relation {
+    min-width: 24px;
+    margin: 0 6px;
+    text-align: center;
+}
+.proof-calc-lhs, .proof-calc-rhs {
+    display: inline-block;
+    white-space: nowrap;
+    transform-origin: left;
+    min-width: 0;
+}
+.proof-calc-lhs {
+    text-align: right;
+}
+.proof-calc-rhs {
+    text-align: left;
+}
+.proof-calc-end {
+    width: 12px;
+}

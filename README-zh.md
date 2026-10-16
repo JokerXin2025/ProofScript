@@ -14,7 +14,7 @@ python3 -m pip install -e ./tools/ps4html
 在用户 Lean 项目中配置 ProofScript 依赖、执行 `lake update` 后，运行 `lake build MyLibrary:ps4html`（将 `MyLibrary` 替换为实际库名），输出为
 `.PS4HTML/build/index.html`；`ps4html serve` 提供本地预览。完整示例位于 [`examples/site/`](examples/site/)，
 其中计算页面另需 Node、Emscripten 和匹配的 Lean/Wasm runtime。
-证明与渲染导出使用 `0.1.0`；页面、计算和 Lean2TeX 协议仍为 `0.0.0`。PS4HTML 在消费者边界兼容旧版证明与渲染数据；重新构建可获得新增的语义参数字段，不要手工修改版本号。
+统一 Info 导出协议为 `4.0.0`，录制协议保持 `0.0.0`。每个 script 步骤对应一个对象，目标快照作为普通字段写入；配置及实际契约通过产物清单关联。旧缓存需重新运行 Lake facet 构建，详见[统一配置与导出说明](#统一-info-配置)。
 详细使用说明见 [PS4HTML 文档](tools/ps4html/README.md)。
 
 ## 目录
@@ -24,6 +24,7 @@ python3 -m pip install -e ./tools/ps4html
 - [ProofText](#prooftext)
 - [自动文献管理系统](#自动文献管理系统)
 - [其它页面组件](#其它页面组件)
+- [统一 Info 配置](#统一-info-配置)
 - [页面导出](#页面导出)
 - [环境要求](#环境要求)
 - [当前限制](#当前限制)
@@ -396,16 +397,15 @@ theorem divisibility_chain {a b c d e : ℕ}
 - 作为终结策略闭合目标.
 - 直接作为项使用（即写作 `:= infer`）；这里的 `infer` 是普通项宏，而不是无前缀的可执行脚本策略.
 
-### 可选 Mathlib 脚本策略
+### Mathlib 脚本策略
 
-安装 Mathlib 后，可以显式导入可选扩展：
+`import ProofScript` 通过 `ProofScript.Mathlib.Info` 加载 Mathlib 策略及其展示配置。只需 tactic 实现与注册时可以导入：
 
 ```lean
-import ProofScript
 import ProofScript.Mathlib.Scripts
 ```
 
-该模块不由核心 `ProofScript` 自动导入，也不属于默认 Lake target。当前包装按字母顺序包括：
+基础策略的 `ProofScript.Script.Basic` 提供执行与注册，`ProofScript.Defaults.Script` 另加载展示配置；公共 `ProofScript` 入口加载全部默认配置。模块职责见[统一 Info 配置](#统一-info-配置)。当前包装按字母顺序包括：
 
 | 策略 | 支持的简化形式 |
 | :- | :- |
@@ -437,7 +437,7 @@ norm_num only [Nat.add_zero Nat.zero_add] at *
 
 支持位置参数的策略可使用 `at h`、`at h₁ h₂`、`at *`、`at ⊢` 和
 `at h₁ h₂ ⊢`。配置对象、自定义 discharger、任意 tactic block 以及仅输出建议的 `?`
-变体没有包装。完整说明参见 [Mathlib 扩展文档](ProofScript/Mathlib-README-zh.md)。
+变体没有包装。支持的语法参见 [Mathlib 策略定义](ProofScript/Mathlib/Scripts.lean)。
 
 ### 自定义脚本策略
 
@@ -478,22 +478,51 @@ script_info finishRule {
 }
 ```
 
-对于已 elaboration 的 calc 结果或生成媒体等输出，可用 `script_recorder <id>` 提供字段契约和自定义计划，仍由同一引擎调度：
+对于已 elaboration 的 calc 结果或生成媒体等输出，可用 `script_recorder <id>` 提供字段契约和自定义捕获逻辑，与自动录制共用公共接口：
 
 ```lean
 script_recorder finishRule
-  (fields := #[{ name := "evidence", schema := .expression }])
+  (fields := ProofScript.Recording.goalFields ++ #[{ name := "evidence", schema := .expression }])
   "finish" proof:term => do
-    recordStep [] (parameters := { parameters := #[
-      ProofScript.Recording.param (.category `term) "evidence" .before proof
-    ] })
+    recordStep (before := #[
+      ProofScript.Recording.param (.category `term) "evidence" proof
+    ])
 ```
 
 ID 与策略关键字必须匹配原注册。缺少类别实例不影响普通执行，实际录制时会报错，或使用已绑定的手写覆盖。手写 recorder 未声明 fields 时为不透明契约，导出 `recordedFields: null`。
 
 `script_info` 的模板使用字段对象，配置在导入声明模块的证明模块生效，本模块内的更新供后续导入方使用。模板按语言合并，首项为语言缺失时的回退；导入后修改规则使用完整 ID，例如 `script_info MyRules.finishRule`。占位符使用实际输出字段名，`${rules.0.expression}`、`${loc_before.hypotheses}` 等嵌套路径会按 schema 校验。失败捕获显示 `—`，文本和结构化值均进行 HTML 转义。特定 renderer 使用最终合并配置；相同关键字的重载须使用不同 ID。
 
-新增类别只需定义实例，参见[扩展教程](docs/Recording-Extensions-zh.md)和[可编译示例](examples/recording/Labels.lean)。运行时 API 由 `ProofScript.Script.Recording` 导出，步骤/策略适配位于 `ProofScript.Script.Record`。手写捕获统一使用计划，旧 ParamRaw 与 preTerms/postTerms 接口已移除。
+需要自定义录制顺序时，使用公共步骤接口。`withRecordingStep` 预留一个步骤对象，回调结束后关闭句柄。下游选择字段及捕获位置，并显式执行 tactic：
+
+```lean
+open Lean ProofScript ProofScript.Recording
+
+script_macro snapshotThenClear "snapshot_then_clear" h:ident => `(tactic| clear $h:ident)
+script_recorder snapshotThenClear (fields := goalFields ++ #[
+  { name := "evidence_before", schema := .expression, nullable := false },
+  { name := "module", schema := .string, nullable := false },
+  { name := "evidence_after", schema := .expression }])
+  "snapshot_then_clear" h:ident => withRecordingStep fun step => do
+    step.recordGoal "goal_before"
+    step.captureField "evidence_before" (expression h.raw)
+    step.recordJson "module" (toJson (← getEnv).mainModule)
+    executeRecordedStep
+    step.recordGoal "goal_after"
+    step.captureField "evidence_after" (expression h.raw) { onFailure := .bestEffort }
+```
+
+`captureField` 恢复捕获过程中的临时 elaboration 状态，再提交自包含快照。直接捕获默认 required；bestEffort 失败时写入 null。`CaptureOptions.goal` 指定目标，`collectReferences := false` 关闭该字段的文献收集。普通环境数据使用 `recordJson`；已捕获的 `RecordedValue` 使用 `recordValue` 提交，嵌套容器中的表达式也会统一处理。分开捕获与写入时使用 `isolatedCapture`；`RecordedValue.toJson` 保留快照内部的引用，只用于查看。公共写入拒绝空名、保留字段和重复字段，也检查直接字段与 `step.capturePlan captures` 之间的冲突。
+
+步骤范围成功时保留 tactic 执行结果；失败时回滚 Lean 状态、录制数据、表达式表和文献引用。嵌套步骤预留固定位置，外层可在内层结束后继续写入。句柄仅在回调期间有效；最后一个目标关闭后仍可捕获纯数据。目标快照保留表达式类型，不把目标中的常量自动加入文献。LaTeX 编译、资源文件写入等外部 IO 不随 Lean 状态回滚。
+
+策略执行后使用 `resolveStrategyContexts labels (continuationIndex := some index)`，取得有序的 `branches` 及 `contexts.goal`，查询 main、continuation 或 `.branch label` 的实际目标。直接捕获应先确认目标存在，再传入 `CaptureOptions`；未指定 goal 表示使用当前主目标。批量捕获可用 `step.capturePlan after contexts.goal` 选择每项的上下文，之后调用 `step.prepareBranches contexts`。script 执行器负责推进分支，并在证明完成后写回预留的父步骤；下游无需管理 box 标签或表达式表。
+
+`recordStep` 在执行前记录当前主目标为 `goal_before`，执行后记录剩余主目标为 `goal_after`；`recordStrategy` 还会准备分支。没有剩余目标时写入 `null`。策略的 goal_after 在 tactic 执行后、分支证明前捕获。目标快照与其他参数共用捕获、提交、字段校验和模板渲染路径。自动录制器在 recordedFields 中声明这两个字段，模板可直接使用 `${goal_before}` / `${goal_after}`。手写录制器可在字段契约中添加 goalFields，也可自行声明和记录其他目标字段名。直接步骤范围允许只记录环境元数据。
+
+`recordStep (before := #[...]) (after := #[...])` 接收两个有序的 `Array ParamCapture`，默认均为空数组。ParamCapture 和 param 不再携带 timing，capturePlan 也直接接收数组，在调用位置执行传入的整组。手写前后快照须分别指定不同的输出字段名；ParamCapture.field 默认等于 name，也可另设输出名并保留用于诊断的逻辑名。自动录制器在生成代码时展开声明中的 timing：once/before 进入 before，after 进入 after，both 生成 `<field>_before`、`<field>_after`。validateCaptures 检查无效输出名和重名，执行 tactic 前统一检查两组之间的字段冲突。
+
+运行时接口由 `ProofScript.Script.Recording` 导出，便捷编排位于 `ProofScript.Script.Record`，`import ProofScript` 包含两者。参见[直接录制示例](examples/recording/DirectRecorder.lean)和[类别扩展示例](examples/recording/Labels.lean)。新增类别只需定义 RecordCategory 实例，数组和 optional 输入自动组合该实例。
 
 暂不支持使用像 `macro_rules` / `elab_rules` 一样的方式定义脚本策略.
 
@@ -503,7 +532,7 @@ ID 与策略关键字必须匹配原注册。缺少类别实例不影响普通�
 `"theorem"` 和 `"lemma"` 标签。
 ProofScript 会在目录 `.../.ProofScript/proofs/` 下存放这些数据, 其中 `.../` 代表 Lean 项目根目录.
 每个证明树顶层都包含 `schemaVersion` 和完整 Lean 源码 `code`；脚本模式证明树还包含表达式表
-`expressions` 与录制的步骤数组 `proof`。
+`expressions` 与录制的步骤数组 `proof`。数组中的每项都是一个步骤对象，包含 `_ruleId`、捕获字段和策略的 branches；每个分支的 proof 使用相同格式。默认录制器记录的 goal_before / goal_after 为表达式引用或 null。
 
 `:= script` 中直接使用无前缀 DSL 名称，框架会自动补全 `script_` 前缀并检查、记录每一步；`:= by` 接受普通 Lean
 策略，但不能使用 ProofScript 的脚本策略。后者只保留 `schemaVersion` 与完整 `code`，不输出
@@ -587,7 +616,7 @@ ProofText 源代码和解析后的语义 AST 将由 ProofScript 统一导出至�
 
 ### 文献信息注册
 
-`project_info` 注册当前项目或论文的全局元数据, 并持久化至 `.olean` 环境中
+`project_info` 配置并选择活动项目，持久化至 `.olean`。可写 `project_info "MyProject" { ... }` 指定稳定的项目身份；无目标时更新当前活动项目，无活动项目时以模块名建立项目。相同项目允许多次更新，多个项目可以共同进入站点。
 
 ```lean
 project_info {
@@ -617,11 +646,11 @@ theorem_info referencedTheorem {
 }
 ```
 
-标准字段为 `name`、`tags`；未知字段进入 `extra`。定理引用和页面锚点使用 Lean 声明名，跨模块引用时使用完整限定名。
+`name`、`tags` 控制展示，`project` 直接保存 `String` 类型的项目名；首次配置默认绑定当时的活动项目，后续更新普通字段保持归属。未知字段进入 `extra` 对象。六种 Info 命令都允许重复更新，并支持已知字段检查、`none` 与 `reset`。定理引用和页面锚点使用 Lean 声明名，跨模块引用时使用完整限定名。
 
 ### 自动文献采集
 
-在 `@theorem` 录制表达式参数时, ProofScript 会自动遍历其中使用的定理常量, 如果这些定理携带 `theorem_info` 信息, 它们就会被添加至当前页面的暂存区, 并且不会重复添加, 因此将始终保留其首次出现的顺序.
+在 `@theorem` 录制表达式参数时，ProofScript 收集其中使用的声明身份，按首次出现顺序去重。`page_end` 统一解析已配置的文献信息、标题与渲染配置，因此关闭前的元数据更新会一致生效；关闭后的更新不会修改该页面的冻结视图。
 
 下面的命令可以用来局部关闭文献自动采集:
 
@@ -711,9 +740,64 @@ Finalize 将资源发布到内容寻址目录并把页面 execution 更新为 `r
 
 前端 renderer 可先使用 `docs/Embedded-Computation-Quickstart-zh.md` 中的 Fibonacci 示例做端到端测试。
 
+## 统一 Info 配置
+
+六种命令的全部保留字段、默认值、模板语法和完整示例见 [Info 命令使用手册](docs/Info-Commands-zh.md)。
+
+六个命令共用强类型模型、字段解析、增量更新和导出协议：
+
+| 命令 | 模型（`ProofScript.Info`） | 目标 |
+| --- | --- | --- |
+| `project_info` | `ProjectInfo` | 非空项目名字符串；省略目标时更新活动项目 |
+| `theorem_info` | `TheoremInfo` | 已声明的 Lean 定理名 |
+| `script_info` | `ScriptInfo` | 已注册的完整脚本 ruleId，或本模块的注册 ID |
+| `def_info` | `DefinitionInfo` | 已声明的 Lean 常量 |
+| `var_info` | `VariableInfo` | 非空类别字符串 |
+| `phrase_info` | `PhraseInfo` | 非空短语键 |
+
+命令可以重复执行，只更新写出的字段；已知字段的类型错误、同命令重复字段及未知嵌套字段会报错。未知顶层字段保存到 `extra`，支持字符串、数值、布尔、null、数组和对象。可显式写 `extra := { "review.status" := "checked" }`，其键不会覆盖内置字段。
+
+```lean
+project_info "课程笔记" { title := "Notes", authors := ["Alice"], edition := 1 }
+project_info "课程笔记" { title := "Revised notes", edition := 2 }
+script_info ProofScript.Script.Basic.«rfl» { display := true, reviewed := true }
+var_info "Nat" { default := "n", names := ["n", "m", "k"] }
+phrase_info "forall" { template := [{ lang := "en", content := "${body} for every ${binder}" }] }
+```
+
+项目 ID 统一使用非空字符串字面量，例如 `"课程笔记"`，按完整文本匹配；命名空间和 `open` 不改变项目 ID。定理通过 `project := "课程笔记"` 选择已配置的项目。
+
+省略字段保留已有值；`none` 是 Option 字段的空值；`reset` 屏蔽继承值并恢复字段默认值，无默认的必填字段恢复为未提供。普通列表和 styles 整体替换；template 按语言合并，同语言替换保留位置，新语言追加。`extra` 按键更新，单键 `reset` 删除该键。
+
+Lean 按实际导入图合并：同模块后写覆盖前写，后代覆盖祖先，独立分支的不同字段可合并；同字段不同值保留冲突及来源，消费前可由本地更新消解。未被消费的不完整配置可以保存。`page_end` 同时冻结标题、引用、项目和渲染配置；关闭后的配置仍可供下游使用。独立 proof 使用模块结束视图。
+
+### 模块与查询接口
+
+`import ProofScript` 提供脚本、页面和全部默认展示。按需导入可以使用 `ProofScript.Info`（六种模型及命令）、`ProofScript.Script.Registry`（纯注册）、`ProofScript.Script.Command`（脚本声明）、`ProofScript.Defaults.Script` / `Defaults.Lean2TeX`（基础展示）、`ProofScript.Mathlib.Info`（Mathlib 展示）、`ProofScript.Page.Command`（页面集成）。`Script.Basic` 和 `Mathlib.Scripts` 承载执行实现与注册，展示配置位于 Defaults 和 Mathlib.Info。
+
+模型使用 `ProofScript.Info.ProjectInfo` 等完整名称；源码位置使用 `ProofScript.Foundation.SourceLocation`。领域查询显式接受 `Info.Query`，不能借导出器自身的 mainModule 推断配置视图：
+
+```lean
+open Lean Elab Command ProofScript.Info
+run_cmd do
+  let env ← getEnv
+  let query : Query := { moduleName := env.mainModule }
+  match resolveProjectInfo env query "Notes" with
+  | .ok info => logInfo info.value.title
+  | .error error => throwError error.render
+```
+
+### 扩展与维护
+
+普通字段直接加到相应领域结构体，`deriving InfoSchema` 自动生成字段句柄、codec 关联、编码与 JSON Schema。特殊值类型实现 `InfoCodec`，它继承 Lean 的 `ToJson`，并通过结构化解码器自动提供 `FromJson`；普通 JSON 消费直接使用 `toJson` / `fromJson?`，Info 校验保留 `Diagnostic` 的字段路径和关联字段。特殊合并/校验通过生成的 `Model.infoFields.field` 类型化句柄配置 SchemaOverrides。新增 info 种类还需定义 InfoSpec、目标解析、薄命令和快照依赖消费入口；Python 按该种类的实际展示需求适配冻结值，不再维护第二份输入字段表。
+
+派生器当前支持无参数、无继承、非递归、非依赖字段及独立默认值的普通结构体。InfoCodec 只解析配置；录制捕获继续使用 Recording API，`script_info` 不修改 recorder 或输出契约。注册声明保留在 Basic / Mathlib.Scripts，ruleId 由定义模块和本地 ID 组成；移动注册声明会改变身份。
+
+公开接口检查为 `Test.InfoCoreAPITest`、`Test.InfoAPITest`；定理导航的真实页面检查见 `Test/test_theorem_site_browser.mjs`。阶段验收用的内部 Python 测试脚本已清理。
+
 ## 页面导出
 
-`page_end` 是最终的导出命令, 该命令之后的任何页面组件都会被忽略.
+`page_end` 写出页面并持久化其冻结配置，之后的页面组件会被忽略。完整站点使用 `lake build MyLibrary:ps4html` 构建。Info 协议为 `4.0.0`，录制协议为 `0.0.0`；`info/index.json` 是包含文件摘要、schema、快照和调用契约关联的完成清单。配置可从 `.olean` 重建，page/proof/resources 内容由构建时生成；只读缓存使用 `ps4html make --cache`。不完整或版本不匹配的缓存会被拒绝，需要重新构建。
 
 ## 环境要求
 
@@ -749,10 +833,8 @@ dvisvgm --version
 - [English README](README.md)
 - [ProofText 中文语法](docs/ProofText-Syntax-zh.md)
 - [ProofText English syntax](docs/ProofText-Syntax.md)
-- [JSON 格式中文说明](docs/JSON-Schemas-zh.md)
-- [JSON format documentation](docs/JSON-Schemas.md)
-- [页面 JSON Schema](docs/schema/page.schema.json)
-- [证明树 JSON Schema](docs/schema/proof.schema.json)
+- [录制证明 JSON Schema](docs/schema/recording-proof.schema.json)
+- Info 模型与快照 Schema 随完成导出生成到 `.ProofScript/info/schema/`。
 
 ## PS4HTML 站点生成器
 
@@ -761,6 +843,6 @@ PS4HTML 已作为站点生成工具集成在本仓库的 [`tools/ps4html/`](tool
 - 按 Lean 模块生成 HTML 页面、项目入口、模块导航、跨页引用、定理依赖导航和分组文献。
 - 渲染 ProofText、定理与引理、结构化证明步骤和分支、源码视图、代码高亮、图片及 LaTeX 导出的 SVG；未知规则或资源错误有可见的回退与诊断。
 - 通过 Lean2TeX 将表达式转换为 TeX，并配置声明宏和变量命名；支持中英文证明文本、KaTeX 公式显示及变量联动高亮。
-  - 编排 Lean 和嵌入式 Lean/Wasm 计算构建，提供浏览器 Worker 组件、本地预览服务器与 `lean2tex-report.json` 诊断报告。策略可用独立 `script_info` 命令设置展示：导入方输出一份合并后的模块规则，PS4HTML 依据规则和原始 proof 数据排版；复杂策略可用 `script_info renderCalc { renderer := «calc» }` 指定已注册的 Python 渲染器，缓存渲染不执行 Lean。
+  - 编排 Lean 和嵌入式 Lean/Wasm 计算构建，提供浏览器 Worker 组件、本地预览服务器与 `lean2tex-report.json` 诊断报告。策略用 `script_info` 设置展示，产物清单为 proof 选择冻结配置和实际调用契约；PS4HTML 据此排版，缓存渲染不执行 Lean。例如 `script_info ProofScript.Script.Basic.renderCalc { renderer := «calc» }` 选择计算链渲染器。
 
 在仓库根目录执行 `python3 -m pip install -e ./tools/ps4html`（Python 3.11+），然后到 Lean 项目中运行 `lake build MyLibrary:ps4html`，使用 `ps4html serve` 预览 `.PS4HTML/build/`。`ps4html make --cache` 可直接渲染已有导出，不重新编译 Lean。计算工具链要求与现有限制详见 [PS4HTML 使用说明](tools/ps4html/README.md)和[完整示例](examples/site/README.md)。

@@ -2,15 +2,18 @@ import ProofScript.Core.References
 import ProofScript.Page.Component.Core
 
 open Lean
+open Lean.Elab.Command
 open ProofScript
 
 
-private def referencesJson (env : Environment) (refs : List Name) : Json :=
-  Json.arr <| refs.toArray.filterMap fun name =>
-    (findTheoremInfo env name).map fun info =>
-      Json.mkObj [("name", toJson name), ("info", toJson info)]
-
 elab "@""references" : command => do
-  let refsJson := referencesJson (← getEnv) (← getTheoremRefs)
-  addPageComponent (← getRef) "references" refsJson
+  let references := (← getTheoremRefs).toArray
+  let component : Component := {
+    source := ← liftCoreM <| sourceLocation (← getRef)
+    data := { kind := "references", value := toJson references, references } }
+  match addComponent (← getEnv) component with
+  | .error message => throwError message
+  | .ok (env, added) =>
+    unless added do logWarning "page component appears after page_end and was ignored"
+    setEnv env
   clearTheoremRefs

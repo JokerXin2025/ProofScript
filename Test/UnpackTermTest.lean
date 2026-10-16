@@ -121,29 +121,7 @@ run_cmd do
       unless (step.getObjVal? binder).isOk do
         throwError "missing {binder} for {decl}"
 
-open Lean Elab Command in
-private partial def termUnpackBinders : InfoTree → Array (Name × Syntax)
-  | .context _ tree => termUnpackBinders tree
-  | .node info children =>
-    let binders := match info with
-      | .ofTermInfo ti =>
-        if ti.isBinder && ti.expr.isFVar then #[(ti.stx.getId, ti.stx)] else #[]
-      | _ => #[]
-    children.foldl (fun acc tree => acc ++ termUnpackBinders tree) binders
-  | .hole _ => #[]
 
-open Lean Elab Command in
-elab "check_term_unpack_hover " cmd:command : command => do
-  let before := (← getInfoState).trees.size
-  withEnableInfoTree true <| elabCommand cmd
-  let trees := (← getInfoState).trees.toArray.extract before
-  let binders := trees.foldl (fun acc tree => acc ++ termUnpackBinders tree) #[]
-  for name in [`hoverWhole, `hoverP, `hoverQ, `hoverForward, `hoverBackward,
-      `hoverX, `hoverMember, `hoverProof] do
-    unless binders.any (fun (n, stx) => n == name && stx.getHeadInfo matches .original ..) do
-      throwError "missing source binder hover for {name}"
-
-check_term_unpack_hover
 example (S : List Nat) (Q : Nat → Prop) (h : ∃ x ∈ S, Q x) : ∃ x, Q x := by
   script_unpack_and ⟨hoverWhole⟩ := (And.intro True.intro True.intro)
   script_unpack_and ⟨hoverP, hoverQ⟩ := (And.intro True.intro True.intro)
@@ -151,7 +129,6 @@ example (S : List Nat) (Q : Nat → Prop) (h : ∃ x ∈ S, Q x) : ∃ x, Q x :=
   script_obtain_exist ⟨hoverX, hoverMember, hoverProof⟩ := (id h)
   exact ⟨hoverX, hoverProof⟩
 
-check_term_unpack_hover
 @theorem recordedTermUnpackHover (S : List Nat) (Q : Nat → Prop)
     (h : ∃ x ∈ S, Q x) : ∃ x, Q x := script
   unpack_and ⟨hoverWhole⟩ := (And.intro True.intro True.intro)

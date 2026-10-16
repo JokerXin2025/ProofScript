@@ -1,17 +1,7 @@
-import ProofScript.Script.Config
-import ProofScript.Script.RenderInfo
-import ProofScript.Lean2TeX.Command
+import ProofScript.Script.Command
 import Mathlib.Tactic
 
 open Lean Parser Mathlib Tactic
-
-def_info Real { kind := const, arguments := [], styles := [
-  { name := "formula", template := "\\mathbb{R}", fixity := atom, precedence := 100 }
-] }
-def_info Set { kind := type, arguments := explicit, styles := [
-  { name := "formula", template := "\\mathcal{P}(#0)", fixity := application, precedence := 90 }
-] }
-
 
 /-! # Mathlib Native Tactics -/
 
@@ -27,41 +17,11 @@ run_cmd do
 script_macro «continuity»
 "continuity" => `(tactic| continuity)
 
-script_info «continuity» {
-  template := [{
-    lang := "zh", tag := "连续性",
-    content := ""
-  }, {
-    lang := "en", tag := "«continuity»",
-    content := ""
-  }]
-}
-
 script_macro «exact_mod_cast»
 "exact_mod_cast" proof:term => `(tactic| exact_mod_cast $proof:term)
 
-script_info «exact_mod_cast» {
-  template := [{
-    lang := "zh", tag := "«exact_mod_cast»",
-    content := ""
-  }, {
-    lang := "en", tag := "«exact_mod_cast»",
-    content := ""
-  }]
-}
-
 script_macro «field»
 "field" args:(simpArgs)? => `(tactic| field $[$args:simpArgs]?)
-
-script_info «field» {
-  template := [{
-    lang := "zh", tag := "域算术",
-    content := ""
-  }, {
-    lang := "en", tag := "«field»",
-    content := ""
-  }]
-}
 
 script_macro «gcongr»
 "gcongr" template:(ppSpace colGt term)? names:("with" (ppSpace colGt rintroPat)*)? =>
@@ -107,16 +67,6 @@ script_macro «linarith!»
 script_macro «measurability»
 "measurability" => `(tactic| measurability)
 
-script_info «measurability» {
-  template := [{
-    lang := "zh", tag := "可测性",
-    content := ""
-  }, {
-    lang := "en", tag := "«measurability»",
-    content := ""
-  }]
-}
-
 script_macro «nlinarith»
 "nlinarith" args:linarithArgsRest => `(tactic| nlinarith $args:linarithArgsRest)
 
@@ -135,16 +85,6 @@ script_macro «norm_num»
 
 script_macro «positivity»
 "positivity" => `(tactic| positivity)
-
-script_info «positivity» {
-  template := [{
-    lang := "zh", tag := "正性",
-    content := ""
-  }, {
-    lang := "en", tag := "«positivity»",
-    content := ""
-  }]
-}
 
 script_macro «push_cast»
 "push_cast" cfg:optConfig disch:(discharger)?
@@ -171,16 +111,6 @@ script_macro «rify»
 script_macro «ring»
 "ring" => `(tactic| ring)
 
-script_info «ring» {
-  template := [{
-    lang := "zh", tag := "环算术",
-    content := ""
-  }, {
-    lang := "en", tag := "«ring»",
-    content := ""
-  }]
-}
-
 script_macro «ring!»
 "ring!" => `(tactic| ring!)
 
@@ -195,28 +125,8 @@ script_macro «ring_nf!»
 script_macro «tauto»
 "tauto" => `(tactic| tauto)
 
-script_info «tauto» {
-  template := [{
-    lang := "zh", tag := "重言",
-    content := ""
-  }, {
-    lang := "en", tag := "«tauto»",
-    content := ""
-  }]
-}
-
 script_macro «tauto_set»
 "tauto_set" => `(tactic| tauto_set)
-
-script_info «tauto_set» {
-  template := [{
-    lang := "zh", tag := "重言",
-    content := ""
-  }, {
-    lang := "en", tag := "«tauto_set»",
-    content := ""
-  }]
-}
 
 declare_syntax_cat scriptWlogGeneralizing
 syntax "generalizing" (ppSpace colGt ident)* : scriptWlogGeneralizing

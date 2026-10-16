@@ -1,5 +1,7 @@
 import ProofScript
 
+project_info "Test.CasesByTermTest" { title := "CasesByTermTest" }
+
 private def OrAlias (P Q : Prop) := P ∨ Q
 
 example (P Q R : Prop) (h : (P ∨ Q) ∧ R) : R := script

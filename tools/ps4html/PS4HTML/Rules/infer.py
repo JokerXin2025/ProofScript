@@ -2,7 +2,7 @@ from PS4HTML.engine import render_cal_step
 from PS4HTML.i18n import tr
 
 
-def rule_infer(infer, previous, subsequent, proof, *, language):
+def rule_infer(infer, proof, *, language):
     init = infer["init"]
     chain = infer["chain"]
     if init is None:

@@ -16,11 +16,17 @@ const leanWasmPrefix = process.env.PROOF_SCRIPT_LEAN_WASM_PREFIX;
 if (!leanWasmPrefix) {
   throw new Error("PROOF_SCRIPT_LEAN_WASM_PREFIX is required");
 }
-for (const library of ["libleanrt.a", "libInit.a", "libStd.a", "libLean.a"]) {
-  if (!existsSync(join(leanWasmPrefix, "lib", "lean", library))) {
-    throw new Error(`missing Wasm Lean library: ${library}`);
-  }
+const archiveLibraries = ["libLean.a", "libStd.a", "libInit.a", "libleanrt.a"]
+  .map(library => join(leanWasmPrefix, "lib", "lean", library));
+for (const library of archiveLibraries) {
+  if (!existsSync(library)) throw new Error(`missing Wasm Lean library: ${library}`);
 }
+// Archive objects may be pulled in by reachable functions as well as initializers.
+// Never emit a competing stub for an initializer supplied by the runtime.
+const archiveInitializers = new Set(execFileSync("emnm",
+  ["--defined-only", "--just-symbol-name", ...archiveLibraries],
+  {encoding: "utf8", maxBuffer: 64 * 1024 * 1024}).split(/\r?\n/)
+  .filter(symbol => /^(?:runtime_|meta_)?initialize_[A-Za-z0-9_x]+$/.test(symbol)));
 
 function filesBelow(path, suffix) {
   if (!existsSync(path)) return [];
@@ -427,24 +433,15 @@ uint32_t proof_script_invoke(uint32_t entry_ptr, uint32_t entry_len,
     candidates,
     rootSymbols,
   );
-  // Only selected C-IR files provide real initializers. Other referenced
-  // module initializers get harmless stubs because their runtime registration
-  // is not needed by the computation entry itself.
+  // Selected C-IR files and runtime archives provide real initializers. Other
+  // referenced module initializers get stubs because their registration is not
+  // needed by the computation entry itself.
   const includedInitializers = new Set(cFiles.flatMap(file => {
     const source = readFileSync(file, "utf8");
     return [...cInitializerDefinitions(source), ...[...cDefinitions(source)]
       .filter(symbol => isInitializer(symbol))];
   }));
   const stubbedInitializers = new Set();
-  const archiveInitializers = new Set([
-    "runtime_initialize_Init",
-    "initialize_Init",
-    "runtime_initialize_Lean_Data_Json",
-    "initialize_Lean_Data_Json",
-    "runtime_initialize_Proof_x2dScript_ProofScript_Computation_Json",
-    "meta_initialize_Proof_x2dScript_ProofScript_Computation_Json",
-    "initialize_Proof_x2dScript_ProofScript_Computation_Json",
-  ]);
   for (const file of cFiles) {
     const source = readFileSync(file, "utf8");
     for (const symbol of cSymbols(source)) {
@@ -486,10 +483,7 @@ uint32_t proof_script_invoke(uint32_t entry_ptr, uint32_t entry_len,
     "-s", 'EXPORTED_FUNCTIONS=["_proof_script_init","_proof_script_alloc","_proof_script_free","_proof_script_invoke","_malloc"]',
     "-s", 'EXPORTED_RUNTIME_METHODS=["HEAPU8"]',
     "-Wl,--start-group",
-    join(leanWasmPrefix, "lib", "lean", "libLean.a"),
-    join(leanWasmPrefix, "lib", "lean", "libStd.a"),
-    join(leanWasmPrefix, "lib", "lean", "libInit.a"),
-    join(leanWasmPrefix, "lib", "lean", "libleanrt.a"),
+    ...archiveLibraries,
     "-Wl,--end-group",
     "-o", modulePath,
   ]);

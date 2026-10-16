@@ -2,7 +2,7 @@ import html
 from PS4HTML.engine import render_annotation
 
 
-def rule_remark(remark, previous, subsequent, proof, *, language):
+def rule_remark(remark, proof, *, language):
     text = remark["text"]
     if not isinstance(text, str):
         raise ValueError("remark.text must be a string")

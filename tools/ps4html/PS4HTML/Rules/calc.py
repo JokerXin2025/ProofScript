@@ -12,7 +12,7 @@ def _rel_tex(proof, relation):
     return proof.render_relation(relation)
 
 
-def rule_calc(calc, previous, subsequent, proof, *, language):
+def rule_calc(calc, proof, *, language):
     init = calc["init"]
     chain = calc["chain"]
     if init is None:

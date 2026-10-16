@@ -14,8 +14,6 @@ example : True := script
 
 /--
 error: [script recorder] 'unsupported_auto_recording': 参数 'loc' 缺少 RecordParam 实例；请提供类别实例或定义 script_recorder
----
-error: Unknown identifier `unsupportedRecorded`
 -/
 #guard_msgs in
 @theorem unsupportedRecorded : True := script
@@ -23,7 +21,7 @@ error: Unknown identifier `unsupportedRecorded`
 
 -- A handwritten recorder overrides the unavailable automatic recorder.
 script_recorder unsupportedAuto "unsupported_auto_recording" loc:(unsupportedRecordingCategory)? => do
-  recordStep []
+  recordStep
 
 @theorem handwrittenRecorded : True := script
   unsupported_auto_recording
@@ -33,4 +31,4 @@ error: [script recorder] `Test.RecorderSelectionTest.unsupportedAuto` already ha
 -/
 #guard_msgs in
 script_recorder unsupportedAuto "unsupported_auto_recording" loc:(unsupportedRecordingCategory)? => do
-  recordStep []
+  recordStep

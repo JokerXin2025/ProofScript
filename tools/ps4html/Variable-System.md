@@ -1,7 +1,7 @@
 # Lean2TeX 变量管理系统
 
 当前实现为 Python，相关代码在 `Lean2TeX/variable.py`、`semantic.py`、`renderer.py`。
-命名池通过 Lean 的 `var_info` 声明，随 `.ProofScript/lean2tex/events/` 导出，由 `ConfigurationIndex` 按证明模块合并。
+命名池通过 Lean 的 `var_info` 声明，Lean 按消费边界合并并冻结到 `.ProofScript/info/snapshots/`。`info/index.json` 为产物选择快照；`InfoBundle` 只读取完成快照，不重放事件。
 
 变量根据语义类型选择名字池，已分配名称避免冲突，同一自由变量通过 ID 缓存保持一致。
 绑定变量由转换器处理作用域及绑定引用；最终 TeX 携带 `htmlData` 元数据，供

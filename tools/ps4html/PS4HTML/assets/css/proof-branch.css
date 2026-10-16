@@ -1,0 +1,47 @@
+details.proof-branch {
+    box-sizing: border-box;
+}
+details.proof-branch > summary {
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    display: flex;
+    align-items: flex-start;
+    padding: 4px 0;
+    transition: color 0.25s;
+}
+
+details.proof-branch > summary .proof-branch-title {
+    flex: 1;
+    width: 100%;
+}
+
+details.proof-branch > summary i.proof-branch-toggle {
+    flex: 0 0 20px;
+    width: 20px;
+    height: 28px;
+    color: var(--text-muted);
+    margin-left: -10px;
+    margin-right: 4px;
+    font-size: 22px;
+    line-height: 28px;
+    transform-origin: center;
+    transition: transform 0.25s;
+}
+
+details.proof-branch > summary .proof-tag {
+    margin-left: 4px;
+}
+
+details.proof-branch[open] > summary i.proof-branch-toggle {
+    transform: rotate(90deg);
+}
+
+.proof-branch > .proof-children {
+    margin: 16px 0 8px;
+    padding-left: calc(var(--proof-indent) - 2px);
+    border-left: 2px solid var(--border-color-light);
+}
+.proof-branch > .proof-children:hover {
+    border-left-color: var(--border-color);
+}

@@ -1,6 +1,6 @@
 
 import ProofScript.Page.Component.Core
-import ProofScript.Page.Path
+import ProofScript.Output.Path
 
 open Lean Elab Command
 open ProofScript

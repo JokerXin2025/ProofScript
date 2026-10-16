@@ -1,4 +1,6 @@
-import ProofScript
+import PS4HTMLDemo.Library
+
+project_info "PS4HTMLDemo" {}
 
 namespace PS4HTMLDemo.Dependencies
 
@@ -7,9 +9,17 @@ namespace PS4HTMLDemo.Dependencies
 
 本页用本科高等数学中的典型结果展示依赖导航。声明采用轻量命题接口，
 名称及 `apply` 调用只表达课程层面的依赖，不是这些分析定理的完整形式化陈述。
+
+导航使用最终证明的直接依赖：正文选中当前定理，左侧同时列出它使用的定理和
+直接使用它的导出定理。鼠标进入导航后仍保留当前源定理，移出两者后隐藏。
 "#
 
+@theorem importedIdentity (P : Prop) (h : P) : P := by
+  exact PS4HTMLDemo.Library.identityLemma P h
+theorem_info importedIdentity { name := "跨页面 lemma 依赖" }
+
 @theorem limitUniqueness (P : Prop) (h : P) : P := script
+  apply (importedIdentity P)
   assumption
 theorem_info limitUniqueness {name := "极限唯一性定理"}
 
