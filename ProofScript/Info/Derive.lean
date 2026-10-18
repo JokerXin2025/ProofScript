@@ -60,12 +60,12 @@ private def deriveSchema (declName : Name) : CommandElabM Unit := do
   let decoder ← `(fun object => do
     $[let $fieldIds:ident ← $getters:term]*
     return { $[$fieldLvals:structInstLVal := $fieldIds:ident],* })
+  -- Domain instances can add their rules to this generated baseline.
   let command ← `(command|
-    instance : InfoSchema $type where
-      schema := {
-        id := $(quote declName),
-        fields := #[$[$handles:term],*],
-        decodeValues := $decoder })
+    instance (priority := low) : InfoSchema $type where
+      id := $(quote declName)
+      fields := #[$[$handles:term],*]
+      decodeValues := $decoder)
   elabCommand command
 
 initialize registerDerivingHandler ``InfoSchema fun names => do

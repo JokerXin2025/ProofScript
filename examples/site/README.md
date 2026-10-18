@@ -29,6 +29,9 @@ lake build PS4HTMLDemo:ps4html
 
 The library facet builds the complete gallery, including the Fibonacci page and its C IR, finalizes
 the Wasm bundle, and renders `.PS4HTML/build/PS4HTMLDemo/PS4HTMLDemo/PS4HTMLDemo/Fibonacci.html`.
+It first removes this project's Lake build directory, then compiles the library once with JSON
+exports written into staging. Dependency build directories and caches are retained. Info export,
+Wasm finalization, and HTML rendering use those outputs without compiling the Lean sources again.
 
 Then serve the generated site:
 
@@ -83,7 +86,17 @@ including cross-page reverse edges, lemma language switching and navigation clic
 the page's normal KaTeX CDN assets, so network access is required. Internal Python test scripts
 were removed after acceptance; they are not part of the build.
 
-Info bundles use protocol `4.0.0`, theorem manifest `4`, and snapshot payload `3`. To migrate
+Each proof and page component uses local metadata available when it is created, plus the complete
+configuration of imported modules. Recorded declarations set their own title with inline
+`(info := { name := "..." })`; later `theorem_info` commands only affect subsequent content.
+`page_end` controls page output rather than configuration scope.
+
+Ordinary `lake build` and IDE checking only verify native theorems. The `:ps4html` target
+automatically enables recording and page export, using `.lake/ps4html/PS4HTMLDemo/PS4HTMLDemo/`
+for user-source Lean artifacts. It preserves the ordinary verification cache; the computation
+bundler uses the isolated workspace's C and setup paths supplied by Lake.
+
+Info bundles use protocol `5.0.0`, theorem manifest `5`, and snapshot payload `4`. To migrate
 older exports, rebuild with `lake build PS4HTMLDemo:ps4html`; `--cache` never upgrades exports
 or invokes Lean. If an old installation used real directories at the build/input release-link
 paths, archive that project's `.PS4HTML` directory before rebuilding. Do not edit protocol

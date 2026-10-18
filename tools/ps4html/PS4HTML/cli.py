@@ -16,10 +16,10 @@ def main():
     library = commands.add_parser("_build-library", help="Internal Lake facet entry point")
     library.add_argument("package")
     library.add_argument("library")
-    library.add_argument("--source-root", type=Path)
+    library.add_argument("--build-dir", type=Path, required=True)
     library.add_argument("modules_and_sources", nargs="+")
     library.set_defaults(func=lambda args: build_library(args.package, args.library, args.modules_and_sources,
-                                                       source_root=args.source_root))
+                                                       build_dir=args.build_dir))
     commands.add_parser("clean").set_defaults(func=lambda args: clean(True))
     preview = commands.add_parser("serve", help="Serve .PS4HTML/build with Wasm headers")
     preview.add_argument("target", nargs="?", default=".")

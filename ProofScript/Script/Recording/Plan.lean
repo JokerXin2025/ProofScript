@@ -4,20 +4,13 @@ namespace ProofScript.Recording
 
 open Lean Elab Tactic
 
-inductive CaptureTiming where
-| once
-| before
-| after
-| both
-deriving Inhabited, BEq, Repr
-
 inductive FailurePolicy where
 | required
 | bestEffort
 deriving Inhabited, BEq, Repr
 
-/-- The role of a goal after strategy execution. Branch labels are resolved by the
-    strategy adapter, not by guessing from the tactic's name. -/
+/-- A capture's goal context. Strategy selectors are resolved by the recorder scope
+    against the goals present when the capture runs. -/
 inductive ContextSelector where
 | main
 | continuation
@@ -43,30 +36,11 @@ structure ParamCapture where
   collectReferences : Bool := true
   capture : TacticM RecordedValue
 
-/-- Validate both logical names and emitted names against the recording envelope. -/
-def validateOutputFields (parameters : List (String × CaptureTiming)) : Except String Unit := do
-  let reserved := ["_ruleId", "branches"]
-  let mut bases : List String := []
-  let mut names : List String := []
-  for (name, timing) in parameters do
-    if name.isEmpty then throw "recorded parameter field must not be empty"
-    if reserved.contains name then throw s!"reserved recorded parameter field `{name}`"
-    if bases.contains name then throw s!"duplicate recorded parameter field `{name}`"
-    bases := name :: bases
-    let emitted := if timing == .both then
-      [name ++ "_before", name ++ "_after"]
-    else [name]
-    for name in emitted do
-      if reserved.contains name then throw s!"reserved recorded parameter field `{name}`"
-      if names.contains name then
-        throw s!"duplicate recorded parameter field `{name}`"
-      names := name :: names
-
-/-- Check a capture group's output fields and report invalid names or collisions. -/
-def validateCaptures (parameters : Array ParamCapture) : TacticM Unit := do
-  if let .error message := validateOutputFields
-      (parameters.toList.map fun p => (p.field, .once)) then
-    throwError "{message}"
+/-- Check one output name against the recording envelope. -/
+def validateFieldName (name : String) : Except String Unit := do
+  if name.isEmpty then throw "recorded parameter field must not be empty"
+  if ["_ruleId", "branches"].contains name then
+    throw s!"reserved recorded parameter field `{name}`"
 
 /-- A goal snapshot uses the same capture and commit path as any other parameter. -/
 def goalParam (name : String) (goal : Option MVarId := none) : ParamCapture :=

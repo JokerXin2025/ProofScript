@@ -29,16 +29,14 @@ theorem example : True := by
 ```
 "#
 
-@theorem paperMain (P : Prop) (h : P) : P := script
+@theorem paperMain (info := {name := "Paper Main"}) (P : Prop) (h : P) : P := script
   assumption
-theorem_info paperMain {name := "Paper Main"}
 
 @theorem defaultDisplayName : True := script
   trivial
 
-@theorem incompleteResult : True := script
+@theorem incompleteResult (info := {name := "Incomplete Result"}) : True := script
   admit "pending"
-theorem_info incompleteResult {name := "Incomplete Result"}
 
 page_end
 

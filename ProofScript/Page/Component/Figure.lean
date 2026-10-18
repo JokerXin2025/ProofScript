@@ -29,4 +29,4 @@ private def addFigureComponent (metadataStx : Syntax) (pathStx : TSyntax `str)
   addPageComponent pathStx.raw "figure" (toJson value) labels
 
 elab "@""figure" metadata:componentMeta path:str : command =>
-  addFigureComponent metadata.raw path
+  whenPageBuild <| addFigureComponent metadata.raw path

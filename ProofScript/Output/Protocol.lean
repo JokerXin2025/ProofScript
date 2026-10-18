@@ -6,7 +6,7 @@ namespace ProofScript.Output
 open Lean Info
 open scoped Foundation
 
-def infoProtocolVersion : String := "4.0.0"
+def infoProtocolVersion : String := "5.0.0"
 
 /-- File names use the digest of the lossless name, independently of display spelling. -/
 def moduleId (name : Name) : String := (toJson name).sha256
@@ -16,14 +16,14 @@ private def Artifact.baseJson (artifact : Artifact) (snapshotId : String) := jso
   id: $(artifact.key.id),
   owner: $(artifact.key.owner),
   module: $(artifact.key.owner.toString),
-  kind: $(if artifact.key.kind == .page then "page" else "proof"),
+  kind: $(artifact.key.kind),
   name: $(artifact.key.name),
   path: $(artifact.path),
   snapshotId: $snapshotId,
   declaration: $(artifact.declaration),
   contentDigest: $(artifact.contentDigest),
   dependencies: $(artifact.dependencies),
-  bindings: $(artifact.bindings.map StepBinding.toJson)
+  bindings: $(artifact.bindings)
 }
 
 /-- Bind semantic facts to this artifact's source content and exact configuration boundary. -/
@@ -35,8 +35,9 @@ def Artifact.proofFactsDigest (artifact : Artifact) (snapshotId : String) (value
 /-- The only publication boundary for proof facts. Pages and unnamed recordings have no theorem fields. -/
 def Artifact.exportJson (artifact : Artifact) (snapshot : Snapshot)
     (facts : Option FrozenTheoremFacts) (projectId : Option String := none) : Except String Json := do
-  unless artifact.schemaVersion == manifestSchemaVersion && artifact.key.owner == snapshot.query.moduleName do
-    throw "artifact version/owner disagrees with its export snapshot; rebuild the defining module"
+  unless artifact.schemaVersion == manifestSchemaVersion && artifact.query == snapshot.query &&
+      artifact.boundary != .endOfModule do
+    throw "artifact version/boundary disagrees with its export snapshot; rebuild the defining module"
   let base := artifact.baseJson snapshot.id
   if artifact.key.kind == .proof && artifact.declaration.isSome then
     let some facts := facts | throw "missing theorem proof facts; rebuild the defining module"
@@ -66,12 +67,12 @@ def snapshotDocument (snapshot : Snapshot) := json% {
 }
 
 def modelSchemas := json% {
-  project: $(projectSpec.schema.jsonSchema),
-  "theorem": $(theoremSpec.schema.jsonSchema),
-  script: $(scriptSpec.schema.jsonSchema),
-  definition: $(definitionSpec.schema.jsonSchema),
-  "variable": $(variableSpec.schema.jsonSchema),
-  phrase: $(phraseSpec.schema.jsonSchema)
+  project: $((inferInstance : InfoSchema ProjectInfo).jsonSchema),
+  "theorem": $((inferInstance : InfoSchema TheoremInfo).jsonSchema),
+  script: $((inferInstance : InfoSchema ScriptInfo).jsonSchema),
+  definition: $((inferInstance : InfoSchema DefinitionInfo).jsonSchema),
+  "variable": $((inferInstance : InfoSchema VariableInfo).jsonSchema),
+  phrase: $((inferInstance : InfoSchema PhraseInfo).jsonSchema)
 }
 
 private def objectSchema (properties : List (String × Json)) (required : Array String) :=
@@ -92,11 +93,13 @@ private def targetSchema (kind : String) : Json :=
   if kind == "project" then json% { type: "string", minLength: 1 }
   else Foundation.qualifiedNameSchema
 
-private def recordSchema (kind : String) (schema : Schema Record) : Json := objectSchema [
-  ("identity", objectSchema [("kind", constantSchema kind), ("target", targetSchema kind)] #["kind", "target"]),
-  ("schemaId", constantSchema schema.id.toString), ("schemaVersion", constantSchema schema.version),
-  ("configured", json% { type: "boolean" }), ("value", schema.jsonSchema)]
-  #["identity", "schemaId", "schemaVersion", "configured", "value"]
+private def recordSchema [InfoSchema Record] (spec : InfoSpec Record) : Json :=
+  let schema : InfoSchema Record := inferInstance
+  objectSchema [
+    ("identity", objectSchema [("kind", constantSchema spec.kind), ("target", targetSchema spec.kind)] #["kind", "target"]),
+    ("schemaId", constantSchema schema.id.toString), ("schemaVersion", constantSchema schema.version),
+    ("configured", json% { type: "boolean" }), ("value", schema.jsonSchema)]
+    #["identity", "schemaId", "schemaVersion", "configured", "value"]
 
 private def contractSchema : Json := objectSchema [
   ("contractVersion", constantSchema recordingContractVersion), ("recordingVersion", constantSchema recordingProtocolVersion),
@@ -108,13 +111,15 @@ private def contractSchema : Json := objectSchema [
 
 def snapshotSchema : Json :=
   let records := json% { oneOf: [
-    $(recordSchema projectSpec.kind projectSpec.schema), $(recordSchema theoremSpec.kind theoremSpec.schema),
-    $(recordSchema scriptSpec.kind scriptSpec.schema), $(recordSchema definitionSpec.kind definitionSpec.schema),
-    $(recordSchema variableSpec.kind variableSpec.schema), $(recordSchema phraseSpec.kind phraseSpec.schema)] }
+    $(recordSchema projectSpec), $(recordSchema theoremSpec),
+    $(recordSchema scriptSpec), $(recordSchema definitionSpec),
+    $(recordSchema variableSpec), $(recordSchema phraseSpec)] }
+  let boundary := objectSchema [
+    ("before", objectSchema [("sequence", json% { type: "integer", minimum: 0 })] #["sequence"])] #["before"]
   let payload := objectSchema [
     ("schemaVersion", constantSchema snapshotSchemaVersion),
     ("recordingVersion", constantSchema recordingProtocolVersion), ("contractVersion", constantSchema recordingContractVersion),
-    ("query", objectSchema [("module", Foundation.qualifiedNameSchema), ("boundary", json% {})] #["module", "boundary"]),
+    ("query", objectSchema [("module", Foundation.qualifiedNameSchema), ("boundary", boundary)] #["module", "boundary"]),
     ("records", arraySchema records),
     ("contracts", arraySchema (objectSchema [("id", digestSchema), ("value", contractSchema)] #["id", "value"]))]
     #["schemaVersion", "recordingVersion", "contractVersion", "query", "records", "contracts"]

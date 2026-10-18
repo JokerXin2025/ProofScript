@@ -4,7 +4,7 @@ namespace ProofScript.Recording
 
 open Lean Elab Tactic
 
-/-- An ordered, resolved proof branch. -/
+/-- A resolved proof branch with its canonical, goal-derived output name. -/
 structure StrategyBranch where
   name : String
   goal : MVarId
@@ -16,18 +16,16 @@ structure StrategyContexts where
   continuation : Option MVarId := none
   private proofGoals : List MVarId := []
 
-/-- Follow Lean's exact/suffix/prefix precedence and reject ties at each level. -/
-private def resolveStrategyGoal (goals : List MVarId) (label : String) :
+/-- Resolve only a full goal tag; abbreviated prefixes and suffixes are not selectors. -/
+def resolveStrategyGoal (goals : List MVarId) (label : String) :
     TacticM (Option MVarId) := do
   let name := label.toName
-  for matchTag in [(name == ·), (name.isSuffixOf ·), (name.isPrefixOf ·)] do
-    let candidates ← goals.filterM fun goal =>
-      return matchTag (← goal.getTag).eraseMacroScopes
-    match candidates with
-    | [] => pure ()
-    | [goal] => return some goal
-    | _ => throwError "ambiguous strategy branch `{label}`; use a full goal tag"
-  return none
+  let candidates ← goals.filterM fun goal =>
+    return name == (← goal.getTag).eraseMacroScopes
+  match candidates with
+  | [] => return none
+  | [goal] => return some goal
+  | _ => throwError "ambiguous strategy branch `{label}`; multiple goals have this full tag"
 
 /-- Resolve script labels in the same remaining-goal order used by Lean's focus tactic. -/
 def resolveStrategyContexts (nodes : List String) (continuationIndex : Option Nat := none) :
@@ -44,17 +42,16 @@ def resolveStrategyContexts (nodes : List String) (continuationIndex : Option Na
         | [] => throwError "anonymous strategy branch has no remaining goal"
       else do
         let some goal ← resolveStrategyGoal remaining node
-          | throwError "strategy branch `{node}` has no matching goal"
+          | throwError "strategy branch `{node}` has no matching goal; use a full goal tag or `·`"
         pure goal
     remaining := remaining.erase goal
     let goalTag := (← goal.getTag).eraseMacroScopes
-    let label := if !node.isEmpty then node else
-      match goalTag with
+    let label := match goalTag with
       | .str _ last => last
       | _ => goalTag.toString
     if label.isEmpty || label == "anonymous" || branches.any (·.name == label) ||
         ["name", "info"].contains label then
-      throwError "ambiguous strategy branch label `{label}`; use distinct explicit `| case =>` branches"
+      throwError "invalid or duplicate goal-derived strategy branch label `{label}`; strategy goals must have distinct non-reserved final tag components"
     branches := branches ++ [{ name := label, goal }]
   return {
     branches
@@ -63,7 +60,7 @@ def resolveStrategyContexts (nodes : List String) (continuationIndex : Option Na
     continuation := continuationIndex.bind fun index => goals[index]?
   }
 
-/-- Select an actual goal for a direct capture or a plan's context callback. -/
+/-- Select an actual goal for a direct capture or a strategy parameter capture. -/
 def StrategyContexts.goal (contexts : StrategyContexts) : ContextSelector → TacticM (Option MVarId)
   | .main => pure contexts.main
   | .continuation => pure contexts.continuation

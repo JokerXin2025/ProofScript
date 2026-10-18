@@ -5,83 +5,84 @@ open Lean Elab Tactic ProofScript ProofScript.Recording
 script_macro apiMetadata "api_metadata" => `(tactic| skip)
 script_recorder apiMetadata (fields := ProofScript.Recording.goalFields ++ #[
   { name := "module", schema := .string, nullable := false }])
-  "api_metadata" => withRecordingStep fun step => do
-    step.recordGoal "goal_before"
-    step.recordJson "module" (toJson (← getEnv).mainModule)
-    executeRecordedStep
-    step.recordGoal "goal_after"
+  "api_metadata" => recording_step do
+    capture_params #[goalParam "goal_before"]
+    record_value "module" (toJson (← getEnv).mainModule)
+    execute_recorded
+    capture_params #[goalParam "goal_after"]
 
 script_macro apiNested "api_nested" => `(tactic| skip)
 script_recorder apiNested (fields := ProofScript.Recording.goalFields ++ #[
   { name := "label", schema := .string, nullable := false }])
-  "api_nested" => withRecordingStep fun outer => do
-    outer.recordGoal "goal_before"
-    withRecordingStep fun inner => do
-      inner.recordGoal "goal_before"
-      inner.recordJson "label" "inner"
-      inner.recordGoal "goal_after"
-    outer.recordJson "label" "outer"
-    executeRecordedStep
-    outer.recordGoal "goal_after"
+  "api_nested" => recording_step do
+    capture_params #[goalParam "goal_before"]
+    recording_step do
+      capture_params #[goalParam "goal_before"]
+      record_value "label" "inner"
+      capture_params #[goalParam "goal_after"]
+    record_value "label" "outer"
+    execute_recorded
+    capture_params #[goalParam "goal_after"]
 
 script_macro apiRecovery "api_recovery" => `(tactic| skip)
 script_recorder apiRecovery (fields := ProofScript.Recording.goalFields ++ #[
   { name := "label", schema := .string, nullable := false }])
   "api_recovery" => do
     try
-      withRecordingStep fun step => do
-        step.recordGoal "goal_before"
-        step.recordJson "label" "discarded"
+      recording_step do
+        capture_params #[goalParam "goal_before"]
+        record_value "label" "discarded"
         throwError "intentional recording failure"
     catch _ => pure ()
-    withRecordingStep fun step => do
-      step.recordGoal "goal_before"
-      step.recordJson "label" "retained"
-      executeRecordedStep
-      step.recordGoal "goal_after"
+    recording_step do
+      capture_params #[goalParam "goal_before"]
+      record_value "label" "retained"
+      execute_recorded
+      capture_params #[goalParam "goal_after"]
 
 script_macro apiMixed "api_mixed" => `(tactic| skip)
 script_recorder apiMixed (fields := ProofScript.Recording.goalFields ++ #[
   { name := "label", schema := .string, nullable := false },
   { name := "count", schema := .number, nullable := false }])
-  "api_mixed" => withRecordingStep fun step => do
-    step.recordGoal "goal_before"
-    step.recordJson "label" "direct"
-    step.capturePlan #[
+  "api_mixed" => recording_step do
+    capture_params #[goalParam "goal_before"]
+    record_value "label" "direct"
+    capture_params #[
       { name := "count", onFailure := .required,
         capture := pure (.scalar (json% 7)) }
     ]
-    executeRecordedStep
-    step.recordGoal "goal_after"
+    execute_recorded
+    capture_params #[goalParam "goal_after"]
 
 script_macro apiPlanCollision "api_plan_collision" => `(tactic| trivial)
-script_recorder apiPlanCollision "api_plan_collision" => withRecordingStep fun step => do
-  step.recordGoal "goal_before"
-  step.recordJson "label" "direct"
-  step.capturePlan #[
+script_recorder apiPlanCollision "api_plan_collision" => recording_step do
+  capture_params #[goalParam "goal_before"]
+  record_value "label" "direct"
+  capture_params #[
     { name := "label", capture := pure (.scalar (json% "plan")) }
   ]
-  executeRecordedStep
-  step.recordGoal "goal_after"
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 script_macro apiScheduled "api_scheduled" h:ident => `(tactic| clear $h:ident; trivial)
 script_recorder apiScheduled (fields := ProofScript.Recording.goalFields ++ #[
   { name := "evidence_before", schema := .expression, nullable := false },
   { name := "evidence_after", schema := .expression },
   { name := "closed", schema := .string, nullable := false }])
-  "api_scheduled" h:ident => do
-    recordStep
-      (before := #[param (.category `ident) "evidence_before" h .required])
-      (after := #[
-        param (.category `ident) "evidence_after" h,
-        { name := "closed", onFailure := .required, capture := pure (.scalar (json% "no remaining goal")) }
-      ])
+  "api_scheduled" h:ident => recording_step do
+    capture_params #[goalParam "goal_before", param (.category `ident) "evidence_before" h .required]
+    execute_recorded
+    capture_params #[
+      goalParam "goal_after",
+      param (.category `ident) "evidence_after" h,
+      { name := "closed", onFailure := .required, capture := pure (.scalar (json% "no remaining goal")) }
+    ]
 
 script_macro apiPhaseCollision "api_phase_collision" => `(tactic| trivial)
-script_recorder apiPhaseCollision "api_phase_collision" => do
-  recordStep
-    (before := #[{ name := "label", capture := pure (.scalar (json% "before")) }])
-    (after := #[{ name := "label", capture := pure (.scalar (json% "after")) }])
+script_recorder apiPhaseCollision "api_phase_collision" => recording_step do
+  capture_params #[goalParam "goal_before", { name := "label", capture := pure (.scalar (json% "before")) }]
+  execute_recorded
+  capture_params #[goalParam "goal_after", { name := "label", capture := pure (.scalar (json% "after")) }]
 
 script_macro apiRequiredAfter (params := [h(timing := both, failure := required)])
   "api_required_after" h:ident => `(tactic| clear $h:ident)
@@ -89,9 +90,9 @@ script_macro apiRequiredAfter (params := [h(timing := both, failure := required)
 script_macro apiMetadataOnly "api_metadata_only" => `(tactic| trivial)
 script_recorder apiMetadataOnly (fields := #[
   { name := "goal", schema := .string, nullable := false }])
-  "api_metadata_only" => withRecordingStep fun step => do
-    step.recordJson "goal" "ordinary metadata"
-    executeRecordedStep
+  "api_metadata_only" => recording_step do
+    record_value "goal" "ordinary metadata"
+    execute_recorded
 
 script_macro apiGoalSnapshots "api_goal_snapshots" => `(tactic| intro evidence)
 script_info apiGoalSnapshots {
@@ -104,38 +105,40 @@ script_info apiMetadataOnly {
 }
 
 script_macro apiGoalCollision "api_goal_collision" => `(tactic| trivial)
-script_recorder apiGoalCollision "api_goal_collision" => do
-  recordStep (before := #[{ name := "goal_before", capture := pure (.scalar (json% "conflict")) }])
+script_recorder apiGoalCollision "api_goal_collision" => recording_step do
+  capture_params #[goalParam "goal_before", { name := "goal_before", capture := pure (.scalar (json% "conflict")) }]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 script_macro apiReserved "api_reserved" => `(tactic| trivial)
-script_recorder apiReserved "api_reserved" => withRecordingStep fun step => do
-  step.recordGoal "goal_before"
-  step.recordJson "_ruleId" "bad"
-  executeRecordedStep
-  step.recordGoal "goal_after"
+script_recorder apiReserved "api_reserved" => recording_step do
+  capture_params #[goalParam "goal_before"]
+  record_value "_ruleId" "bad"
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 script_macro apiDuplicate "api_duplicate" => `(tactic| trivial)
-script_recorder apiDuplicate "api_duplicate" => withRecordingStep fun step => do
-  step.recordGoal "goal_before"
-  step.recordJson "label" "first"
-  step.recordJson "label" "second"
-  executeRecordedStep
-  step.recordGoal "goal_after"
+script_recorder apiDuplicate "api_duplicate" => recording_step do
+  capture_params #[goalParam "goal_before"]
+  record_value "label" "first"
+  record_value "label" "second"
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 script_macro apiDuplicateGoal "api_duplicate_goal" => `(tactic| trivial)
-script_recorder apiDuplicateGoal "api_duplicate_goal" => withRecordingStep fun step => do
-  step.recordGoal "goal_before"
-  step.recordGoal "goal_before"
-  executeRecordedStep
-  step.recordGoal "goal_after"
+script_recorder apiDuplicateGoal "api_duplicate_goal" => recording_step do
+  capture_params #[goalParam "goal_before"]
+  capture_params #[goalParam "goal_before"]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 script_macro apiClosed "api_closed" => `(tactic| trivial)
 script_recorder apiClosed "api_closed" => do
-  let closed ← withRecordingStep fun step => do
-    step.recordGoal "goal_before"
-    return step
+  let closed ← recording_step do
+    capture_params #[goalParam "goal_before"]
+    return (inferInstance : RecorderContext).step
+  -- Deliberately bypass the DSL scope to exercise a closed low-level handle.
   closed.recordJson "label" "late"
-  executeRecordedStep
 
 script_macro apiSnapshots "api_snapshots" h:ident => `(tactic| clear $h:ident)
 script_recorder apiSnapshots (fields := ProofScript.Recording.goalFields ++ #[
@@ -143,24 +146,24 @@ script_recorder apiSnapshots (fields := ProofScript.Recording.goalFields ++ #[
   { name := "after", schema := .expression },
   { name := "payload", schema := .array (.object [
       ("proof", .expression), ("flag", .boolean)]), nullable := false }])
-  "api_snapshots" h:ident => withRecordingStep fun step => do
-    step.recordGoal "goal_before"
-    step.captureField "before" (expression h.raw)
+  "api_snapshots" h:ident => recording_step do
+    capture_params #[goalParam "goal_before", param (.category `ident) "before" h .required]
     let payload ← isolatedCapture do
       return .array #[.object [("proof", ← expression h.raw), ("flag", .scalar (json% true))]]
-    step.recordValue "payload" payload
-    executeRecordedStep
-    step.recordGoal "goal_after"
-    step.captureField "after" (expression h.raw) { onFailure := .bestEffort }
+    record_value "payload" payload
+    execute_recorded
+    capture_params #[goalParam "goal_after", param (.category `ident) "after" h]
 
 script_macro apiFinish "api_finish" => `(tactic| trivial)
 script_recorder apiFinish (fields := ProofScript.Recording.goalFields ++ #[
   { name := "closed", schema := .string, nullable := false }])
-  "api_finish" => withRecordingStep fun step => do
-    step.recordGoal "goal_before"
-    executeRecordedStep
-    step.recordGoal "goal_after"
-    step.captureField "closed" (pure (.scalar (json% "no remaining goal")))
+  "api_finish" => recording_step do
+    capture_params #[goalParam "goal_before"]
+    execute_recorded
+    capture_params #[
+      goalParam "goal_after",
+      { name := "closed", onFailure := .required, capture := pure (.scalar (json% "no remaining goal")) }
+    ]
 
 theorem apiDiscardedReference : True := True.intro
 theorem_info apiDiscardedReference { name := "Discarded reference" }
@@ -175,65 +178,80 @@ script_recorder apiCitations (fields := ProofScript.Recording.goalFields ++ #[
   { name := "suppressed", schema := .expression, nullable := false }])
   "api_citations" => do
     try
-      withRecordingStep fun step => do
-        step.recordGoal "goal_before"
-        step.captureField "discarded" (expression (mkIdent ``apiDiscardedReference))
+      recording_step do
+        capture_params #[
+          goalParam "goal_before",
+          { name := "discarded", onFailure := .required,
+            capture := expression (mkIdent ``apiDiscardedReference) }
+        ]
         throwError "intentional recording failure"
     catch _ => pure ()
-    withRecordingStep fun step => do
-      step.recordGoal "goal_before"
-      step.captureField "kept" (expression (mkIdent ``apiKeptReference))
+    recording_step do
+      capture_params #[
+        goalParam "goal_before",
+        { name := "kept", onFailure := .required,
+          capture := expression (mkIdent ``apiKeptReference) }
+      ]
       let rejected ← isolatedCapture (expression (mkIdent ``apiDiscardedReference))
       try
-        step.recordValue "kept" rejected
+        record_value "kept" rejected
       catch _ => pure ()
-      step.captureField "suppressed" (expression (mkIdent ``apiSuppressedReference))
-        { collectReferences := false }
-      executeRecordedStep
-      step.recordGoal "goal_after"
+      capture_params #[
+        { name := "suppressed", onFailure := .required, collectReferences := false,
+          capture := expression (mkIdent ``apiSuppressedReference) }
+      ]
+      execute_recorded
+      capture_params #[goalParam "goal_after"]
 
 script_elab apiClaim (strategy := true, continuation := 1)
   "api_claim" h:ident => do
     evalTactic (← `(tactic| script_claim $h:ident : True))
 
-script_recorder apiClaim (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder apiClaim (fields := ProofScript.Recording.strategyGoalFields ++ #[
   { name := "h", schema := .expression, nullable := false },
   { name := "label", schema := .string, nullable := false }])
   "api_claim" h:ident "_strategy_cases" strategyCases:str => do
     try
-      withRecordingStep fun step => do
-        step.recordGoal "goal_before"
-        executeRecordedStep
-        step.recordGoal "goal_after"
-        step.prepareBranches (← resolveStrategyContexts (strategyCases.getString.splitOn "\n") (some 1))
+      recording_step do
+        -- The inner runner has prepared branches before this outer block fails.
+        recording_strategy (strategyCases.getString.splitOn "\n") (continuation := some 1) do
+          capture_params #[goalParam "goal_before"]
+          execute_recorded
         throwError "intentional branch preparation failure"
     catch _ => pure ()
-    withRecordingStep fun step => do
-      step.recordGoal "goal_before"
-      executeRecordedStep
-      step.recordGoal "goal_after"
-      let contexts ← resolveStrategyContexts (strategyCases.getString.splitOn "\n") (some 1)
-      step.captureField "h" (expression h.raw) { goal := ← contexts.goal .continuation }
-      step.prepareBranches contexts
-      step.recordJson "label" (toJson h.getId.toString)
+    recording_strategy (strategyCases.getString.splitOn "\n") (continuation := some 1) do
+      capture_params #[goalParam "goal_before"]
+      execute_recorded
+      capture_params #[
+        { (param (.category `ident) "h" h .required) with context := .continuation }
+      ]
+      record_value "label" h.getId.toString
 
 script_elab apiSplit (strategy := true) "api_split" => do
   evalTactic (← `(tactic| script_split_and))
 
-script_recorder apiSplit (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder apiSplit (fields := ProofScript.Recording.strategyGoalFields ++ #[
   { name := "leftType", schema := .expression, nullable := false }])
-  "api_split" "_strategy_cases" strategyCases:str => withRecordingStep fun step => do
-    step.recordGoal "goal_before"
-    executeRecordedStep
-    step.recordGoal "goal_after"
-    let contexts ← resolveStrategyContexts (strategyCases.getString.splitOn "\n")
-    step.captureField "leftType" (do
-      snapshotExpression (← (← getMainGoal).getType))
-      { goal := ← contexts.goal (.branch "left") }
-    step.prepareBranches contexts
+  "api_split" "_strategy_cases" strategyCases:str =>
+    recording_strategy (strategyCases.getString.splitOn "\n") do
+      capture_params #[goalParam "goal_before"]
+      execute_recorded
+      capture_params #[
+        { name := "leftType", context := .branch "left", onFailure := .required,
+          capture := do snapshotExpression (← (← getMainGoal).getType) }
+      ]
 
--- These are real tactic goals; both the recording resolver and Lean's case tactic
--- must accept the suffix and prefix labels used below.
+-- Only the left branch has h; put the right branch first so after capture must
+-- select its configured branch rather than use the main goal's context.
+script_elab apiBranchCapture
+    (strategy := true,
+     params := [h(timing := after, context := left, failure := required)])
+    "api_branch_capture" h:ident => do
+  evalTactic (← `(tactic| constructor))
+  evalTactic (← `(tactic| intro $h:ident))
+  setGoals (← getGoals).reverse
+
+-- Qualified tags exercise exact script selection and canonical output names.
 script_elab apiTagged (strategy := true) "api_tagged" => do
   evalTactic (← `(tactic| constructor))
   let goals ← getGoals

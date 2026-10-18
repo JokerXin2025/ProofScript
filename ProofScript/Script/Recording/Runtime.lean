@@ -14,7 +14,12 @@ def withRecordingRule (ruleId : Name) (execution : Syntax) (action : TacticM α)
 
 /-- Pin the actual selected contract before the recorder runs; rollback includes all nested bindings. -/
 def withRecordingRegistration (registration : ScriptTacticRegistration) (execution : Syntax)
-    (action : TacticM α) : TacticM α := Recording.withRollback do
+    (action : TacticM α) : TacticM α := withRollback do
+  let registration := if registration.recordingKind.isNone then
+      { registration with
+        ruleId := unrecordedRuleId
+        recordedFields := some #[{ name := "name", schema := .string }] }
+    else registration
   let previous ← selectedRecordingContract
   selectRecordingContract (some (.ofRegistration registration))
   try
@@ -47,7 +52,7 @@ private def RecordingStep.ensureOpen (step : RecordingStep) : TacticM Unit := do
 
 private def RecordingStep.validateField (step : RecordingStep) (field : String) : TacticM Unit := do
   step.ensureOpen
-  if let .error message := validateOutputFields [(field, .once)] then
+  if let .error message := validateFieldName field then
     throwError "{message}"
   if ((← getRecordingSlotItem step.slot).getObjVal? field).isOk then
     throwError "duplicate recorded parameter field `{field}`"
@@ -88,22 +93,16 @@ def RecordingStep.recordGoal (step : RecordingStep) (field : String)
     (goal : Option MVarId := none) : TacticM Unit :=
   step.captureField field (goalSnapshot goal) { collectReferences := false }
 
-/-- Capture every parameter in the supplied group, in order. -/
-def RecordingStep.capturePlan (step : RecordingStep) (parameters : Array ParamCapture)
-    (contextGoal : ContextSelector → TacticM (Option MVarId) := fun role => do
-      if role == .main then return (← getGoals).head?
-      return none) : TacticM Unit := withRollback do
+/-- Capture a batch atomically, interpreting each parameter inside its isolated capture.
+    Field checks remain outside the parameter's failure policy. -/
+def RecordingStep.captureParameters (step : RecordingStep) (parameters : Array ParamCapture)
+    (capture : ParamCapture → TacticM RecordedValue) : TacticM Unit := withRollback do
   step.ensureOpen
-  validateCaptures parameters
   for parameter in parameters do
-    step.captureNamedField parameter.field parameter.name (do
-      let goal ← contextGoal parameter.context
-      if goal.isNone && parameter.context != ContextSelector.main then
-        throwError "recording context {repr parameter.context} has no goal"
-      withCaptureGoal goal parameter.capture)
+    step.captureNamedField parameter.field parameter.name (capture parameter)
       { onFailure := parameter.onFailure, collectReferences := parameter.collectReferences }
 
-/-- Internal bridge to branch routing; public callers use `prepareBranches`. -/
+/-- Internal bridge from resolved strategy contexts to branch routing. -/
 def RecordingStep.prepareBranchLabels (step : RecordingStep) (labels : List String) : TacticM Unit :=
   withRollback do
     step.ensureOpen
@@ -111,7 +110,7 @@ def RecordingStep.prepareBranchLabels (step : RecordingStep) (labels : List Stri
     let mut seen : List String := []
     for label in labels do
       if label.isEmpty || label == "anonymous" || seen.contains label || ["name", "info"].contains label then
-        throwError "ambiguous strategy branch label `{label}`; use distinct explicit `| case =>` branches"
+        throwError "invalid or duplicate goal-derived strategy branch label `{label}`; strategy goals must have distinct non-reserved final tag components"
       seen := label :: seen
     let childPrefix := step.slot.box ++ "_strategy_" ++ step.slot.token.toString
     registerRecordingStrategy { slot := step.slot, childPrefix, labels }

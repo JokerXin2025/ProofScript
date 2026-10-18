@@ -72,4 +72,4 @@ private def addLatexComponent (metadataStx : Syntax)
   addPageComponent codeStx.raw "latex" (toJson value) labels
 
 elab "@""latex" metadata:componentMeta code:str : command =>
-  addLatexComponent metadata.raw code
+  whenPageBuild <| addLatexComponent metadata.raw code

@@ -1,9 +1,9 @@
 import ProofScript.Info.Codec
 import ProofScript.Foundation.Name
 
-namespace ProofScript.Info
-
 open Lean Elab Command
+
+namespace ProofScript.Info
 
 instance : Coe Name (Name ⊕ String) := ⟨Sum.inl⟩
 instance : Coe String (Name ⊕ String) := ⟨Sum.inr⟩
@@ -77,7 +77,8 @@ def FieldSpec.jsonSchema (field : FieldSpec Record) : Json :=
   | some value => field.codec.jsonSchema.setObjVal! "default" value
   | none => field.codec.jsonSchema
 
-structure Schema (Record : Type) where
+/-- Configuration fields, codecs and validation for a record type. -/
+class InfoSchema (Record : Type) where
   id : Name
   version : String := "1.0.0"
   fields : Array (FieldSpec Record)
@@ -85,22 +86,18 @@ structure Schema (Record : Type) where
   decodeValues : Json → Except Diagnostic Record
   validateRecord : Record → Except Diagnostic Unit := fun _ => pure ()
 
-class InfoSchema (Record : Type) where
-  schema : Schema Record
-
-/-- Consumers may defer completeness; parsing a patch never constructs a record. -/
+/-- A configuration domain's event kind and references to other configured records. -/
 structure InfoSpec (Record : Type) where
   kind : String
-  schema : Schema Record
   dependencies : Record → Array (String × (Name ⊕ String)) := fun _ => #[]
 
-def Schema.findField? (schema : Schema Record) (name : String) : Option (FieldSpec Record) :=
+def InfoSchema.findField? (schema : InfoSchema Record) (name : String) : Option (FieldSpec Record) :=
   schema.fields.find? (·.matches name)
 
-def Schema.extraField? (schema : Schema Record) : Option (FieldSpec Record) :=
+def InfoSchema.extraField? (schema : InfoSchema Record) : Option (FieldSpec Record) :=
   schema.fields.find? (·.handle.isExtra)
 
-def Schema.validateDefinition (schema : Schema Record) : Except Diagnostic Unit := do
+def InfoSchema.validateDefinition (schema : InfoSchema Record) : Except Diagnostic Unit := do
   let mut names : Array String := #[]
   let mut extraFound := false
   for field in schema.fields do
@@ -118,13 +115,13 @@ def Schema.validateDefinition (schema : Schema Record) : Except Diagnostic Unit 
       let _ : ToJson field.Value := field.codec.toToJson
       discard <| (field.decode (toJson value)).mapError (Diagnostic.atField field.name)
 
-def Schema.encode (schema : Schema Record) (record : Record) : Json :=
+def InfoSchema.encode (schema : InfoSchema Record) (record : Record) : Json :=
   Json.mkObj (schema.fields.toList.map fun (field : FieldSpec Record) =>
     let _ : ToJson field.Value := field.codec.toToJson
     (field.name, toJson (field.handle.get record)))
 
 /-- Wire decoding accepts only schema field names; extension keys belong inside extra. -/
-def Schema.decode (schema : Schema Record) (value : Json) : Except Diagnostic Record := do
+def InfoSchema.decode (schema : InfoSchema Record) (value : Json) : Except Diagnostic Record := do
   schema.validateDefinition
   let object ← value.getObj?.mapError fun message => { message }
   for (name, _) in object.toList do
@@ -143,7 +140,7 @@ def Schema.decode (schema : Schema Record) (value : Json) : Except Diagnostic Re
   schema.validateRecord record
   return record
 
-def Schema.jsonSchema (schema : Schema Record) := json% {
+def InfoSchema.jsonSchema (schema : InfoSchema Record) := json% {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   title: $(schema.id.toString),
   type: "object",
@@ -157,36 +154,31 @@ def decodeField [InfoCodec Value] (object : Json) (name : String) : Except Diagn
     { message, path := #[.field name] }
   (InfoCodec.decode value).mapError (Diagnostic.atField name)
 
-/-- An override is constructed from a generated handle, without repeating field metadata. -/
-structure FieldOverride (Record : Type) where
-  field : FieldSpec Record
-
 def FieldHandle.withCodec (handle : FieldHandle Record Value)
-    (codec : InfoCodec Value) : FieldOverride Record :=
-  ⟨⟨Value, codec, handle⟩⟩
+    (codec : InfoCodec Value) : FieldSpec Record :=
+  ⟨Value, codec, handle⟩
 
 def FieldHandle.withMerge [InfoCodec Value] (handle : FieldHandle Record Value)
-    (merge : MergePolicy Value) : FieldOverride Record :=
-  ⟨{ handle with merge }.toSpec⟩
+    (merge : MergePolicy Value) : FieldSpec Record :=
+  { handle with merge }.toSpec
 
 def FieldHandle.withValidation [InfoCodec Value] (handle : FieldHandle Record Value)
-    (validate : Value → Except String Unit) : FieldOverride Record :=
-  ⟨{ handle with validate }.toSpec⟩
+    (validate : Value → Except String Unit) : FieldSpec Record :=
+  { handle with validate }.toSpec
 
 def FieldHandle.withAliases [InfoCodec Value] (handle : FieldHandle Record Value)
-    (aliases : Array String) : FieldOverride Record :=
-  ⟨{ handle with aliases }.toSpec⟩
+    (aliases : Array String) : FieldSpec Record :=
+  { handle with aliases }.toSpec
 
 structure SchemaOverrides (Record : Type) where
-  fields : Array (FieldOverride Record) := #[]
+  fields : Array (FieldSpec Record) := #[]
   validateRecord : Record → Except Diagnostic Unit := fun _ => pure ()
 
-def Schema.withOverrides (schema : Schema Record) (overrides : SchemaOverrides Record) :
-    Except Diagnostic (Schema Record) := do
+def InfoSchema.withOverrides (schema : InfoSchema Record) (overrides : SchemaOverrides Record) :
+    Except Diagnostic (InfoSchema Record) := do
   let mut fields := schema.fields
   let mut assigned : Array String := #[]
-  for override in overrides.fields do
-    let field := override.field
+  for field in overrides.fields do
     let some index := fields.findIdx? (·.name == field.name)
       | throw { message := s!"override for unknown field `{field.name}`" }
     if assigned.contains field.name then
@@ -201,11 +193,12 @@ def Schema.withOverrides (schema : Schema Record) (overrides : SchemaOverrides R
   | .ok () => return result
 
 /-- Static domain declarations use checked overrides; invalid declarations are programmer errors. -/
-def Schema.withOverrides! (schema : Schema Record) (overrides : SchemaOverrides Record) : Schema Record :=
+@[implicit_reducible] def InfoSchema.withOverrides! (schema : InfoSchema Record)
+    (overrides : SchemaOverrides Record) : InfoSchema Record :=
   match schema.withOverrides overrides with
   | .ok result => result
   | .error error =>
-    let _ : Inhabited (Schema Record) := ⟨schema⟩
+    let _ : Inhabited (InfoSchema Record) := ⟨schema⟩
     panic! error.render
 
 end ProofScript.Info

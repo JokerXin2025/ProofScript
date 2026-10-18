@@ -12,7 +12,7 @@ structure Document where
   deriving InfoSchema
 
 run_cmd do
-  let schema := InfoSchema.schema
+  let schema : InfoSchema Document := inferInstance
   let original : Document := { title := "Public schema", extra := ({} : ExtraFields).set "reviewed" (json% true) }
   let restored ← match fromJson? (α := Document) (toJson original) with
     | .ok value => pure value
@@ -23,7 +23,8 @@ run_cmd do
       (Document.infoFields.revision.set restored 2).revision == 2 do
     throwError "public schema derivation, typed handles or JSON roundtrip failed"
   let env ← getEnv
-  for name in #[`ProofScript.Script.Record, `ProofScript.Script.Command,
+  for name in #[`ProofScript.Script.Recording, `ProofScript.Script.Recording.Recorder,
+      `ProofScript.Script.Command,
       `ProofScript.Script.Recording.Engine, `ProofScript.Page.Model, `ProofScript.Output.Export] do
     if (env.getModuleIdx? name).isSome then throwError m!"metadata entry imported runtime module {name}"
 
@@ -63,7 +64,7 @@ run_cmd do
 
 open scoped ProofScript.Foundation in
 run_cmd do
-  let spec : InfoSpec Document := { kind := "document", schema := InfoSchema.schema }
+  let spec : InfoSpec Document := { kind := "document" }
   let source : ProofScript.Foundation.SourceLocation := ⟨"target-test", 0, 0⟩
   -- Printed spellings, JSON-looking text, numeric components and quoted dots never define identity.
   let targets : Array Name := #[

@@ -185,6 +185,18 @@ theorem_info sample { project := "Second" } -- 显式改归属；some "Second" �
 theorem_info sample { project := none }   -- 解除归属
 ```
 
+`theorem_info` 只影响命令之后创建的内容。录制定理自身的标题、标签和项目使用声明内联配置，位置在名称之后、binders 之前：
+
+```lean
+@theorem reflexive (info := { name := "自反性", project := "Paper" })
+    (n : Nat) : n = n := script
+  rfl
+```
+
+`@lemma` 支持相同写法。页面构建中，内联字段与 `theorem_info` 使用相同 Schema、解析及校验，并属于声明事务的一部分：证明或配置失败时整条声明回滚。省略 `project` 时使用声明前的活动项目；显式 `project` 可以消除上游活动项目的歧义。声明后的同名 `theorem_info` 不会回头修改这个定理组件或它的证明。
+
+普通构建和 IDE 中，`@theorem` / `@lemma` 只生成并检查原生 theorem，跳过内联展示配置、录制和导出；`cite` 仍检查 Lean 引用项，但不消费展示元数据。独立 Info 配置命令继续登记。`lake build MyLibrary:ps4html` 自动启用页面模式，并重编译所需用户源码依赖，恢复完整的声明时配置与证明记录。
+
 项目引用必须先由 `project_info` 配置。页面中的定理 `name` 为空时使用声明末段名称；文献列表有自己的默认标题。`theorem_info` 本身不创建页面组件；页面定理通过 `@theorem` / `@lemma` 声明，文献列表通过 `@references` 插入。未配置元数据的声明不会自动作为已登记文献展示。
 
 ## 5. `script_info`：脚本步骤与策略展示
@@ -300,7 +312,7 @@ script_info ProofScript.Script.Basic.«contra» {
 
 运行时 null 通常显示为 `—`，数组以逗号连接，表达式交给 Lean2TeX。模板文本按文本处理并进行 HTML 转义。未闭合或空的占位符会报错；当前没有专门输出字面 `${` 的转义语法。
 
-`goal_before`、`goal_after` 是默认适配器提供的普通可空表达式字段；手写 recorder 不保证提供它们。修改 `script_info` 不会修改 recorder、执行入口或录制契约。`display := false` 仍须通过配置完整性与录制契约检查。
+普通步骤的默认适配器提供 `goal_before`、`goal_after` 两个普通可空表达式字段；策略的默认适配器只提供 `goal_before`。手写 recorder 不保证提供这些字段，占位符须以实际录制契约为准。修改 `script_info` 不会修改 recorder、执行入口或录制契约。`display := false` 仍须通过配置完整性与录制契约检查。
 
 ### 5.6 颜色
 
@@ -334,6 +346,7 @@ script_info ProofScript.Script.Basic.«rfl» {
 | `«remark»` | 备注 | `text` |
 | `«admit»` | 未完成证明说明 | `reason` |
 | `«embed»` | 嵌入证明 | `theorem`、`args`、`argKinds`、`proof`、`h`、`type` |
+| `«unrecorded»` | 保留 ruleId `ProofScript.Recording.unrecorded` 的红色“未导出数据”提示 | `name`；策略分支仍展示 |
 
 ```lean
 script_info ProofScript.Script.Basic.renderCalc { renderer := «calc» }
@@ -541,23 +554,37 @@ phrase_info "exists" {
 
 这些更新属于模块环境，不是 namespace 内的临时变量；`end` 不会撤销配置。
 
-### 9.2 `page_end` 冻结边界
+### 9.2 按内容位置确定配置
+
+每份证明和每个页面组件在创建时捕获本模块的元数据提交序号。之后消费配置时：
+
+- 读取全部传递导入模块的最终配置，包括上游 `page_end` 之后的更新。
+- 本模块只读取捕获边界之前已经提交的修改；不按源码行号重新扫描。
+- 内联 `(info := { ... })` 在声明完成事务中写入，并计入该声明自身的边界。
+- `namespace`、`section` 和 `page_end` 都不创建配置作用域。
 
 ```lean
 project_info "Demo" { title := "示例页面" }
+var_info "Nat" { default := "n", names := ["n"] }
 
-@theorem reflexive (n : Nat) : n = n := script
-  rfl
+@theorem reflexive (info := { name := "自反性" }) : ∀ _ : Nat, True := script
+  exact (fun _ => True.intro)
 
-theorem_info reflexive { name := "最终展示标题" }
+var_info "Nat" { default := "k", names := ["k"] }
+theorem_info reflexive { name := "后续引用使用的标题" }
+
+@theorem later : ∀ _ : Nat, True := script
+  exact (fun _ => True.intro)
 page_end
-
-theorem_info reflexive { name := "供下游使用的新标题" }
 ```
 
-该页面仍显示“最终展示标题”。页面关闭前的更新统一影响本页标题、引用、项目和表达式/脚本展示；关闭后的更新继续进入环境，可供下游配置查询使用，但不会改变已冻结页面。无页面归属的独立证明使用模块结束视图。
+`reflexive` 的组件标题是“自反性”，匿名变量的自动命名配置仍是 `n`；`later` 使用 `k`。中间的修改即使位于 `page_end` 之前，也不会改变前一份证明。后面的引用可以看到“后续引用使用的标题”。独立证明、以及 `page_end` 后记录的证明，也使用各自创建时的边界，不使用模块结束视图。
 
-快照按实际依赖收集配置；无关、未消费的不完整配置不阻塞页面。脚本调用使用实际选中的录制契约，较晚的 `script_info` 不会改写已经发生的录制事实。
+`@references` 在组件位置确定它引用的定理名称与项目信息。相同定理在不同位置的引用可以使用不同展示名。证明导航的项目归属和依赖筛选也使用该证明捕获的同一查询边界。
+
+`page_end` 负责关闭并写出页面；其后的页面组件会被忽略，Info 命令则继续进入模块环境，供后续代码及下游模块使用。页面的各个组件可以绑定不同 `snapshotId`，证明产物也各自绑定其配置快照。
+
+快照按实际依赖收集配置；无关、未消费的不完整配置不阻塞内容。脚本调用使用实际选中的录制契约，较晚的 `script_info` 既不会改写录制事实，也不会改变较早内容的展示配置。需要在证明中使用的配置必须先完整设置；普通定理在被引用前设置 `theorem_info.project`，录制定理自身的项目则通过声明前活动项目或内联 `info` 提供。旧的“证明后补配置、到 `page_end` 统一生效”写法需要迁移。
 
 ### 9.3 构建与缓存
 
@@ -565,7 +592,7 @@ theorem_info reflexive { name := "供下游使用的新标题" }
 
 完整站点使用 `lake build MyLibrary:ps4html`。已有完整导出可用 `ps4html make --cache` 重新渲染，不重新运行 Lean。缓存渲染使用绑定的快照；编辑源文件中的 Info 命令后，需要先重新构建才能更新快照。
 
-Info 协议当前为 `4.0.0`，录制协议为 `0.0.0`。完成清单在 `.ProofScript/info/index.json`，模型 Schema 在 `.ProofScript/info/schema/models.json`。不完整、摘要不一致或版本不支持的缓存会被拒绝。
+Info 协议当前为 `5.0.0`，artifact manifest 为 `5`，snapshot payload 为 `4`，录制协议为 `0.0.0`。完成清单在 `.ProofScript/info/index.json`，模型 Schema 在 `.ProofScript/info/schema/models.json`。不完整、摘要不一致或版本不支持的缓存会被拒绝。
 
 命名 proof artifact 还包含只读字段 `proofDependencies`，记录最终证明直接引用、且在同一冻结视图下属于源定理项目的定理声明名。`projectId` 来自该定理自身的冻结归属，不使用导出器的活动项目。名称使用无损数组编码，`proofFactsDigest` 绑定这些事实、源证明和快照。它们不是 `theorem_info` 的可编辑配置，也不由 `referenceCollection` 决定。旧版 bundle 或缺少证明事实的缓存必须重新通过 Lean 导出。
 
@@ -589,7 +616,7 @@ run_cmd do
 
 六类查询分别为 `resolveProjectInfo`、`resolveTheoremInfo`、`resolveScriptInfo`、`resolveDefinitionInfo`、`resolveVariableInfo`、`resolvePhraseInfo`，均使用显式 `Query`。不要用导出器自身的模块名代替被查询模块。
 
-字段类型与默认值以领域结构体为准，规则以对应 InfoSpec 和消费者为准：
+字段类型与默认值以领域结构体为准，字段规则由对应 `InfoSchema` 实例提供，配置种类和依赖查询由 `InfoSpec` 定义：
 
 | 内容 | 源文件 |
 | --- | --- |
@@ -602,6 +629,6 @@ run_cmd do
 | 基础配置实例 | [Defaults/Script.lean](../ProofScript/Defaults/Script.lean)、[Defaults/Lean2TeX.lean](../ProofScript/Defaults/Lean2TeX.lean) |
 | Mathlib 配置实例 | [Mathlib/Info.lean](../ProofScript/Mathlib/Info.lean) |
 
-若要增加新的内置字段，应修改对应结构体，让 `deriving InfoSchema` 生成字段描述；特殊合并或校验通过生成的类型化字段句柄配置。若只保存业务附加信息，直接使用 `extra` 即可。
+若要增加新的内置字段，应修改对应结构体，让 `deriving InfoSchema` 生成字段描述；特殊合并或校验通过生成的类型化字段句柄和 `withOverrides!` 注册为 `InfoSchema` 实例，配置处理和 JSON 解码统一使用该实例。若只保存业务附加信息，直接使用 `extra` 即可。
 
-模型和值类型统一通过 Lean 的 `toJson` 编码、`fromJson?` 解码。`InfoCodec` 继承标准 `ToJson`，不再定义单独的 `encode`；它的 `decode` 返回结构化 `Diagnostic`，保留字段路径、数组下标和关联字段，标准 `FromJson` 实例自动调用该解码器并把诊断渲染为错误字符串。新增特殊值类型只需实现一份解码逻辑；Info 内部继续使用结构化诊断进行来源追踪。完整模型的领域消费仍通过相应查询和 `InfoSpec` 校验。
+模型和值类型统一通过 Lean 的 `toJson` 编码、`fromJson?` 解码。`InfoCodec` 继承标准 `ToJson`，不再定义单独的 `encode`；它的 `decode` 返回结构化 `Diagnostic`，保留字段路径、数组下标和关联字段，标准 `FromJson` 实例自动调用该解码器并把诊断渲染为错误字符串。新增特殊值类型只需实现一份解码逻辑；Info 内部继续使用结构化诊断进行来源追踪。完整模型的领域消费通过相应查询，使用 `InfoSchema` 实例校验，并按 `InfoSpec` 查询依赖。

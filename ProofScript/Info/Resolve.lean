@@ -159,26 +159,27 @@ private def resolveKeyed (graph : Foundation.ModuleGraph) (field : FieldSpec Rec
   return (#[presence] ++ units, order)
 
 /-- Resolve candidates without rejecting incomplete records or unresolved independent writes. -/
-def resolveEvents (spec : InfoSpec Record) (graph : Foundation.ModuleGraph)
+def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : Foundation.ModuleGraph)
     (events : Array InfoEvent) (query : Query) (target : Name ⊕ String) : Except Diagnostic PartialView := do
-  spec.schema.validateDefinition
+  let schema : InfoSchema Record := inferInstance
+  schema.validateDefinition
   let selected ← selectEvents graph events query
   let identity : InfoTarget := { kind := spec.kind, target }
   let selected := selected.filter (·.identity == identity)
   for event in selected do
-    if event.schemaId != spec.schema.id || event.schemaVersion != spec.schema.version then
+    if event.schemaId != schema.id || event.schemaVersion != schema.version then
       throw ({
-        message := s!"unsupported schema `{event.schemaId}@{event.schemaVersion}`; expected `{spec.schema.id}@{spec.schema.version}`"
+        message := s!"unsupported schema `{event.schemaId}@{event.schemaVersion}`; expected `{schema.id}@{schema.version}`"
         kind := some spec.kind, target := some (toString target), source := some event.source } : Diagnostic)
-    discard <| validatePatch spec.schema event.assignments
+    discard <| validatePatch schema event.assignments
     if let some initial := event.initialization then
-      discard <| validatePatch spec.schema initial
+      discard <| validatePatch schema initial
       if initial.any (fun assignment => match assignment.operation with | .reset => true | _ => false) then
         throw { message := "invalid reset in initialization", kind := some spec.kind, target := some (toString target) }
   let allWrites := writes selected
   let mut units := #[]
   let mut keyOrder := #[]
-  for field in spec.schema.fields do
+  for field in schema.fields do
     if field.handle.isExtra then
       let defaults ← match field.defaultJson with
         | some value => value.getObj?.mapError fun message => { message }
@@ -210,7 +211,7 @@ def resolveEvents (spec : InfoSpec Record) (graph : Foundation.ModuleGraph)
         keyOrder := keyOrder.push (field.name, order)
   return { identity, created := !selected.isEmpty, units, keyOrder }
 
-def resolvePartial (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name ⊕ String) :
+def resolvePartial [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name ⊕ String) :
     Except Diagnostic PartialView := do
   resolveEvents spec (Foundation.ModuleGraph.ofEnvironment env) (← queryEvents env query) query target
 
@@ -228,7 +229,7 @@ def PartialView.attach (view : PartialView) (error : Diagnostic) : Diagnostic :=
   return { error with kind := some view.identity.kind, target := some (toString view.identity.target), related }
 
 /-- Materialization is the consumption boundary: conflicts and combined-value checks happen here. -/
-def PartialView.materialize (view : PartialView) (schema : Schema Record) : Except Diagnostic Json :=
+def PartialView.materialize (view : PartialView) (schema : InfoSchema Record) : Except Diagnostic Json :=
   (do
     if let some error := view.conflicts[0]? then throw error
     let mut values : List (String × Json) := []
@@ -261,12 +262,13 @@ structure ResolvedInfo (Record : Type) where
   provenance : Array (UnitKey × Array Origin)
   dependencies : Array (String × (Name ⊕ String))
 
-def consumeView (spec : InfoSpec Record) (view : PartialView) : Except Diagnostic (ResolvedInfo Record) := do
-  let json ← view.materialize spec.schema
-  let value ← (spec.schema.decode json).mapError view.attach
+def consumeView [InfoSchema Record] (spec : InfoSpec Record) (view : PartialView) : Except Diagnostic (ResolvedInfo Record) := do
+  let schema : InfoSchema Record := inferInstance
+  let json ← view.materialize schema
+  let value ← (schema.decode json).mapError view.attach
   return { value, provenance := view.provenance, dependencies := spec.dependencies value }
 
-def resolveInfo (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name ⊕ String) :
+def resolveInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name ⊕ String) :
     Except Diagnostic (ResolvedInfo Record) := do
   consumeView spec (← resolvePartial spec env query target)
 

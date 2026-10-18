@@ -18,7 +18,7 @@ const canonical = value => JSON.stringify(value, (_key, child) => child && !Arra
 const hash = value => createHash('sha256').update(canonical(value)).digest('hex');
 const identity = (projectId, declaration) => `theorem-${hash({projectId, declaration})}`;
 const index = json(join(exported, 'info/index.json'));
-assert.equal(index.schemaVersion, '4.0.0');
+assert.equal(index.schemaVersion, '5.0.0');
 assert.equal(index.complete, true);
 const artifactPath = path => join(exported, path.replace(/^\.ProofScript\//, ''));
 for (const entry of index.files) {
@@ -28,6 +28,7 @@ for (const entry of index.files) {
 }
 const proofs = index.artifacts.filter(artifact => artifact.kind === 'proof' && Array.isArray(artifact.declaration));
 const proofsByPath = new Map(proofs.map(proof => [proof.path, proof]));
+const snapshotsById = new Map(index.snapshots.map(snapshot => [snapshot.id, json(join(exported, snapshot.path)).payload]));
 const graph = new Map();
 for (const proof of proofs) {
   assert.equal(proof.projectId, 'PS4HTMLDemo');
@@ -48,10 +49,14 @@ const pages = index.artifacts.filter(artifact => artifact.kind === 'page').map(a
   const page = json(artifactPath(artifact.path));
   return {url: `${artifact.module.replaceAll('.', '/')}.html`,
     ids: page.components.flatMap(component => {
+      const snapshot = snapshotsById.get(component.snapshotId);
+      assert.ok(snapshot, 'Every page component must name its own snapshot');
+      assert.deepEqual(snapshot.query.module, artifact.owner);
       const value = (component.data.theorem || component.data.lemma)?.value;
       if (!value) return [];
       const proof = proofsByPath.get(value.proof);
       assert.ok(proof, `Missing theorem facts for ${value.proof}`);
+      assert.equal(component.snapshotId, proof.snapshotId, 'Theorem component uses its proof snapshot');
       return [identity(proof.projectId, proof.declaration)];
     })};
 });

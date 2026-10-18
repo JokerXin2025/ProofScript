@@ -15,9 +15,9 @@ from PS4HTML.project import PS4HTMLError
 from PS4HTML.recording import PROOF_SCHEMA_VERSION, proof_steps
 from PS4HTML.render_rules import validate_record, validate_rules
 
-INFO_VERSION = "4.0.0"
-MANIFEST_VERSION = "4"
-SNAPSHOT_VERSION = "3"
+INFO_VERSION = "5.0.0"
+MANIFEST_VERSION = "5"
+SNAPSHOT_VERSION = "4"
 MODEL_VERSION = "1.0.0"
 
 
@@ -125,6 +125,14 @@ class InfoBundle:
                     raise ValueError("Snapshot identity/version mismatch")
                 if payload.get("schemaVersion") != SNAPSHOT_VERSION or payload.get("recordingVersion") != PROOF_SCHEMA_VERSION or payload.get("contractVersion") != "1":
                     raise ValueError("Unsupported persisted snapshot version")
+                query = payload["query"]
+                name_key(query["module"])
+                boundary = query.get("boundary")
+                before = boundary.get("before") if isinstance(boundary, dict) else None
+                if (not isinstance(boundary, dict) or set(boundary) != {"before"}
+                        or not isinstance(before, dict) or set(before) != {"sequence"}
+                        or type(before["sequence"]) is not int or before["sequence"] < 0):
+                    raise ValueError("Snapshot requires a concrete nonnegative content boundary")
                 records_by_identity = {}
                 for record in payload["records"]:
                     kind, target = record["identity"]["kind"], record["identity"]["target"]
@@ -191,6 +199,8 @@ class InfoBundle:
             for artifact in self.artifacts.values():
                 if artifact["kind"] == "proof":
                     self.proof_rules(artifact, validate=True)
+                elif artifact["kind"] == "page":
+                    self._validate_page(artifact)
         except (KeyError, TypeError, ValueError, OSError, ValidationError) as error:
             raise PS4HTMLError(f"Invalid Info bundle: {error}") from error
 
@@ -223,6 +233,52 @@ class InfoBundle:
             raise ValueError("Theorem proof facts reference an unconfigured project")
         return TheoremRecord(source, project, dependencies, artifact["id"], artifact["snapshotId"],
                              name_key(artifact["owner"]), artifact["path"])
+
+    def _validate_page(self, artifact):
+        document = self.read(self.relative(artifact["path"]))
+        if document.get("module") != artifact["module"] or not isinstance(document.get("components"), list):
+            raise ValueError("Page content disagrees with its artifact module")
+        page_snapshot = self.snapshots[artifact["snapshotId"]][0]
+        project = artifact["projectId"]
+        if project is not None:
+            record = self._snapshot_records[artifact["snapshotId"]].get(("project", project))
+            if record is None or record["configured"] is not True:
+                raise ValueError("Page project disagrees with its envelope snapshot")
+        for component in document["components"]:
+            if not isinstance(component, dict) or not isinstance(component.get("snapshotId"), str):
+                raise ValueError("Page component lacks its configuration snapshot")
+            snapshot = self.snapshots.get(component["snapshotId"])
+            if snapshot is None or snapshot[0]["query"]["module"] != artifact["owner"]:
+                raise ValueError("Page component snapshot is unknown or belongs to another owner")
+            data = component.get("data")
+            if not isinstance(data, dict) or len(data) != 1:
+                raise ValueError("Invalid page component envelope")
+            if {"theorem", "lemma"} & data.keys():
+                self.theorem_component(component, artifact["module"])
+        if document["components"]:
+            first_snapshot = self.snapshots[document["components"][0]["snapshotId"]][0]
+            if first_snapshot["query"] != page_snapshot["query"]:
+                raise ValueError("Page envelope must use its first component's configuration boundary")
+
+    def theorem_component(self, component, module):
+        """Bind a displayed theorem to its proof's own view, independently of the page view."""
+        data = component.get("data", {})
+        tag = "theorem" if "theorem" in data else "lemma"
+        envelope = data.get(tag)
+        value = envelope.get("value") if isinstance(envelope, dict) else None
+        if not isinstance(value, dict) or not isinstance(value.get("proof"), str) or not value["proof"]:
+            raise ValueError("Theorem page component lacks an explicit proof artifact")
+        artifact = self.by_path.get(self.relative(value["proof"]))
+        record = self.theorems_by_artifact.get(artifact["id"]) if artifact is not None else None
+        if record is None:
+            raise ValueError("Theorem page component has no named proof artifact")
+        if name_text(list(record.owner)) != module or component.get("snapshotId") != record.snapshot_id:
+            raise ValueError("Theorem page reference disagrees with its proof owner/snapshot")
+        metadata = self._snapshot_records[record.snapshot_id][("theorem", record.declaration)]["value"]
+        title = metadata["name"] or record.declaration[-1]
+        if value.get("name") != title:
+            raise ValueError("Theorem page title disagrees with its frozen metadata")
+        return record
 
     def file_path(self, relative):
         path = self.root / relative

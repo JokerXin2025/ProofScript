@@ -12,15 +12,12 @@ structure TheoremInfo where
   extra : ExtraFields := {}
   deriving Inhabited, InfoSchema
 
-def theoremSchema : Schema TheoremInfo :=
-  InfoSchema.schema.withOverrides! {
+instance : InfoSchema TheoremInfo :=
+  (inferInstance : InfoSchema TheoremInfo).withOverrides! {
     fields := #[TheoremInfo.infoFields.project.withCodec projectReferenceCodec] }
-
-instance (priority := high) : InfoCodec TheoremInfo := schemaCodec theoremSchema
 
 def theoremSpec : InfoSpec TheoremInfo := {
   kind := "theorem",
-  schema := theoremSchema,
   dependencies := fun value => value.project.toList.toArray.map fun name => (projectSpec.kind, .inr name)
 }
 
@@ -36,7 +33,7 @@ def resolveTheoremInfo (env : Environment) (query : Query) (declaration : Name)
 def updateTheoremInfo (id : TSyntax `ident) (fields : Array InputField)
     (ref : Syntax) : CommandElabM Unit := do
   let declaration ← resolveDeclaration id
-  let patch ← parsePatch theoremSpec.schema fields
+  let patch ← parsePatch (inferInstance : InfoSchema TheoremInfo) fields
   let env ← getEnv
   let query : Query := { moduleName := env.mainModule }
   let view ←

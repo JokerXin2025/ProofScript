@@ -8,7 +8,7 @@ set_option linter.unusedVariables false
 declare_syntax_cat recordingLabel
 syntax ident : recordingLabel
 
-instance : RecordCategory `recordingLabel where
+instance : RecordParam (.category `recordingLabel) where
   schema := .name
   capture value := identifierName ⟨value.raw[0]⟩
 

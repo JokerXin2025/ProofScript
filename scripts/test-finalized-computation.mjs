@@ -14,7 +14,7 @@ const snapshot = resolvedPage.includes("/.PS4HTML/inputs/")
   ? resolvedPage.slice(0, resolvedPage.indexOf("/.ProofScript/pages/")) : root;
 const page = JSON.parse(await readFile(resolve(root, pagePath), "utf8"));
 const bundle = JSON.parse(await readFile(resolve(snapshot, ".ProofScript/info/index.json"), "utf8"));
-assert.equal(bundle.schemaVersion, "4.0.0");
+assert.equal(bundle.schemaVersion, "5.0.0");
 assert.equal(bundle.complete, true);
 const computations = page.components
   .map(component => component.data?.computation?.value)

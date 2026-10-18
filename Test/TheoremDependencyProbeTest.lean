@@ -69,15 +69,18 @@ probe_dependency matching =>
   | 0 => A.base
   | _ + 1 => A.base
 
-probe_dependency usesInternalCheck =>
-@theorem usesInternalCheck : True := by exact scriptcheck_byForm
+probe_dependency usesTheorem =>
+@theorem usesTheorem : True := by exact byForm
 
 run_cmd do
   let env ← getEnv
   let probes := probeExt.getState env
   for probe in probes do
-    let some (.opaqueInfo _) := env.find? probe.declaration
-      | throwError "@theorem and @lemma must be tested as opaque declarations"
+    let some (.thmInfo _) := env.find? probe.declaration
+      | throwError "@theorem and @lemma must create native theorem declarations"
+    let check := probe.declaration.getPrefix ++
+      Name.mkSimple ("scriptcheck_" ++ probe.declaration.getString!)
+    if env.contains check then throwError "native theorem created an obsolete check alias"
     let some facts := declarationFacts? env probe.declaration
       | throwError "production collector did not register a declaration"
     unless facts.ownerModule == env.mainModule && facts.defaultProject == some "Dependency.demo" do
@@ -105,7 +108,7 @@ run_cmd do
       (`TheoremDependencyProbe.auxiliary, #[`TheoremDependencyProbe.A.base]),
       (`TheoremDependencyProbe.cachedAuxiliary, #[`TheoremDependencyProbe.A.base]),
       (`TheoremDependencyProbe.matching, #[`TheoremDependencyProbe.A.base]),
-      (`TheoremDependencyProbe.usesInternalCheck, #[`TheoremDependencyProbe.byForm])] do
+      (`TheoremDependencyProbe.usesTheorem, #[`TheoremDependencyProbe.byForm])] do
     let candidates ← match dependencies env root with
       | .ok names => pure names
       | .error message => throwError message

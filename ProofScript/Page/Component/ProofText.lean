@@ -281,7 +281,7 @@ private partial def headingLabels (blocks : Array Block) : Array String := Id.ru
     | _ => pure ()
   return labels
 
-elab "@""text" source:str : command => do
+elab "@""text" source:str : command => whenPageBuild do
   let raw := source.getString
   let blocks ←
     match parse raw with

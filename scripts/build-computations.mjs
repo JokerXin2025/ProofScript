@@ -5,6 +5,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
+import { computationBuildPaths } from "./computation-build-paths.mjs";
 
 const root = process.cwd();
 const proofScriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
@@ -73,48 +74,8 @@ function mangleName(name, prefix = "l_") {
   return `${prefix}${result}`;
 }
 
-function modulePaths(moduleName) {
-  const path = moduleName.replaceAll(".", "/");
-  return {
-    c: join(root, ".lake", "build", "ir", `${path}.c`),
-    setup: join(root, ".lake", "build", "ir", `${path}.setup.json`),
-  };
-}
-
-function importCFile(setup, moduleName) {
-  const artifacts = setup.importArts?.[moduleName] ?? [];
-  const olean = artifacts.find(path => path.endsWith(".olean"));
-  if (!olean) {
-    const support = join(proofScriptRoot, ".lake", "build", "ir", `${moduleName.replaceAll(".", "/")}.c`);
-    if (existsSync(support)) return support;
-    throw new Error(`missing imported module artifact: ${moduleName}`);
-  }
-  const marker = `${join("lib", "lean")}/`;
-  const normalized = olean.replaceAll("\\", "/");
-  const index = normalized.lastIndexOf(marker);
-  if (index < 0) throw new Error(`cannot locate package root for ${moduleName}`);
-  const packageRoot = normalized.slice(0, index);
-  const candidate = join(packageRoot, "ir", `${moduleName.replaceAll(".", "/")}.c`);
-  if (!existsSync(candidate)) throw new Error(`missing C IR for imported module ${moduleName}`);
-  return candidate;
-}
-
-function importedCFiles(setup) {
-  const files = [];
-  for (const artifacts of Object.values(setup.importArts ?? {})) {
-    const olean = artifacts.find(path => path.endsWith(".olean"));
-    if (!olean) continue;
-    const normalized = olean.replaceAll("\\", "/");
-    const marker = "/lib/lean/";
-    const index = normalized.lastIndexOf(marker);
-    if (index < 0) continue;
-    const packageRoot = normalized.slice(0, index);
-    const modulePath = normalized.slice(index + marker.length, -".olean".length);
-    const candidate = join(packageRoot, "ir", `${modulePath}.c`);
-    if (existsSync(candidate)) files.push(candidate);
-  }
-  return [...new Set(files)];
-}
+const { modulePaths, importCFile, importedCFiles } = computationBuildPaths(
+  root, proofScriptRoot, process.env.PROOF_SCRIPT_BUILD_MANIFEST);
 
 function cSymbols(source) {
   const symbols = new Set();

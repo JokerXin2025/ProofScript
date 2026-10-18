@@ -51,8 +51,8 @@ def captureSimpArguments (value : TSyntax `simpArgs) : TacticM RecordedValue := 
       let raw := arg[1]
       let captured ← tryCapture (expression raw)
       let value := match captured with
-        | .success value => some value
-        | .failed _ => none -- Builtin simprocs have names but are not term expressions.
+        | .ok value => some value
+        | .error _ => none -- Builtin simprocs have names but are not term expressions.
       let label := if raw.isIdent then raw.getId.eraseMacroScopes.toString
         else raw.reprint.getD (reprStr raw)
       return .object [("kind", .scalar (json% "erase")), ("name", .scalar (toJson label)),
@@ -88,35 +88,35 @@ def captureConfig (value : TSyntax `optConfig) : TacticM RecordedValue := do
     (fun _ raw => throwErrorAt raw "invalid explicit tactic configuration")
   return .array entries
 
-instance : RecordCategory `location where
+instance : RecordParam (.category `location) where
   schema := locationSchema
   capture := captureLocation
 
-instance : RecordCategory `rwRuleSeq where
+instance : RecordParam (.category `rwRuleSeq) where
   schema := rewriteRulesSchema
   capture := captureRewriteRules
 
-instance : RecordCategory `simpArgs where
+instance : RecordParam (.category `simpArgs) where
   schema := simpArgumentsSchema
   capture := captureSimpArguments
 
-instance : RecordCategory `optConfig where
+instance : RecordParam (.category `optConfig) where
   schema := configSchema
   capture := captureConfig
 
-instance : RecordCategory ``Parser.Tactic.location where
+instance : RecordParam (.category ``Parser.Tactic.location) where
   schema := locationSchema
   capture value := captureLocation ⟨value.raw⟩
 
-instance : RecordCategory ``Parser.Tactic.rwRuleSeq where
+instance : RecordParam (.category ``Parser.Tactic.rwRuleSeq) where
   schema := rewriteRulesSchema
   capture value := captureRewriteRules ⟨value.raw⟩
 
-instance : RecordCategory ``Parser.Tactic.simpArgs where
+instance : RecordParam (.category ``Parser.Tactic.simpArgs) where
   schema := simpArgumentsSchema
   capture value := captureSimpArguments ⟨value.raw⟩
 
-instance : RecordCategory ``Parser.Term.optConfig where
+instance : RecordParam (.category ``Parser.Term.optConfig) where
   schema := configSchema
   capture value := captureConfig ⟨value.raw⟩
 

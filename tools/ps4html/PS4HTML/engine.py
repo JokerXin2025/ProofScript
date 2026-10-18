@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
 from PS4HTML.i18n import normalize_language, tr
-from PS4HTML.recording import proof_steps
+from PS4HTML.recording import UNRECORDED_RULE_ID, proof_steps
 
 _CURRENT_LANGUAGE = ContextVar("ps4html_language", default="zh")
 
@@ -330,6 +330,10 @@ class ProofEngine:
                 self._structural_step = self._structural_parent + (index,)
                 rule = self.step_rules.get(self._structural_step) if self.step_rules is not None else self.rules.get(rule_id)
                 self.current_rule = rule
+                if rule_id == UNRECORDED_RULE_ID:
+                    from PS4HTML.Rules.unrecorded import rule_unrecorded
+                    html_blocks.append(rule_unrecorded(step, self, language=self.language, path=path, index=index))
+                    continue
                 if rule is not None:
                     from PS4HTML.render_rules import render_rule
                     rendered = render_rule(rule, step, self, path, index)

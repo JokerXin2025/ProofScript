@@ -1,10 +1,7 @@
 import Lean.Meta
 import ProofScript.Script.Core
 
-open Lean (MetaM Level Literal Expr BinderInfo MData Json Syntax)
-open Lean
-open Lean.Meta (inferType)
-open Lean.JsonNumber (fromNat)
+open Lean Meta
 
 
 namespace ProofScript
@@ -84,15 +81,14 @@ def mergeExprJsonSnapshot {m : Type → Type} [Monad m] [MonadEnv m]
 
 private def exprRef (id : String) := json% { "$ref": $id }
 
-/-- `Nat` → `JSON` number -/
-private def natJson (num : Nat) : Json := Json.num (fromNat num)
-
 /-- `BinderInfo` → `String` -/
 private def binderInfoToString : BinderInfo → String
 | .default        => "default"
 | .implicit       => "implicit"
 | .strictImplicit => "strictImplicit"
 | .instImplicit   => "instImplicit"
+
+local instance : ToJson BinderInfo := ⟨toJson ∘ binderInfoToString⟩
 
 /-- 把「可能抛异常的 `MetaM`」包装成 `Option`
     用于 `typeOf` 推断、`mvar.getDecl` 等可能失败的操作：失败时返回 `none` -/
@@ -114,12 +110,16 @@ private def levelToJson : Level → Json
 | .param name => json% { kind: "level.param", name: $(name.toString) }
 | .mvar lmvarId => json% { kind: "level.mvar", id: $(lmvarId.name.toString) }
 
+local instance : ToJson Level := ⟨levelToJson⟩
+
 /-- `Literal` → `JSON` object
     - `natVal` → natural numeric literal
     - `strVal` → string literal -/
 private def litToJson : Literal → Json
-| .natVal n => json% { kind: "literal.nat", value: $(natJson n) }
+| .natVal n => json% { kind: "literal.nat", value: $n }
 | .strVal s => json% { kind: "literal.str", value: $s }
+
+local instance : ToJson Literal := ⟨litToJson⟩
 
 /-- `MData` → `JSON` object
     `MData = KVMap`，`m.entries` 是 `(Name, DataValue)` 键值对列表
@@ -128,25 +128,13 @@ private def mdataToJson (data : MData) :=
   Json.mkObj <| data.entries.map fun (name, val) =>
     (name.toString, Json.str (reprStr val))
 
+local instance : ToJson MData := ⟨mdataToJson⟩
+
 private def sourceRangeFromMData (data : MData) : Option Syntax.Range :=
   data.entries.findSome? fun (_, value) =>
     match value with
     | .ofSyntax stx => stx.getRange?
     | _ => none
-
-private def binderInfoJson : Option BinderInfo → Json
-| some binderInfo => Json.str (binderInfoToString binderInfo)
-| none            => json% null
-
-private def binderIsExplicitJson : Option BinderInfo → Json
-| some .default => json% true
-| some _        => json% false
-| none          => json% null
-
-private def binderIsTypeclassJson : Option BinderInfo → Json
-| some .instImplicit  => json% true
-| some _              => json% false
-| none                => json% null
 
 private def applicationBinderInfos (expr : Expr) : MetaM (Array (Option BinderInfo)) := do
   let args := expr.getAppArgs
@@ -214,8 +202,8 @@ private partial def serializeNode (expr : Expr) (cfg : ExprJsonConfig)
           | some range =>
               let sourceRange := json% {
                 file: $(← Lean.getFileName),
-                start: $(natJson range.start.byteIdx),
-                stop: $(natJson range.stop.byteIdx)
+                start: $(range.start.byteIdx),
+                stop: $(range.stop.byteIdx)
               }
               pure <| fields.insert "sourceRange" sourceRange
           | none => pure fields
@@ -230,7 +218,7 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
     (sourceRange? : Option Syntax.Range) : MetaM Json := do
   match expr with
   | .bvar deBruijnIndex =>
-      return json% { kind: "bvar", index: $(natJson deBruijnIndex) }
+      return json% { kind: "bvar", index: $deBruijnIndex }
   | .fvar fvarId => do
       let decl ← fvarId.getDecl
       let typeJson ← serializeNode decl.type cfg
@@ -239,8 +227,8 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
                       ("id", Json.str fvarId.name.toString),
                       ("type", typeJson)]
       if cfg.withFVarDetails then
-        data := data ++ [("index", natJson decl.index),
-                        ("binderInfo", Json.str (binderInfoToString decl.binderInfo))]
+        data := data ++ [("index", toJson decl.index),
+                        ("binderInfo", toJson decl.binderInfo)]
       if let some v := decl.value? then
         data := data ++ [("value", ← serializeNode v cfg)]
       return Json.mkObj data
@@ -254,12 +242,12 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
       | none => pure ()
       return Json.mkObj data
   | .sort u =>
-      return json% { kind: "sort", level: $(levelToJson u) }
+      return json% { kind: "sort", level: $u }
   | .const declName us =>
       return json% {
         kind: "const",
         name: $(declName.toString),
-        levels: $((us.map levelToJson).toArray)
+        levels: $us
       }
   | .app fn arg =>
       let args := expr.getAppArgs
@@ -268,9 +256,9 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
         let binderInfo? := binderInfos[index]!
         pure <| json% {
           expr: $(← serializeNode argument cfg),
-          binderInfo: $(binderInfoJson binderInfo?),
-          isExplicit: $(binderIsExplicitJson binderInfo?),
-          isTypeclass: $(binderIsTypeclassJson binderInfo?)
+          binderInfo: $binderInfo?,
+          isExplicit: $(binderInfo?.map (· == .default)),
+          isTypeclass: $(binderInfo?.map (· == .instImplicit))
         }
       let headConstant := match expr.getAppFn.const? with
         | some (name, _) => Json.str name.toString
@@ -288,7 +276,7 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
         name: $(binderName.toString),
         type: $(← serializeNode binderType cfg),
         body: $(← serializeNode body cfg),
-        binderInfo: $(binderInfoToString binderInfo)
+        binderInfo: $binderInfo
       }
   | .forallE binderName binderType body binderInfo =>
       return json% {
@@ -296,7 +284,7 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
         name: $(binderName.toString),
         type: $(← serializeNode binderType cfg),
         body: $(← serializeNode body cfg),
-        binderInfo: $(binderInfoToString binderInfo)
+        binderInfo: $binderInfo
       }
   | .letE declName type value body nondep =>
       return json% {
@@ -308,7 +296,7 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
         nondep: $nondep
       }
   | .lit lit =>
-      return json% { kind: "lit", lit: $(litToJson lit) }
+      return json% { kind: "lit", lit: $lit }
   | .mdata data expr =>
       let range? := sourceRangeFromMData data <|> sourceRange?
       let data := data.erase witnessDataGoalMDataKey
@@ -317,7 +305,7 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
       else if cfg.withMData then
         return json% {
           kind: "mdata",
-          data: $(mdataToJson data),
+          data: $data,
           expr: $(← serializeNode expr cfg range?)
         }
       else
@@ -326,7 +314,7 @@ private partial def serializeCore (expr : Expr) (cfg : ExprJsonConfig)
       return json% {
         kind: "proj",
         structName: $(typeName.getPrefix.toString),
-        index: $(natJson idx),
+        index: $idx,
         fieldName: $(typeName.toString),
         expr: $(← serializeNode struct cfg)
       }

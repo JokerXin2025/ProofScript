@@ -5,7 +5,7 @@ open Lean ProofScript ProofScript.Recording
 declare_syntax_cat labelValue
 syntax ident : labelValue
 
-instance : RecordCategory `labelValue where
+instance : RecordParam (.category `labelValue) where
   schema := .name
   capture value := identifierName ⟨value.raw[0]⟩
 

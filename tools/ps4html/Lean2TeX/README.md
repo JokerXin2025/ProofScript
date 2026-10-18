@@ -26,7 +26,7 @@ phrase_info "forall" { template := [
 
 样式的 `isolated_arguments := [0, 1]` 表示模板已将对应显示参数独立分组（索引从 0 开始），渲染时跳过这些位置由优先级或结合方向产生的自动括号。例如 `\frac{#0}{#1}` 的分子和分母、`{#0}^{#1}` 的指数；其他参数仍按原优先级规则加括号。
 
-ProofScript 基础配置位于 `ProofScript/Defaults/Lean2TeX.lean`，Mathlib 的 `Real` / `Set` 配置位于 `ProofScript/Mathlib/Info.lean`。`import ProofScript` 加载完整默认展示；只需表达式默认配置时导入 `ProofScript.Defaults.Lean2TeX`。本模块配置在本模块消费时生效；页面采用 `page_end` 边界，独立 proof 采用模块结束视图。未知顶层字段保存为 `extra`，已知字段类型错误会报错。
+ProofScript 基础配置位于 `ProofScript/Defaults/Lean2TeX.lean`，Mathlib 的 `Real` / `Set` 配置位于 `ProofScript/Mathlib/Info.lean`。`import ProofScript` 加载完整默认展示；只需表达式默认配置时导入 `ProofScript.Defaults.Lean2TeX`。每份证明和页面组件使用创建时捕获的配置边界：上游模块提供全部最终配置，本模块只读取该内容之前提交的配置。独立 proof 使用相同规则；`page_end` 只负责页面输出，不改变配置作用范围。未知顶层字段保存为 `extra`，已知字段类型错误会报错。
 
 ## Python 接口
 

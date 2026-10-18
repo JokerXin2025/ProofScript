@@ -17,6 +17,8 @@ def ParamShape.toJson : ParamShape → Lean.Json
 | .array element => json% { kind: "array", element: $(element.toJson) }
 | .optional element => json% { kind: "optional", element: $(element.toJson) }
 
+instance : Lean.ToJson ParamShape := ⟨ParamShape.toJson⟩
+
 /-- The typed input passed to a recorder after parser-specific extraction. -/
 def ParamInput : ParamShape → Type
 | .category name => Lean.TSyntax name
@@ -66,24 +68,24 @@ partial def ParamSchema.toJson : ParamSchema → Lean.Json
 | .syntax => json% { kind: "syntax" }
 | .json => json% { kind: "json" }
 
+instance : Lean.ToJson ParamSchema := ⟨ParamSchema.toJson⟩
+
 /-- Persist only the output contract; invocation closures never enter the environment. -/
 structure OutputField where
   name : String
   schema : ParamSchema
   /-- Best-effort capture may fail even when the schema itself is not optional. -/
   nullable : Bool := true
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited, Repr, BEq, Lean.ToJson
 
-def OutputField.toJson (field : OutputField) := json% {
-  name: $(field.name),
-  schema: $(field.schema.toJson),
-  nullable: $(field.nullable)
-}
-
-/-- Ordinary output fields supplied by the default step adapters. -/
+/-- Default goal fields emitted by automatic ordinary recorders. -/
 def goalFields : Array OutputField := #[
   { name := "goal_before", schema := .optional .expression, nullable := false },
   { name := "goal_after", schema := .optional .expression, nullable := false }]
+
+/-- Strategy output records the goal before the strategy creates its branches. -/
+def strategyGoalFields : Array OutputField := #[
+  { name := "goal_before", schema := .optional .expression, nullable := false }]
 
 /-- Expression internals are private to the expression resolver; template paths
     traverse only declared objects and numeric array indices. -/

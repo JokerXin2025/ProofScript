@@ -7,38 +7,25 @@ open Lean Elab Command
 
 namespace ProofScript.Info
 
-structure ScriptRuleId where
-  name : Name
-  deriving Inhabited, Repr, BEq
-
 def visibleScriptRegistrations (env : Environment) (moduleName : Name) :
     Except Diagnostic (List ScriptTacticRegistration) := do
   let order ← (Foundation.ModuleGraph.ofEnvironment env).order moduleName
     |>.mapError fun message => { message }
   return scriptRegistrationsInModules env order
 
-def scriptRegistrationInView (env : Environment) (query : Query) (id : ScriptRuleId) :
+def scriptRegistrationInView (env : Environment) (query : Query) (ruleId : Name) :
     Except Diagnostic ScriptTacticRegistration := do
-  let some registration := (← visibleScriptRegistrations env query.moduleName).find? (·.ruleId == id.name)
-    | throw { message := "unknown script registration", kind := some "script", target := some id.name.toString }
+  let some registration := (← visibleScriptRegistrations env query.moduleName).find? (·.ruleId == ruleId)
+    | throw { message := "unknown script registration", kind := some "script", target := some ruleId.toString }
   return registration
 
-def resolveScriptTarget (target : TSyntax `ident) : CommandElabM ScriptRuleId := do
+def resolveScriptTarget (target : TSyntax `ident) : CommandElabM Name := do
   let env ← getEnv
   let name := removeRoot target.getId.eraseMacroScopes
-  let id : ScriptRuleId := ⟨if name.components.length == 1 then env.mainModule ++ name else name⟩
-  match scriptRegistrationInView env { moduleName := env.mainModule } id with
-  | .ok _ => return id
-  | .error _ => throwErrorAt target m!"unknown script_info registration ID `{id.name}`; use its full module-qualified ID for imported rules"
-
-open scoped Foundation in
-instance : InfoCodec ScriptRuleId where
-  parse stx := do
-    let `(term| $id:ident) := stx | throwErrorAt stx "expected a script registration identifier"
-    resolveScriptTarget id
-  toJson id := Lean.toJson id.name
-  decode value := (ScriptRuleId.mk <$> fromJson? value).mapError fun message => { message }
-  jsonSchema := Foundation.qualifiedNameSchema
+  let ruleId := if name.components.length == 1 then env.mainModule ++ name else name
+  match scriptRegistrationInView env { moduleName := env.mainModule } ruleId with
+  | .ok _ => return ruleId
+  | .error _ => throwErrorAt target m!"unknown script_info registration ID `{ruleId}`; use its full module-qualified ID for imported rules"
 
 structure HexColor where
   value : String
@@ -59,7 +46,7 @@ structure ScriptColor where
   deriving Inhabited, InfoSchema
 
 instance (priority := high) : InfoCodec ScriptColor :=
-  let ordinary := schemaCodec InfoSchema.schema
+  let ordinary := schemaCodec inferInstance
   { ordinary with parse := fun stx => do
       if let `(term| ($tag:term, $border:term, $background:term)) := stx then
         return ScriptColor.mk (← InfoCodec.parse tag) (← InfoCodec.parse border) (← InfoCodec.parse background)
@@ -67,12 +54,13 @@ instance (priority := high) : InfoCodec ScriptColor :=
 
 /-- The renderers currently provided by the backend. Their implementation stays in Python. -/
 inductive ScriptRenderer where
-  | automatic | strategy | calc | infer | media | diagram | remark | admit | embed
+  | automatic | strategy | calc | infer | media | diagram | remark | admit | embed | unrecorded
   deriving Inhabited, Repr, BEq
 
 instance : InfoCodec ScriptRenderer := enumCodec #[
   ("none", .automatic), ("strategy", .strategy), ("calc", .calc), ("infer", .infer),
-  ("media", .media), ("diagram", .diagram), ("remark", .remark), ("admit", .admit), ("embed", .embed)]
+  ("media", .media), ("diagram", .diagram), ("remark", .remark), ("admit", .admit), ("embed", .embed),
+  ("unrecorded", .unrecorded)]
 
 def ScriptRenderer.requiredFields : ScriptRenderer → Array String
   | .automatic | .strategy => #[] -- Branches are supplied by the strategy engine.
@@ -82,6 +70,7 @@ def ScriptRenderer.requiredFields : ScriptRenderer → Array String
   | .remark => #["text"]
   | .admit => #["reason"]
   | .embed => #["theorem", "args", "argKinds", "proof", "h", "type"]
+  | .unrecorded => #["name"]
 
 structure ScriptIntroducer where
   tag : String
@@ -97,12 +86,10 @@ structure ScriptCase where
   introducer : Option ScriptIntroducer := none
   deriving Inhabited, InfoSchema
 
-def scriptCaseSchema : Schema ScriptCase :=
-  InfoSchema.schema.withOverrides! {
+instance : InfoSchema ScriptCase :=
+  (inferInstance : InfoSchema ScriptCase).withOverrides! {
     fields := #[ScriptCase.infoFields.name.withValidation fun name =>
       if name.isEmpty then .error "case name must not be empty" else .ok ()] }
-
-instance (priority := high) : InfoCodec ScriptCase := schemaCodec scriptCaseSchema
 
 structure OrdinaryScriptTemplate where
   lang : String
@@ -113,8 +100,8 @@ structure OrdinaryScriptTemplate where
 private def nonemptyLanguage (language : String) : Except String Unit :=
   if language.isEmpty then .error "template language must not be empty" else .ok ()
 
-instance (priority := high) : InfoCodec OrdinaryScriptTemplate := schemaCodec <|
-  InfoSchema.schema.withOverrides! {
+instance : InfoSchema OrdinaryScriptTemplate :=
+  (inferInstance : InfoSchema OrdinaryScriptTemplate).withOverrides! {
     fields := #[OrdinaryScriptTemplate.infoFields.lang.withValidation nonemptyLanguage] }
 
 structure StrategyScriptTemplate where
@@ -125,8 +112,8 @@ structure StrategyScriptTemplate where
   cases : Array ScriptCase
   deriving Inhabited, InfoSchema
 
-def strategyScriptTemplateSchema : Schema StrategyScriptTemplate :=
-  InfoSchema.schema.withOverrides! {
+instance : InfoSchema StrategyScriptTemplate :=
+  (inferInstance : InfoSchema StrategyScriptTemplate).withOverrides! {
     fields := #[StrategyScriptTemplate.infoFields.lang.withValidation nonemptyLanguage,
       StrategyScriptTemplate.infoFields.cases.withValidation fun cases => do
         if cases.isEmpty then throw "cases must not be empty"
@@ -141,8 +128,6 @@ def strategyScriptTemplateSchema : Schema StrategyScriptTemplate :=
           throw error
         if value.cases[0]!.tag != "" || value.cases[0]!.title != "" then
           throw { message := "inline case must have empty tag and title", path := #[.field StrategyScriptTemplate.infoFields.cases.name] } }
-
-instance (priority := high) : InfoCodec StrategyScriptTemplate := schemaCodec strategyScriptTemplateSchema
 
 inductive ScriptTemplate where
   | ordinary (value : OrdinaryScriptTemplate)
@@ -197,9 +182,8 @@ structure ScriptInfo where
   extra : ExtraFields := {}
   deriving Inhabited, InfoSchema
 
-def scriptSpec : InfoSpec ScriptInfo := {
-  kind := "script"
-  schema := InfoSchema.schema.withOverrides! {
+instance : InfoSchema ScriptInfo :=
+  (inferInstance : InfoSchema ScriptInfo).withOverrides! {
     fields := #[ScriptInfo.infoFields.template.withMerge (keyedArray ScriptTemplate.lang)]
     validateRecord := fun value => do
       if value.renderer == .automatic && value.template.isEmpty then
@@ -207,7 +191,10 @@ def scriptSpec : InfoSpec ScriptInfo := {
           message := "automatic script rendering requires a template"
           path := #[.field ScriptInfo.infoFields.template.name]
           relatedPaths := #[#[.field ScriptInfo.infoFields.renderer.name]] }
-        throw error } }
+        throw error }
+
+def scriptSpec : InfoSpec ScriptInfo := {
+  kind := "script" }
 
 private def introducerTexts (value : ScriptIntroducer) : Array (FieldPath × String) := #[
   (#[.field ScriptIntroducer.infoFields.tag.name], value.tag),
@@ -259,18 +246,19 @@ def resolveScriptInfoWithRegistration (env : Environment) (query : Query)
   (do
     let view ← resolvePartial scriptSpec env query registration.ruleId
     let result ← if view.created then consumeView scriptSpec view else do
-      let fallback : ScriptInfo := if registration.strategy then { renderer := .strategy } else
+      let fallback : ScriptInfo := if registration.ruleId == unrecordedRuleId then { renderer := .unrecorded }
+        else if registration.strategy then { renderer := .strategy } else
         { template := #[.ordinary { lang := "zh", tag := registration.name, content := "" }] }
       pure { value := fallback, provenance := view.provenance, dependencies := scriptSpec.dependencies fallback }
     (validateScriptContract registration result.value).mapError view.attach
     return result : Except Diagnostic (ResolvedInfo ScriptInfo)).mapError fun error =>
       { error with kind := some scriptSpec.kind, target := some registration.ruleId.toString }
 
-def resolveScriptInfo (env : Environment) (query : Query) (id : ScriptRuleId) :
+def resolveScriptInfo (env : Environment) (query : Query) (ruleId : Name) :
     Except Diagnostic (ResolvedInfo ScriptInfo) := do
-  resolveScriptInfoWithRegistration env query (← scriptRegistrationInView env query id)
+  resolveScriptInfoWithRegistration env query (← scriptRegistrationInView env query ruleId)
 
 def updateScriptInfo (target : TSyntax `ident) (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
-  elaborateInfo scriptSpec (← resolveScriptTarget target).name fields ref
+  elaborateInfo scriptSpec (← resolveScriptTarget target) fields ref
 
 end ProofScript.Info

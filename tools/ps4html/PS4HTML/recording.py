@@ -4,6 +4,7 @@ import math
 from decimal import Decimal
 
 PROOF_SCHEMA_VERSION = "0.0.0"
+UNRECORDED_RULE_ID = "ProofScript.Recording.unrecorded"
 RESERVED = {"_ruleId", "branches"}
 
 

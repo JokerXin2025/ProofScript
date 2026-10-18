@@ -11,6 +11,7 @@ from PS4HTML.Rules.remark import rule_remark
 from PS4HTML.Rules.admit import rule_admit
 from PS4HTML.Rules.embed import rule_embed
 from PS4HTML.Rules.strategy import rule_strategy
+from PS4HTML.Rules.unrecorded import rule_unrecorded
 from PS4HTML.recording import (PROOF_SCHEMA_VERSION, validate_contract,
                                validate_fields, validate_slots, slot_value,
                                slot_schema, validate_value)
@@ -21,6 +22,7 @@ SPECIAL_RENDERERS = {
     "diagram": rule_svg, "remark": rule_remark, "admit": rule_admit,
     "embed": rule_embed,
     "strategy": rule_strategy,
+    "unrecorded": rule_unrecorded,
 }
 COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\Z")
 
@@ -81,6 +83,7 @@ RENDERER_FIELDS = {
     "remark": ("text",), "admit": ("reason",),
     "embed": ("theorem", "args", "argKinds", "proof", "h", "type"),
     "strategy": ("branches",),
+    "unrecorded": ("name",),
 }
 
 
@@ -289,9 +292,9 @@ def render_rule(rule, step, proof, path, index):
         return ""
     special = fields.get("renderer")
     if special is not None and special != "none":
-        if special in ("embed", "strategy"):
-            handler = rule_embed if special == "embed" else rule_strategy
-            value = step if special == "strategy" else proof.resolve(step)
+        if special in ("embed", "strategy", "unrecorded"):
+            handler = SPECIAL_RENDERERS[special]
+            value = proof.resolve(step) if special == "embed" else step
             rendered = handler(value, proof, language=proof.language,
                                   path=path, index=index,
                                   **({"style": _rule_style(fields)} if special == "strategy" else {}))

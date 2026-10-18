@@ -13,16 +13,12 @@ open ProofScript
 namespace ProofScript.Computation
 
 
-structure ErrorBody where
-  code : String
-  message : String
-deriving ToJson
-
 private def success (value : Json) := json% { ok: true, value: $value }
 
-private def failure (code message : String) :=
-  let error : ErrorBody := { code, message }
-  json% { ok: false, "error": $error }
+private def failure (code message : String) := json% {
+  ok: false,
+  "error": { code: $code, message: $message }
+}
 
 /-- Executes a typed pure function behind the `proofscript-json-v1` string ABI. -/
 def invokeJson [FromJson α] [ToJson β]
@@ -63,7 +59,7 @@ def pendingEntryPath (moduleName declaration : String) : FilePath :=
 def writePendingEntry (entry : PendingEntry) : IO FilePath := do
   let reference := pendingEntryPath entry.module entry.entry
   let path ← activeOutputPath reference
-  ensureParentDir path
+  path.ensureParentDir
   IO.FS.writeFile path (toJson entry).pretty
   -- Persist a logical reference; a staging directory must not change page content digests.
   return reference
@@ -267,7 +263,7 @@ syntax computationField := ident " := " computationFieldValue
 syntax (name := computationCmd) "@computation" "{" sepBy1(computationField, ", ") "}" : command
 
 elab_rules : command
-  | `(command| @computation { $[$fields:computationField],* }) => do
+  | `(command| @computation { $[$fields:computationField],* }) => whenPageBuild do
       let mut metadata : Option Syntax := none
       let mut renderer : Option (TSyntax `str) := none
       let mut function : Option (TSyntax `ident) := none

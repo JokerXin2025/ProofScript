@@ -88,8 +88,8 @@ error: @computation requires a function with exactly one explicit argument
 run_cmd do
   let env ← Lean.getEnv
   for component in (ProofScript.getPageState env).components do
-    if component.data.kind == "computation" then
-      let execution ← Lean.ofExcept <| component.data.value.getObjVal? "execution"
+    if component.kind == "computation" then
+      let execution ← Lean.ofExcept <| component.value.getObjVal? "execution"
       let entry ← Lean.ofExcept <| execution.getObjValAs? String "entry"
       let manifest ← Lean.ofExcept <| execution.getObjValAs? String "manifest"
       let expected := ProofScript.Computation.pendingEntryPath env.mainModule.toString entry

@@ -14,10 +14,16 @@ script_elab compoundParser "signature_compound" value:(ident term) => pure ()
 error: [script recorder] parameters of `Test.RecordingRegistrationTest.compoundParser` do not match its registration
 -/
 #guard_msgs in
-script_recorder compoundParser "signature_compound" value:(ident str) => recordStep
+script_recorder compoundParser "signature_compound" value:(ident str) => recording_step do
+  capture_params #[goalParam "goal_before"]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 -- The same parser at a different source position must still match.
-script_recorder compoundParser "signature_compound" value:(ident term) => recordStep
+script_recorder compoundParser "signature_compound" value:(ident term) => recording_step do
+  capture_params #[goalParam "goal_before"]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 -- Equal semantic shapes are insufficient when quotation binders require different extraction.
 script_elab separatedParser "signature_separated" values:sepBy(ident, ",") => pure ()
@@ -26,9 +32,15 @@ script_elab separatedParser "signature_separated" values:sepBy(ident, ",") => pu
 error: [script recorder] parameters of `Test.RecordingRegistrationTest.separatedParser` do not match its registration
 -/
 #guard_msgs in
-script_recorder separatedParser "signature_separated" values:ident* => recordStep
+script_recorder separatedParser "signature_separated" values:ident* => recording_step do
+  capture_params #[goalParam "goal_before"]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
-script_recorder separatedParser "signature_separated" values:sepBy(ident, ",") => recordStep
+script_recorder separatedParser "signature_separated" values:sepBy(ident, ",") => recording_step do
+  capture_params #[goalParam "goal_before"]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 script_elab scalarParser "signature_scalar" value:str => pure ()
 
@@ -36,7 +48,10 @@ script_elab scalarParser "signature_scalar" value:str => pure ()
 error: [script recorder] parameters of `Test.RecordingRegistrationTest.scalarParser` do not match its registration
 -/
 #guard_msgs in
-script_recorder scalarParser "signature_scalar" value:num => recordStep
+script_recorder scalarParser "signature_scalar" value:num => recording_step do
+  capture_params #[goalParam "goal_before"]
+  execute_recorded
+  capture_params #[goalParam "goal_after"]
 
 @theorem recordingRegistrationImported (P : Prop) (h : P) : P := script
   record_labels [alpha]

@@ -1,4 +1,5 @@
 import ProofScript.Script.Command
+import ProofScript.Utils.Syntax
 
 open Lean
 open Parser.Tactic (tacticSeq1Indented)
@@ -64,16 +65,6 @@ def inductionAltTag (alt : Syntax) : String :=
   let lhs := alt.getArg 0 |>.getArg 0
   lhs.getArgs[1]!.getArgs[1]!.getId.toString
 
-/-- 将 tactic 数组组装为 `tacticSeq`（tactic 间插入 `;` 分隔符），
-    容器节点继承第一个 tactic 的位置，避免错误定位到文件开头。 -/
-def buildTacticSeq (tactics : Array Syntax) : Syntax :=
-  let headInfo := if tactics.isEmpty then SourceInfo.none else tactics[0]!.getHeadInfo
-  let parts := tactics.toList.foldl (fun acc t =>
-    if acc.isEmpty then [t] else acc ++ [mkAtomFrom t ";", t]) []
-  let nullNode := mkNullNode parts.toArray
-  let seq1 := Syntax.node headInfo ``tacticSeq1Indented #[nullNode]
-  Syntax.node headInfo ``Parser.Tactic.tacticSeq #[seq1]
-
 /-- Flatten ordinary sequences and recursively convert branches to native `case` tactics. -/
 partial def collectTactics (stmts : Array Syntax) : Array Syntax :=
   stmts.foldl (fun tactics s =>
@@ -98,11 +89,6 @@ partial def collectTactics (stmts : Array Syntax) : Array Syntax :=
 
 /-! ## 策略名验证 -/
 
-/-- 找到 tactic 语法中的第一个 atom（即策略名，如 `provide`/`exact`/`split_and`）。 -/
-partial def findFirstAtom (t : Syntax) : Option Syntax :=
-  if t.isAtom then some t
-  else t.getArgs.findSome? findFirstAtom
-
 /-- 从策略名 atom 构造 ident（位置关联到原 atom），用于 `run_script_step` 参数。 -/
 def tacticNameIdent (t : Syntax) : Option Syntax :=
   match findFirstAtom t with
@@ -110,17 +96,6 @@ def tacticNameIdent (t : Syntax) : Option Syntax :=
       -- Carry the literal keyword, not a namespace path or an escaped identifier.
       some (mkIdentFrom atom (Name.mkSimple atom.getAtomVal))
   | none => none
-
-/-- 从 tactic 语法中提取策略名字符串（先序遍历第一个 atom）。 -/
-def firstAtomName (t : Syntax) : Option String :=
-  match findFirstAtom t with
-  | some atom => some atom.getAtomVal
-  | none => none
-
-/-- 换节点 kind 并保留 SourceInfo。`mkNode` 用 `SourceInfo.none` 会丢位置信息，
-    悬浮提示/报错定位会漂到生成器而非用户代码，故用 `Syntax.node stx.getHeadInfo …`。 -/
-def changeNodeKind (stx : Syntax) (newKind : Name) (args : Array Syntax) : Syntax :=
-  Syntax.node stx.getHeadInfo newKind args
 
 def scriptTacticName (name : String) : String := "script_" ++ name
 
@@ -219,20 +194,41 @@ elab "run_script_step" name:ident call:scriptTactic : tactic => do
   Elab.Tactic.withTacticInfoContext call.raw <|
     withScriptMode <| evalTactic (⟨rewritten⟩ : TSyntax `tactic)
 
+/-- Execute an unavailable recorder's tactic while retaining its position and branch routing. -/
+elab (name := unrecordedStep) "_record_unrecorded_step" "_strategy_cases" cases:str : tactic => do
+  let some contract ← selectedRecordingContract
+    | throwError "unrecorded step has no invocation contract"
+  Recording.withRecordingStep fun step => do
+    step.recordJson "name" (toJson contract.name)
+    executeRecordedStep
+    if contract.strategy then
+      let contexts ← Recording.resolveStrategyContexts (cases.getString.splitOn "\n") contract.continuation
+      step.prepareBranches contexts
+
 elab "run_recorded_step" source:scriptTactic call:tactic : tactic => do
   let registrations := scriptTacticRegistrations (← getEnv)
   let some (registration, sourceCall) := registeredTacticCall registrations source.raw
     | throwErrorAt source "recorded tactic has no matching registration"
-  unless registration.recordingKind == some call.raw.getKind do
+  unless registration.recordingKind == some call.raw.getKind ||
+      (registration.recordingKind.isNone && call.raw.getKind == ``unrecordedStep) do
     throwErrorAt call "recorder changed after this script call was converted; rebuild the recording call"
   let execution ← match rewriteTacticCall sourceCall registration.name
       (scriptTacticName registration.name) registration.executionKind with
     | .ok rewritten => pure rewritten
     | .error message => throwErrorAt source "{message}"
+  if registration.recordingKind.isNone then
+    logWarningAt source m!"{registration.autoRecordingError.getD s!"script strategy `{registration.ruleId}` has no recorder"}；未导出数据"
   withRecordingRegistration registration execution <|
     Elab.Tactic.withTacticInfoContext source.raw <| evalTactic call.raw
 
 /-! ## `:= script` Syntax -/
+
+/-- Validate the full tag before handing binder renaming and focus to Lean's `case`. -/
+elab "_check_script_branch" tag:ident : tactic => do
+  let name := tag.getId.eraseMacroScopes
+  let goals ← (← Elab.Tactic.getGoals).filterM fun goal => return !(← goal.isAssigned)
+  unless (← Recording.resolveStrategyGoal goals name.toString).isSome do
+    throwError "strategy branch `{name}` has no matching goal; use a full goal tag or `·`"
 
 /-- 递归转换 script 序列：普通 tactic 使用 `run_script_step`；`case` 分支递归
      检查其 body 内的 tactic（否则分支内的策略会绕过校验）。 -/
@@ -244,7 +240,9 @@ private partial def checkScriptStep (t : Syntax) : MacroM (Array Syntax) := do
       checkedInner := checkedInner ++ (← checkScriptStep x)
     let newBody := buildTacticSeq checkedInner
     let newCase := Syntax.node t.getHeadInfo ``Parser.Tactic.case #[t[0], t[1], t[2], newBody]
-    return #[newCase]
+    let tag : TSyntax `ident := ⟨t[1][0][0][0]⟩
+    let check ← `(tactic| _check_script_branch $tag:ident)
+    return #[check.raw, newCase]
   else if t.getKind == ``Lean.cdot then
     let mut checked := #[]
     for x in flattenTactics t[1] do
@@ -295,14 +293,14 @@ private partial def validateAndUnderscore {m : Type → Type}
   else
     match registeredTacticCall registrations t with
     | some (registration, sourceCall) =>
-      let some recordingKind := registration.recordingKind
-        | withRef t (throwError m!"{registration.autoRecordingError.getD s!"script strategy `{registration.ruleId}` has no recorder"}")
-      match rewriteTacticCall sourceCall registration.name (recordingTacticName registration.name) recordingKind with
-      | .ok rewritten =>
-          let source : TSyntax `scriptTactic := ⟨t⟩
-          let call : TSyntax `tactic := ⟨rewritten⟩
-          return (← `(tactic| run_recorded_step $source:scriptTactic $call:tactic)).raw
-      | .error message => withRef t (throwError message)
+      let call : TSyntax `tactic ← match registration.recordingKind with
+        | none => `(tactic| _record_unrecorded_step _strategy_cases "")
+        | some recordingKind =>
+          match rewriteTacticCall sourceCall registration.name (recordingTacticName registration.name) recordingKind with
+          | .ok rewritten => pure ⟨rewritten⟩
+          | .error message => withRef t (throwError message)
+      let source : TSyntax `scriptTactic := ⟨t⟩
+      return (← `(tactic| run_recorded_step $source:scriptTactic $call:tactic)).raw
     | none =>
       if let some name := firstAtomName t then
         let hint := (nativeHintMap.lookup name).getD "未知script策略"
@@ -315,8 +313,11 @@ private partial def validateAndUnderscore {m : Type → Type}
 def appendStrategyCases (t : Syntax) (nodes : List String) : Syntax :=
   let encoded := String.intercalate "\n" nodes
   let call := t[2]
-  t.setArg 2 <| changeNodeKind call call.getKind <|
-    call.getArgs.push (mkAtomFrom call "_strategy_cases") |>.push (Syntax.mkStrLit encoded call.getHeadInfo)
+  if call.getKind == ``unrecordedStep then
+    t.setArg 2 (call.setArg 2 (Syntax.mkStrLit encoded call.getHeadInfo))
+  else
+    t.setArg 2 <| changeNodeKind call call.getKind <|
+      call.getArgs.push (mkAtomFrom call "_strategy_cases") |>.push (Syntax.mkStrLit encoded call.getHeadInfo)
 
 local elab "_next_strategy_case" : tactic => advanceStrategyCase
 
@@ -356,6 +357,11 @@ partial def collectRecordTactics {m : Type → Type} [Monad m] [MonadQuotation m
       let caseStx' := caseStx.setArg bodyIdx (buildTacticSeq body)
       if needsAdvance && pendingStrategy.isSome then
         out := out.push (← `(tactic| _next_strategy_case)).raw
+      -- Strategy branches were already resolved together; only standalone or
+      -- continuation branches still need an exact-tag check here.
+      if !isBullet && pendingStrategy.isNone then
+        let tag : TSyntax `ident := ⟨caseStx[1][0][0][0]⟩
+        out := out.push (← `(tactic| _check_script_branch $tag:ident)).raw
       out := out.push caseStx'
       pendingStrategy := pendingStrategy.map fun p => { p with completed := p.completed + 1 }
       needsAdvance := pendingStrategy.isSome

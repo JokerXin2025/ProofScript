@@ -33,44 +33,90 @@ def make():
     return root / ".PS4HTML" / "build"
 
 
-def build_library(package: str, library: str, modules_and_sources: list[str], *, source_root=None):
-    """Called by the Lake facet after Lake has built this library's Lean artifacts."""
-    root = find_project_root(Path.cwd())
+def build_library(package: str, library: str, modules_and_sources: list[str], *, build_dir: Path):
+    """Build and export in one isolated Lake workspace, then publish atomically."""
+    root = find_project_root(Path.cwd()).resolve()
+    if not all(_safe_module_name(name) for name in (package, library)):
+        raise PS4HTMLError("Invalid package or library name from Lake")
     if len(modules_and_sources) % 2:
         raise PS4HTMLError("Expected module/source pairs from Lake")
     sources = dict(zip(modules_and_sources[::2], modules_and_sources[1::2]))
     modules = set(sources)
     if any(not _safe_module_name(name) for name in modules):
         raise PS4HTMLError("Invalid module list from Lake")
+    for name, source_name in sources.items():
+        if not Path(source_name).is_file():
+            raise PS4HTMLError(f"Missing Lean source for {name}: {source_name}")
+    build_dir = (root / build_dir).absolute()
+    expected_build = root / ".lake" / "ps4html" / package / library
+    page_parents = (root / ".lake" / "ps4html", expected_build.parent, expected_build)
+    if (build_dir != expected_build or any(path.is_symlink() for path in page_parents)
+            or any(Path(source).resolve().is_relative_to(build_dir.resolve()) for source in sources.values())):
+        raise PS4HTMLError(f"Expected a dedicated page build directory: {expected_build}; got {build_dir}")
+    lake = _lake_command()
     output = root / ".PS4HTML" / "build" / package / library
     with _project_lock(root):
         stage_root = root / ".PS4HTML" / "staging"
         stage_root.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryDirectory(dir=stage_root) as temporary:
-            stage = Path(temporary)
+            session_path = Path(temporary) / "session.json"
+            stage = Path(temporary) / "release"
+            stage.mkdir()
             export_root = stage / ".ProofScript"
+            session_path.write_text(json.dumps({
+                "schemaVersion": 1,
+                "package": package,
+                "library": library,
+                "buildRoot": str(build_dir),
+                "exportRoot": str(export_root),
+            }), encoding="utf-8")
             environment = os.environ.copy()
             environment["PROOF_SCRIPT_OUTPUT_ROOT"] = str(export_root)
-            for name, source_name in sources.items():
-                source = Path(source_name)
-                if not source.is_file():
-                    raise PS4HTMLError(f"Missing Lean source for {name}: {source}")
-                _compile_source(root, source, environment, source_root=source_root)
-            exporter = environment.get("PROOF_SCRIPT_EXPORTER")
-            if not exporter:
-                raise PS4HTMLError("Missing Lean Info exporter; build through the Lake ps4html facet")
-            _run_lake([exporter, str(export_root), *sorted(modules)], root, environment)
+            environment["PS4HTML_BUILD_SESSION"] = str(session_path)
+            environment["PROOF_SCRIPT_BUILD_MANIFEST"] = str(session_path)
+            # The Wasm bundler also needs C IR and setup files from cached support packages.
+            environment["LAKE_RESTORE_ARTIFACTS"] = "true"
+            print(f"[PS4HTML] Cleaning page build output: {build_dir}", flush=True)
+            if build_dir.exists():
+                shutil.rmtree(build_dir)
+            build_dir.mkdir(parents=True)
+            print(f"[PS4HTML] Building and exporting {package}/{library} with Lake...", flush=True)
+            # The facet records source packages and runs the exporter before
+            # leaving its isolated workspace and import paths.
+            _run_lake([*lake, "--no-cache", "build", f"@{package}/{library}:ps4htmlInputs"], root, environment)
+            session = json.loads(session_path.read_text(encoding="utf-8"))
+            if set(session.get("owners", [])) != modules:
+                raise PS4HTMLError("Page build session does not match the requested library modules")
             index = json.loads((export_root / "info/index.json").read_text())
             original_pages = {artifact["path"]: json.loads(
                 (export_root / artifact["path"].removeprefix(".ProofScript/")).read_text(), parse_float=Decimal)
                 for artifact in index["artifacts"] if artifact["kind"] == "page"}
-            _build_computations(root, export_root)
+            _build_computations(root, export_root, build_manifest=session_path)
             _seal_resources(export_root, original_pages=original_pages)
             rendered = stage / "site"
             render_site(root, rendered, modules, export_root)
             _publish_release(root, package, library, stage)
             _write_project_index(root)
     return output
+
+
+def _lake_command():
+    """Keep the outer facet's package configuration in its page build subprocess."""
+    command = [os.environ.get("LAKE", "lake")]
+    if config := os.environ.get("PS4HTML_LAKE_CONFIG"):
+        command.extend(("--file", config))
+    arguments = iter(json.loads(os.environ.get("PS4HTML_LAKE_ARGS", "[]")))
+    original_cwd = Path(os.environ.get("PS4HTML_LAKE_CWD", os.getcwd()))
+    for argument in arguments:
+        if argument == "-K":
+            command.extend((argument, next(arguments)))
+        elif argument.startswith("-K"):
+            command.append(argument)
+        elif argument == "--packages":
+            command.extend((argument, str(original_cwd / next(arguments))))
+        elif argument.startswith("--packages="):
+            command.extend(("--packages", str(original_cwd / argument.removeprefix("--packages="))))
+    return command
 
 
 def _publish_release(root, package, library, stage):
@@ -328,7 +374,7 @@ def _diagnostic_summary(diagnostics):
 
 
 def _run_lake(command, project_root, environment=None):
-    """Run a build tool without starting another Lake build."""
+    """Run a build tool and stream its output."""
     process = subprocess.Popen(
         command,
         cwd = project_root,
@@ -353,14 +399,6 @@ def _run_lake(command, project_root, environment=None):
     returncode = process.wait()
     if returncode:
         raise PS4HTMLError(f"Lean build failed:\n{''.join(output)}")
-
-
-def _compile_source(project_root, source, environment=None, *, source_root=None):
-    print(f"\n[PS4HTML] Exporting {source}", flush=True)
-    _run_lake(
-        [os.environ.get("LEAN", "lean"), "--root", str(source_root or project_root), str(source)],
-        project_root, environment,
-    )
 
 
 def _proof_script_root(project_root=None):
@@ -395,7 +433,7 @@ def _proof_script_root(project_root=None):
     raise PS4HTMLError("ProofScript computation scripts not found; set PROOF_SCRIPT_ROOT")
 
 
-def _build_computations(project_root, export_root=None):
+def _build_computations(project_root, export_root=None, *, build_manifest=None):
     export_root = export_root or project_root / ".ProofScript"
     pending = export_root / "computations" / "pending"
     if not pending.is_dir() or not any(pending.rglob("*.json")):
@@ -431,6 +469,8 @@ def _build_computations(project_root, export_root=None):
     _load_emscripten_environment()
     environment = os.environ.copy()
     environment["PROOF_SCRIPT_OUTPUT_ROOT"] = str(export_root)
+    if build_manifest is not None:
+        environment["PROOF_SCRIPT_BUILD_MANIFEST"] = str(build_manifest)
     for script in ("build-computations.mjs", "finalize-computations.mjs"):
         print(f"[PS4HTML] Running ProofScript {script}", flush=True)
         _run_lake(["node", str(proof_script / "scripts" / script)], project_root, environment)

@@ -1,42 +1,36 @@
 import ProofScript.Foundation.Source
+import ProofScript.Info.State
 
 open Lean
 
 
 namespace ProofScript
 
-
 abbrev ReferenceKind := String
 
-structure ComponentData where
+structure Component where
+  source : Foundation.SourceLocation
   kind : String
   value : Json
   /-- Declaration identity for theorem components; omitted from the exported JSON. -/
   declaration : Option Name := none
-  /-- Reference identities are retained until the page's configuration boundary. -/
+  /-- Reference identities are resolved at this component's creation boundary. -/
   references : Array Name := #[]
+  /-- Internal position in the current module's metadata transaction stream. -/
+  boundary : Info.Boundary := .endOfModule
+  snapshotId : Option String := none
 deriving Inhabited
 
-instance : ToJson ComponentData where
-  toJson data := Json.mkObj [(data.kind, json% { value: $(data.value) })]
-
-structure Component where
-  source : Foundation.SourceLocation
-  data : ComponentData
-deriving Inhabited, ToJson
+instance : ToJson Component where
+  toJson component := Json.mkObj <|
+    [("source", toJson component.source),
+      ("data", Json.mkObj [(component.kind, json% { value: $(component.value) })])] ++
+      component.snapshotId.toList.map fun id => ("snapshotId", toJson id)
 
 structure Page where
   module : Name
   source : String
   components : Array Component
-deriving Inhabited
-
-instance : ToJson Page where
-  toJson page := json% {
-    module: $(page.module.toString),
-    source: $(page.source),
-    components: $(page.components)
-  }
-
+deriving Inhabited, ToJson
 
 end ProofScript

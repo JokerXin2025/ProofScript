@@ -1,9 +1,13 @@
+import ProofScript.Utils.Tactic
+import ProofScript.Utils.Syntax
 import ProofScript.Script.Command
 import ProofScript.Info.Theorem
 import ProofScript.Script.Script
-import ProofScript.Script.Record
+import ProofScript.Script.Recording
+import Batteries.Tactic.Init
 import ProofScript.Page.Component.Core
 import ProofScript.Page.Component.Latex
+import ProofScript.Build.Mode
 
 open Lean Meta Parser Elab Tactic
 open ProofScript
@@ -249,7 +253,7 @@ script_elab «obtain_exist'» (intro := [h₁, h₂, h₃], clear := [h])
 script_elab «funext»
 "funext" arg:ident => withMainContext do
   let xName := arg.getId
-  let target ← whnf <| ← GetGoal
+  let target ← getMainGoalExpr'
   unless target.isAppOfArity ``Eq 3 do
     throwError "`funext` can only be used on function equality goals"
   let lhsType ← whnf <| ← inferType (target.getArg! 1)
@@ -278,7 +282,7 @@ script_elab «apply» (clear := [h])
 "apply" h:term => withMainContext do
   let hExpr ← instantiateMVars <| ← Elab.Tactic.elabTermForApply h
   let hType ← whnf <| ← inferType hExpr
-  let target ← whnf <| ← GetGoal
+  let target ← whnf <| ← getMainGoalExpr
   let premise ←
     if hType.isAppOfArity ``Iff 2 then
       let lhs := hType.getArg! 0
@@ -428,7 +432,7 @@ script_elab «split_and!» (strategy := true)
   let leaves ← splitAndRec goal
   let mut i := 1
   for leaf in leaves do
-    let tagName := Name.mkSimple s!"goal{toRoman i}"
+    let tagName := Name.mkSimple s!"goal{i.toRoman}"
     leaf.setTag tagName
     i := i + 1
   replaceMainGoal leaves
@@ -483,16 +487,18 @@ script_elab «cases_by» (clear := [h], strategy := true)
       replaceMainGoal [leftGoal.mvarId, rightGoal.mvarId]
   | _ =>
     throwError "unexpected error occurred during executing `cases_by`"
-script_recorder «cases_by» (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder «cases_by» (fields := ProofScript.Recording.strategyGoalFields ++ #[
   { name := "h", schema := .expression },
   { name := "subject", schema := .expression, nullable := false }])
-"cases_by" h:term "_strategy_cases" strategyCases:str => withMainContext do
-  recordStrategy (strategyCases.getString.splitOn "\n")
-    (before := #[
+"cases_by" h:term "_strategy_cases" strategyCases:str =>
+  recording_strategy (strategyCases.getString.splitOn "\n") do
+    capture_params #[
+      ProofScript.Recording.goalParam "goal_before",
       ProofScript.Recording.param (.category `term) "h" h,
       { name := "subject", onFailure := .required,
         collectReferences := false, capture := ProofScript.Recording.expressionType h.raw }
-    ])
+    ]
+    execute_recorded
 
 script_elab «cases_by!» (clear := [h], strategy := true)
 "cases_by!" h:term => withMainContext do
@@ -505,7 +511,7 @@ script_elab «cases_by!» (clear := [h], strategy := true)
   let mut tagged : List MVarId := []
   let mut i := 1
   for leaf in leaves do
-    leaf.setTag (Name.mkSimple s!"goal{toRoman i}")
+    leaf.setTag (Name.mkSimple s!"goal{i.toRoman}")
     tagged := tagged ++ [leaf]
     i := i + 1
   replaceMainGoal tagged
@@ -551,16 +557,18 @@ script_elab «contra» (intro := [h], strategy := true)
     newMVarId.setTag `proof
     replaceMainGoal [newMVarId]
 
-script_recorder «contra» (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder «contra» (fields := ProofScript.Recording.strategyGoalFields ++ #[
   { name := "h", schema := .expression },
   { name := "hypothesis", schema := .expression, nullable := false }])
-"contra" h:ident "_strategy_cases" strategyCases:str => do
-  recordStrategy (strategyCases.getString.splitOn "\n")
-    (after := #[
+"contra" h:ident "_strategy_cases" strategyCases:str =>
+  recording_strategy (strategyCases.getString.splitOn "\n") do
+    capture_params #[ProofScript.Recording.goalParam "goal_before"]
+    execute_recorded
+    capture_params #[
       ProofScript.Recording.param (.category `ident) "h" h,
       { name := "hypothesis", onFailure := .required,
         collectReferences := false, capture := ProofScript.Recording.expressionType h.raw }
-    ])
+    ]
 
 /-! ### Induction -/
 
@@ -653,8 +661,8 @@ script_recorder «latex» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "language", schema := .string, nullable := false },
   { name := "source", schema := .string, nullable := false },
   { name := "svg", schema := .json, nullable := false }])
-"latex" metadata:componentMeta code:str => ProofScript.Recording.withRecordingStep fun step => do
-  step.recordGoal "goal_before"
+"latex" metadata:componentMeta code:str => recording_step do
+  capture_params #[ProofScript.Recording.goalParam "goal_before"]
   let metadata ←
     match parseComponentMetadata metadata.raw with
     | .ok value => pure value
@@ -662,12 +670,12 @@ script_recorder «latex» (fields := ProofScript.Recording.goalFields ++ #[
   let svg ←
     writeTextResource "svg" "svg" "image/svg+xml" <| ←
       compileLatexToSvg code.getString
-  step.recordJson "metadata" (componentMetadataJson metadata)
-  step.recordJson "language" "latex"
-  step.recordJson "source" (Json.str code.getString)
-  step.recordJson "svg" svg
-  executeRecordedStep
-  step.recordGoal "goal_after"
+  record_value "metadata" (toJson metadata)
+  record_value "language" "latex"
+  record_value "source" code.getString
+  record_value "svg" svg
+  execute_recorded
+  capture_params #[ProofScript.Recording.goalParam "goal_after"]
 
 /-! Informal Proof -/
 
@@ -685,6 +693,7 @@ private def citeTheorem (thm : TSyntax `term) : TacticM Unit := withMainContext 
   let expression ← instantiateMVars <| ← elabTerm thm none
   let some (declaration, _) := expression.getAppFn.const?
   | throwErrorAt thm "`cite` requires a theorem declaration"
+  unless ← pageBuildEnabled do return
   let env ← getEnv
   match Info.resolveTheoremInfo env { moduleName := env.mainModule } declaration with
   | .error error =>
@@ -731,11 +740,6 @@ private def parseCalcSteps  (steps : Syntax)
     out := out.push (term, proof)
   return out
 
-/-- Check whether a syntax tree contains a synthetic hole `?_`. -/
-private partial def calcContainsSyntheticHole (stx : Syntax) : Bool :=
-  if stx.getKind == ``Parser.Term.syntheticHole then true
-  else stx.getArgs.any calcContainsSyntheticHole
-
 /-- Decompose `e` into `(relation, left, right)`.
     The final two arguments are expected to be explicit, as in
     `Lean.Elab.Term.getCalcRelation?`. -/
@@ -778,8 +782,8 @@ script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "chain", nullable := false, schema := .array (.object [
       ("relation", .expression), ("rhs", .expression),
       ("proof", .union [.expression, .object [("kind", .literal "hole")]])]) }])
-"calc" steps:calcSteps => withMainContext <| ProofScript.Recording.withRecordingStep fun step => do
-  step.recordGoal "goal_before"
+"calc" steps:calcSteps => recording_step do
+  capture_params #[ProofScript.Recording.goalParam "goal_before"]
   let chain ← liftMacroM <| parseCalcSteps steps
   let views ← Elab.Term.mkCalcStepViews steps
   let wrapped ← views.mapIdxM fun index view => do
@@ -805,7 +809,7 @@ script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
         | throwErrorAt prf "calc: missing elaborated proof"
       let some (rel, _, rhs) := decomposeCalcRelation (← instantiateMVars type)
         | throwErrorAt relTerm "calc: cannot extract a binary relation from the step"
-      let proof ← if calcContainsSyntheticHole prf.raw then
+      let proof ← if containsSyntheticHole prf.raw then
           pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar (json% "hole"))])
         else ProofScript.Recording.snapshotExpression proof
       values := values.push (.object [
@@ -813,10 +817,13 @@ script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
         ("rhs", ← ProofScript.Recording.snapshotExpression rhs), ("proof", proof)])
     return .array values
   let _ ← withCalcProofs do
+    -- Execute the wrapped call so native elaboration supplies the recorded proofs.
     withScriptMode <| evalTactic (← `(tactic| script_calc $recordedSteps:calcSteps))
-    step.captureField "init" captureInit
-    step.captureField "chain" captureChain
-  step.recordGoal "goal_after"
+    capture_params #[
+      { name := "init", onFailure := .required, capture := captureInit },
+      { name := "chain", onFailure := .required, capture := captureChain }
+    ]
+  capture_params #[ProofScript.Recording.goalParam "goal_after"]
 
 /-! ## Inference Chains -/
 
@@ -830,11 +837,6 @@ syntax inferArrow := " => " <|> " ⇒ "
 syntax inferFirstStep := ppIndent(colGe term inferArrow (atomic(ident " : "))? term " := " term)
 syntax inferStep := ppIndent(colGe inferArrow (atomic(ident " : "))? term " := " term)
 syntax inferSteps := ppLine withPosition(inferFirstStep) withPosition((ppLine linebreak inferStep)*)
-
-/-- Check whether a syntax tree contains a synthetic hole `?_`. -/
-private partial def inferContainsSyntheticHole (stx : Syntax) :=
-  if stx.getKind == ``Parser.Term.syntheticHole then true
-  else stx.getArgs.any inferContainsSyntheticHole
 
 /-- Tactic proofs own their holes; only ordinary terms use inference placeholders. -/
 private partial def inferIsTacticProof (stx : Syntax) : Bool :=
@@ -877,7 +879,7 @@ open Term in
 /-- Elaborate the first `P => Q := prf` step as a proof of `Q`, and ensure
     that it contains a proof of `P`; otherwise the initial proposition is meaningless. -/
 elab "infer_check_first" P:term " => " Q:term " := " prf:term : term => do
-  if !inferIsTacticProof prf.raw && inferContainsSyntheticHole prf.raw then
+  if !inferIsTacticProof prf.raw && containsSyntheticHole prf.raw then
     throwErrorAt prf "infer: the first step cannot contain '?_'; provide a proof of the initial proposition"
   let pType ← elabType P
   let qType ← elabType Q
@@ -969,7 +971,7 @@ script_recorder «infer» (fields := ProofScript.Recording.goalFields ++ #[
   { name := "init", schema := .expression, nullable := false },
   { name := "chain", nullable := false, schema := .array (.object [
       ("rhs", .expression), ("proof", .union [.expression, .object [("kind", .literal "hole")]])]) }])
-"infer" steps:inferSteps => withMainContext do
+"infer" steps:inferSteps => recording_step do
   let (init, chain) ← liftMacroM <| parseInferSteps steps
   let captureChain : TacticM ProofScript.Recording.RecordedValue := do
     let mut values := #[]
@@ -978,15 +980,18 @@ script_recorder «infer» (fields := ProofScript.Recording.goalFields ++ #[
       let rhsExpr ← elabTerm rhs none
       let proof ←
         -- Later tactic proofs need a preceding result that does not exist at this phase.
-        if inferContainsSyntheticHole prf.raw || (i > 0 && inferIsTacticProof prf.raw) then
+        if containsSyntheticHole prf.raw || (i > 0 && inferIsTacticProof prf.raw) then
           pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar (json% "hole"))])
         else
           ProofScript.Recording.snapshotExpression (← elabTerm prf (some rhsExpr))
       values := values.push (.object [
         ("rhs", ← ProofScript.Recording.snapshotExpression rhsExpr), ("proof", proof)])
     return .array values
-  recordStep (before := #[
+  capture_params #[
+    ProofScript.Recording.goalParam "goal_before",
     { name := "init", onFailure := .required,
       capture := ProofScript.Recording.expression init.raw },
     { name := "chain", onFailure := .required, capture := captureChain }
-  ])
+  ]
+  execute_recorded
+  capture_params #[ProofScript.Recording.goalParam "goal_after"]

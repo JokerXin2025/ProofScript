@@ -1,4 +1,5 @@
 import Lean
+import ProofScript.Utils.FileSystem
 
 open Lean System
 
@@ -59,10 +60,6 @@ def proofOutputPath (moduleName declName : Name) : FilePath :=
 def resourceOutputPath (kind hash extension : String) : FilePath :=
   outputRoot / "resources" / kind / s!"{hash}.{extension}"
 
-def ensureParentDir (path : FilePath) : IO Unit := do
-  if let some parent := path.parent then
-    IO.FS.createDirAll parent
-
 def contentHash (content : String) : String :=
   toString (hash content)
 
@@ -93,7 +90,7 @@ private partial def chooseResourcePath (kind extension content hash : String)
 def writeTextResource (kind extension mediaType content : String) : IO Json := do
   let hash := contentHash content
   let path ← chooseResourcePath kind extension content hash 0
-  ensureParentDir path
+  path.ensureParentDir
   unless ← path.pathExists do
     IO.FS.writeFile path content
   return resourceJson (← resourceReferencePath path) content mediaType

@@ -12,7 +12,7 @@ structure VariableInfo where
   deriving Inhabited, InfoSchema
 
 def variableSpec : InfoSpec VariableInfo :=
-  { kind := "variable", schema := InfoSchema.schema }
+  { kind := "variable" }
 
 def resolveVariableInfo (env : Environment) (query : Query) (target : Name) :
     Except Diagnostic (ResolvedInfo VariableInfo) :=

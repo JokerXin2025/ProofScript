@@ -96,16 +96,22 @@ private partial def expandConstant (before env : Environment) (registry : Declar
   return normalized
 
 /-- Construct a complete successful declaration transaction without installing a partial registry.
-`before` is the environment before elaborating the opaque and its explicitly named check theorem. -/
-def registerDeclarationFacts (before env : Environment) (declaration check : Name)
+`before` is the environment before elaborating the theorem. An optional legacy check preserves
+the exact mapping for callers still registering an opaque proof declaration. -/
+def registerDeclarationFacts (before env : Environment) (declaration : Name)
     (kind : RecordedDeclarationKind) (defaultProject : Option String)
-    (source : Foundation.SourceLocation) : Except Diagnostic Environment :=
+    (source : Foundation.SourceLocation) (check : Option Name := none) : Except Diagnostic Environment :=
   (do
     let constants ← usedConstants env declaration
-    unless (env.find? check).any (·.isTheorem) do
-      throw { message := "missing internal theorem check" }
+    match check with
+    | some check =>
+      unless (env.find? check).any (·.isTheorem) do
+        throw { message := "missing internal theorem check" }
+    | none =>
+      unless (env.find? declaration).any (·.isTheorem) do
+        throw { message := "proof declaration is not a theorem" }
     let registry := declarationExt.getState env
-    if registry.declarations.contains declaration || registry.checks.contains check then
+    if registry.declarations.contains declaration || check.any registry.checks.contains then
       throw { message := "declaration facts are already registered" }
     let cached := (Meta.auxLemmasExt.getState env).lemmas.foldl
       (fun names _ entry => names.insert entry.1) ({} : NameSet)
@@ -124,7 +130,7 @@ def registerDeclarationFacts (before env : Environment) (declaration check : Nam
       (some #[TheoremInfo.infoFields.project.assignment defaultProject source])
     let env := capture.expanded.foldl (fun env name constants =>
       declarationExt.addEntry env (.auxiliary name constants)) env
-    let env := declarationExt.addEntry env (.check check declaration)
+    let env := check.map (fun check => declarationExt.addEntry env (.check check declaration)) |>.getD env
     return declarationExt.addEntry env (.user facts) : Except Diagnostic Environment).mapError fun error =>
       { error with kind := some theoremSpec.kind, target := some declaration.toString, source := some source }
 

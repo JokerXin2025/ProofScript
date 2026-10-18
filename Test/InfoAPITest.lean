@@ -68,11 +68,10 @@ theorem_info literature { project := "" }
 #guard_msgs in
 project_info "Paper" { title := Paper }
 
-@text "= Public Info API\n\nMetadata, recorded proofs and references use the same snapshot."
+@text "= Public Info API\n\nEach component and proof retains its own metadata boundary."
 
-@theorem equality (n : Nat) : Equal (Wrap n) n := script
+@theorem equality (info := { name := "Initial theorem", tags := ["temporary"] }) (n : Nat) : Equal (Wrap n) n := script
   api_exact rfl
-theorem_info equality { name := "Initial theorem", tags := ["temporary"] }
 theorem_info equality { name := "Public theorem", tags := [], reviewed := true }
 
 @theorem universal : ∀ _ : Nat, True := script
@@ -112,7 +111,7 @@ run_cmd do
   let theoremInfo ← match resolveTheoremInfo env query `InfoAPI.equality with
     | .ok value => pure value.value
     | .error error => throwError error.render
-  let rule ← match resolveScriptInfo env query ⟨`Test.InfoAPITest.apiExact⟩ with
+  let rule ← match resolveScriptInfo env query `Test.InfoAPITest.apiExact with
     | .ok value => pure value.value
     | .error error => throwError error.render
   unless project.title == "Public project" && project.keywords.isEmpty &&

@@ -11,7 +11,7 @@ structure TheoremExport where
   projectId : String
   /-- Direct theorem references in the final proof, restricted to the frozen source project. -/
   proofDependencies : Array Name
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited, Repr, BEq, ToJson
 
 private def validateName (name : Name) : Except String Unit := do
   -- Use the same component validation as the wire codec, including quoted dots and numeric parts.
@@ -39,13 +39,6 @@ def TheoremExport.create (declaration : Name) (projectId : String) (dependencies
     proofDependencies := names.toArray.qsort Name.lt }
   value.validate
   return value
-
-instance : ToJson TheoremExport where
-  toJson value := json% {
-    declaration: $(value.declaration),
-    projectId: $(value.projectId),
-    proofDependencies: $(value.proofDependencies)
-  }
 
 instance : FromJson TheoremExport where
   fromJson? json := do

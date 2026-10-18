@@ -1,4 +1,5 @@
 import ProofScript.Foundation.Source
+import ProofScript.Foundation.JsonPath
 
 namespace ProofScript.Info
 
@@ -29,12 +30,7 @@ def ExtraFields.fromJson (value : Json) : Except String ExtraFields := do
 instance : ToJson ExtraFields := ⟨ExtraFields.toJson⟩
 instance : FromJson ExtraFields := ⟨ExtraFields.fromJson⟩
 
-inductive PathPart where
-  | field (name : String)
-  | index (value : Nat)
-  deriving Inhabited, Repr, BEq
-
-abbrev FieldPath := Array PathPart
+abbrev FieldPath := Array Foundation.PathPart
 
 def renderPath (path : FieldPath) : String :=
   path.foldl (init := "") fun text part => match part with
@@ -45,7 +41,7 @@ structure RelatedSource where
   owner : Name
   sequence : Nat
   source : Foundation.SourceLocation
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited, Repr, BEq, ToJson
 
 structure Diagnostic where
   message : String

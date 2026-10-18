@@ -1,5 +1,6 @@
 import ProofScript.Script.Contract
 import ProofScript.Foundation.Name
+import ProofScript.Foundation.JsonPath
 import ProofScript.Info.State
 
 namespace ProofScript.Output
@@ -7,18 +8,9 @@ namespace ProofScript.Output
 open Lean
 open scoped Foundation
 
-def manifestSchemaVersion : String := "4"
+def manifestSchemaVersion : String := "5"
 
-inductive PathPart where
-  | field (name : String)
-  | index (value : Nat)
-  deriving Inhabited, Repr, BEq
-
-abbrev StepPath := Array PathPart
-
-def pathJson (path : StepPath) : Json := .arr <| path.map fun part => match part with
-  | .field name => .str name
-  | .index index => toJson index
+abbrev StepPath := Array Foundation.PathPart
 
 structure StepBinding where
   path : StepPath
@@ -26,9 +18,11 @@ structure StepBinding where
   deriving Inhabited
 
 def StepBinding.toJson (binding : StepBinding) := json% {
-  path: $(pathJson binding.path),
+  path: $(binding.path),
   contractId: $(binding.contract.id)
 }
+
+instance : ToJson StepBinding := ⟨StepBinding.toJson⟩
 
 /-- Configuration use is independent of citation collection. Optional entries retain backend fallbacks. -/
 structure RenderDependency where
@@ -52,41 +46,37 @@ instance : FromJson RenderDependency where
 
 inductive ArtifactKind where
   | page | proof
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited, Repr, BEq, ToJson
 
 structure ArtifactKey where
   owner : Name
   kind : ArtifactKind
   name : Name
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited, Repr, BEq, ToJson
 
-def ArtifactKey.id (key : ArtifactKey) : String := Json.sha256 <| json% {
-  owner: $(key.owner),
-  kind: $(if key.kind == .page then "page" else "proof"),
-  name: $(key.name) }
-
-/-- Until a page closes, proofs are candidates for that page; otherwise the exporter freezes module-end. -/
-inductive ArtifactScope where
-  | pendingPage | moduleFinal | frozen (snapshotId : String)
-  deriving Inhabited, Repr, BEq
+def ArtifactKey.id (key : ArtifactKey) : String := (toJson key).sha256
 
 /-- No capture actions, slots, goal handles or proof contents are persisted here. -/
 structure Artifact where
   schemaVersion : String := manifestSchemaVersion
   key : ArtifactKey
   path : String
-  scope : ArtifactScope := .pendingPage
+  /-- Registration captures the current boundary when this input is left unspecified. -/
+  boundary : Info.Boundary := .endOfModule
   declaration : Option Name := none
   dependencies : Array RenderDependency := #[]
   bindings : Array StepBinding := #[]
   contentDigest : String
   deriving Inhabited
 
+def Artifact.query (artifact : Artifact) : Info.Query :=
+  { moduleName := artifact.key.owner, boundary := artifact.boundary }
+
 def Artifact.fingerprint (artifact : Artifact) : String := Json.sha256 <| json% {
   schemaVersion: $(artifact.schemaVersion),
   id: $(artifact.key.id), path: $(artifact.path), content: $(artifact.contentDigest),
-  declaration: $(artifact.declaration),
-  dependencies: $(artifact.dependencies), bindings: $(artifact.bindings.map StepBinding.toJson) }
+  boundary: $(artifact.boundary), declaration: $(artifact.declaration),
+  dependencies: $(artifact.dependencies), bindings: $(artifact.bindings) }
 
 initialize artifactExt : SimplePersistentEnvExtension Artifact Unit ←
   registerSimplePersistentEnvExtension {
@@ -105,19 +95,17 @@ def moduleArtifacts (env : Environment) (owner : Name) : Array Artifact := Id.ru
 def registerArtifact (env : Environment) (artifact : Artifact) : Except String Environment := do
   unless artifact.schemaVersion == manifestSchemaVersion do throw "unsupported artifact manifest version"
   unless artifact.key.owner == env.mainModule do throw "artifacts must be committed by their defining module"
+  let boundary := match artifact.boundary with
+    | .endOfModule => Info.currentBoundary env
+    | .before sequence => Info.Boundary.before sequence
+  let .before sequence := boundary | throw "artifacts require a content boundary"
+  unless sequence <= Info.infoEventExt.getState env do
+    throw "artifact boundary is ahead of its defining environment"
+  let artifact := { artifact with boundary }
   let existing := moduleArtifacts env artifact.key.owner
   if let some previous := existing.find? (·.key == artifact.key) then
     if previous.fingerprint == artifact.fingerprint then return env
     throw s!"artifact identity already exists: {artifact.key.name}"
-  let scope := if artifact.scope == .pendingPage && existing.any (·.key.kind == .page) then
-    .moduleFinal else artifact.scope
-  return artifactExt.addEntry env { artifact with scope }
-
-/-- All pending proofs use the same close boundary as the page itself. -/
-def bindPageArtifacts (env : Environment) (owner : Name) (snapshotId : String) : Environment :=
-  (moduleArtifacts env owner).foldl (init := env) fun env artifact =>
-    if artifact.scope == .pendingPage then
-      artifactExt.addEntry env { artifact with scope := .frozen snapshotId }
-    else env
+  return artifactExt.addEntry env artifact
 
 end ProofScript.Output

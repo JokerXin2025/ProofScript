@@ -17,18 +17,34 @@ jobs:
         with:
           node-version: '22'
       - run: python -m pip install ./tools/ps4html jsonschema
+      - name: Missing recorder rendering
+        run: python -m unittest Test/test_unrecorded.py
+      - name: Single-pass site build workflow
+        run: python -m unittest Test/test_ps4html_build.py
+      - name: Metadata scope and snapshot associations
+        run: python -m unittest Test/test_metadata_scope.py
       - name: JavaScript syntax
         run: |
           for script in tools/ps4html/PS4HTML/assets/js/*.js scripts/*.mjs; do
             node --check "$script"
           done
+      - name: Computation build paths
+        run: node --test Test/test_computation_build_paths.mjs
       - uses: leanprover/lean-action@v1
         with:
           build: false
+      - name: Lean verification mode
+        run: lake build
+      - name: Page resource tools
+        run: sudo apt-get update && sudo apt-get install -y texlive-latex-extra texlive-science dvisvgm
+      - name: Lean page mode
+        run: lake build TestPage:pageTests
+      - name: Page mode across user packages
+        run: python -m unittest Test/test_page_mode_integration.py
       - name: Lean to HTML integration
         working-directory: examples/site
         run: |
           lake update
           lake build PS4HTMLDemo:ps4html
-          python ../../scripts/check-site-contract.py .
-          python ../../scripts/check-site-http.py .
+          python -m PS4HTML make --cache
+          node ../../scripts/test-finalized-computation.mjs .PS4HTML/inputs/PS4HTMLDemo/PS4HTMLDemo/.ProofScript/pages/PS4HTMLDemo/Fibonacci.json

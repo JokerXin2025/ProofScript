@@ -5,6 +5,9 @@ namespace ProofScript
 
 open Lean
 
+/-- Reserved recording identity for a script invocation whose data could not be exported. -/
+def unrecordedRuleId : Name := `ProofScript.Recording.unrecorded
+
 structure ScriptTacticRegistration where
   ruleId : Lean.Name
   name : String

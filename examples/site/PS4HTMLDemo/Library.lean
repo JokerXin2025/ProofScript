@@ -19,23 +19,21 @@ namespace PS4HTMLDemo.Library
 同项目定理的最终证明引用会进入依赖图；可选的参考文献收集独立工作。
 "#
 
-@theorem andLeft (P Q : Prop) (h : P ∧ Q) : P := script
+@theorem andLeft (info := {
+  name := "合取左投影",
+  tags := ["logic", "projection"]
+}) (P Q : Prop) (h : P ∧ Q) : P := script
   unpack_and ⟨hP, hQ⟩ := h
   assumption
 
-theorem_info andLeft {
-  name := "合取左投影",
-  tags := ["logic", "projection"]
-}
 
 -- Ordinary Lean theorems need explicit project ownership to enter the project graph.
 theorem ordinaryIdentity (P : Prop) (h : P) : P := h
 theorem_info ordinaryIdentity { project := "PS4HTMLDemo", name := "普通 Lean 恒等定理" }
 
-@lemma identityLemma (P : Prop) (h : P) : P := script
+@lemma identityLemma (info := { name := "普通定理的 lemma 包装" }) (P : Prop) (h : P) : P := script
   apply (ordinaryIdentity P)
   assumption
-theorem_info identityLemma { name := "普通定理的 lemma 包装" }
 
 @text r#"
 上面的证明展示了一个最小但完整的 theorem component。主页面会引用

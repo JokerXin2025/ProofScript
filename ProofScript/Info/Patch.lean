@@ -49,7 +49,7 @@ def FieldSpec.mergeJson (field : FieldSpec Record) (previous : Option Json) (upd
     return toJson value
 
 /-- Apply one local patch without demanding completeness or cross-field validity. -/
-def applyPatch (schema : Schema Record) (previous : Json) (patch : Patch) : Except Diagnostic Json := do
+def applyPatch (schema : InfoSchema Record) (previous : Json) (patch : Patch) : Except Diagnostic Json := do
   let mut object ← previous.getObj?.mapError fun message => { message }
   for assignment in patch do
     match assignment.key with

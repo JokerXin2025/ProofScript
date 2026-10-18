@@ -8,7 +8,26 @@ structure VideoComponent where
   source : String
 deriving ToJson
 
-elab "#video" title:str source:str : command => do
+-- Internal component fields must not change the public page format.
+run_cmd do
+  let component : Component := {
+    source := { file := "component.lean", start := 3, stop := 9 }
+    kind := "video"
+    value := json% { title: "Introduction", source: "assets/introduction.mp4" }
+    declaration := some `Internal.declaration
+    «references» := #[`Internal.reference]
+    boundary := .before 17 }
+  let expected := json% {
+    source: { file: "component.lean", start: 3, stop: 9 },
+    data: { video: { value: { title: "Introduction", source: "assets/introduction.mp4" } } }
+  }
+  unless (toJson component).compress == expected.compress do
+    throwError "component JSON changed its data envelope or exposed internal fields"
+  let resolved := { component with snapshotId := some "snapshot" }
+  unless (toJson resolved).compress == (expected.setObjVal! "snapshotId" (toJson "snapshot")).compress do
+    throwError "component JSON lost its optional snapshot ID"
+
+elab "#video" title:str source:str : command => whenPageBuild do
   let value : VideoComponent := {
     title := title.getString
     source := source.getString

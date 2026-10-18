@@ -1,30 +1,20 @@
+import ProofScript.Utils.Sundry
 import ProofScript.Info.State
-
-namespace ProofScript.Info
 
 open Lean Elab Command
 
-private def editDistance (left right : String) : Nat := Id.run do
-  let letters := right.toList.toArray
-  let mut previous := (List.range (letters.size + 1)).toArray
-  for a in left.toList do
-    let mut next := #[previous[0]! + 1]
-    for index in [:letters.size] do
-      let cost := if a == letters[index]! then 0 else 1
-      next := next.push (min (previous[index]! + cost)
-        (min (next[index]! + 1) (previous[index + 1]! + 1)))
-    previous := next
-  return previous[letters.size]!
 
-private def spellingSuggestion (schema : Schema Record) (key : String) : Option String :=
+namespace ProofScript.Info
+
+private def spellingSuggestion (schema : InfoSchema Record) (key : String) : Option String :=
   let candidates := schema.fields.filter (!·.handle.isExtra) |>.map fun field =>
-    (field.name, editDistance field.name key)
+    (field.name, field.name.editDistance key)
   let closest := candidates.qsort (fun a b => a.2 < b.2) |>.toList.head?
   closest.filter (fun (name, distance) => distance ≤ (if min name.length key.length < 4 then 1 else 2))
     |>.map (·.1)
 
 /-- Parses a full command before its caller may commit anything to the environment. -/
-def parsePatch (schema : Schema Record) (fields : Array InputField) : CommandElabM Patch := do
+def parsePatch (schema : InfoSchema Record) (fields : Array InputField) : CommandElabM Patch := do
   if let .error error := schema.validateDefinition then throwError error.render
   let file ← getFileName
   let mut assigned : Array FieldKey := #[]
@@ -63,7 +53,7 @@ def parsePatch (schema : Schema Record) (fields : Array InputField) : CommandEla
   return result
 
 /-- Installs one validated transaction after a domain has made its context decisions. -/
-def commitInfoCommand (spec : InfoSpec Record) (target : Name ⊕ String) (patch : Patch)
+def commitInfoCommand [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String) (patch : Patch)
     (ref : Syntax) (initialization : Option Patch := none)
     (bindings : Array ContextBinding := #[]) : CommandElabM Unit := do
   let source := Foundation.SourceLocation.ofSyntax (← getFileName) ref
@@ -72,14 +62,14 @@ def commitInfoCommand (spec : InfoSpec Record) (target : Name ⊕ String) (patch
   | .ok env => setEnv env
 
 /-- Parsing, initialization, and context selection succeed before any environment mutation. -/
-def elaborateInfo (spec : InfoSpec Record) (target : Name ⊕ String) (fields : Array InputField)
+def elaborateInfo [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String) (fields : Array InputField)
     (ref : Syntax) (initialization : Option Patch := none)
     (bindings : Array ContextBinding := #[]) : CommandElabM Unit := do
-  let patch ← parsePatch spec.schema fields
+  let patch ← parsePatch (inferInstance : InfoSchema Record) fields
   commitInfoCommand spec target patch ref initialization bindings
 
 /-- Nested records use the same field parser, but require a complete typed value. -/
-@[implicit_reducible] def schemaCodec (schema : Schema Record) : InfoCodec Record where
+@[implicit_reducible] def schemaCodec (schema : InfoSchema Record) : InfoCodec Record where
   parse stx := do
     let patch ← parsePatch schema (← readObject stx)
     match applyPatch schema (json% {}) patch >>= schema.decode with
@@ -90,6 +80,6 @@ def elaborateInfo (spec : InfoSpec Record) (target : Name ⊕ String) (fields : 
   jsonSchema := schema.jsonSchema
 
 instance (priority := low) [InfoSchema Record] : InfoCodec Record :=
-  schemaCodec InfoSchema.schema
+  schemaCodec inferInstance
 
 end ProofScript.Info

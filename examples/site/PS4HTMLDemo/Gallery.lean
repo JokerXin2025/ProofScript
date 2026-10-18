@@ -79,14 +79,13 @@ $$
   width := "wide"
 ) "assets/component-preview.svg"
 
-@theorem galleryResult (P Q : Prop) (h : P ∧ Q) : P := by
+@theorem galleryResult (info := {
+  name := "跨模块合取投影",
+  tags := ["demo", "cross-module"]
+}) (P Q : Prop) (h : P ∧ Q) : P := by
   -- "调用参考定理库中已经形式化的结果"
   exact (andLeft P Q h)
 
-theorem_info galleryResult {
-  name := "跨模块合取投影",
-  tags := ["demo", "cross-module"]
-}
 
 @text r#"
 == 大型证明树展示 <large-proof>
@@ -98,7 +97,10 @@ theorem_info galleryResult {
 free variable、bound variable、application argument 与 binder 信息。
 "#
 
-@theorem iteratedMonotoneChain
+@theorem iteratedMonotoneChain (info := {
+  name := "多层单调映射的链式传递",
+  tags := ["demo", "order", "monotonicity", "calc", "infer"]
+})
     (a b c d e : Nat)
     (F G H : Nat → Nat)
     (hab : a ≤ b) (hbc : b ≤ c) (hcd : c ≤ d) (hde : d ≤ e)
@@ -131,10 +133,6 @@ free variable、bound variable、application argument 与 binder 信息。
       _ ≤ n + F d := Nat.add_le_add_left (hF hcd) n
       _ ≤ n + F e := Nat.add_le_add_left (hF hde) n
 
-theorem_info iteratedMonotoneChain {
-  name := "多层单调映射的链式传递",
-  tags := ["demo", "order", "monotonicity", "calc", "infer"]
-}
 
 @text r#"
 证明完成后，@thm:PS4HTMLDemo.Gallery.galleryResult 指向当前页面中的 theorem component。

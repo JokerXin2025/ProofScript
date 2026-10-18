@@ -28,7 +28,7 @@ instance : InfoCodec DeclarationRef where
   jsonSchema := Foundation.qualifiedNameSchema
 
 /-- A configured record is required even when all its schema fields have defaults. -/
-def resolveConfiguredInfo (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name) :
+def resolveConfiguredInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name) :
     Except Diagnostic (ResolvedInfo Record) := do
   let view ← resolvePartial spec env query target
   unless view.created do
@@ -36,12 +36,12 @@ def resolveConfiguredInfo (spec : InfoSpec Record) (env : Environment) (query : 
   consumeView spec view
 
 /-- A literal key is one Name component, including any dots in the original text. -/
-def updateLiteralInfo (spec : InfoSpec Record) (target : TSyntax `str)
+def updateLiteralInfo [InfoSchema Record] (spec : InfoSpec Record) (target : TSyntax `str)
     (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
   if target.getString.isEmpty then throwErrorAt target s!"{spec.kind} key must not be empty"
   elaborateInfo spec (Name.mkSimple target.getString) fields ref
 
-def updateDeclarationInfo (spec : InfoSpec Record) (target : TSyntax `ident)
+def updateDeclarationInfo [InfoSchema Record] (spec : InfoSpec Record) (target : TSyntax `ident)
     (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
   elaborateInfo spec (← resolveDeclaration target) fields ref
 

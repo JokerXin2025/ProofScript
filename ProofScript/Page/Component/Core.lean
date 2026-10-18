@@ -1,4 +1,5 @@
 import ProofScript.Page.State
+import ProofScript.Build.Mode
 
 open Lean Elab Command
 
@@ -45,23 +46,21 @@ def parseComponentMetadata (stx : Syntax) : Except String ComponentMetadata := d
   | throw "component metadata requires 'title'"
   return { title := titleValue, label, extra }
 
-def componentMetadataJson (metadata : ComponentMetadata) := toJson metadata
-
 def sourceLocation (stx : Syntax) : CoreM Foundation.SourceLocation := do
   return Foundation.SourceLocation.ofSyntax (← getFileName) stx
 
-/-- Adds component data to the current page. Custom component modules can use this
-    after implementing their own syntax, validation, and JSON representation. -/
+/-- Adds component data during page builds. Custom commands should wrap their
+    entire construction action in `whenPageBuild` to skip validation, JSON
+    construction, and resource IO during ordinary verification. -/
 def addPageComponent (stx : Syntax) (kind : String) (value : Json)
-    (labels : Array (ReferenceKind × String) := #[]) : CommandElabM Unit := do
+    (labels : Array (ReferenceKind × String) := #[]) : CommandElabM Unit := whenPageBuild do
   let location ← liftCoreM <| sourceLocation stx
   let mut env ← getEnv
   for (kind, label) in labels do
     env ← match registerLabel env kind label location with
       | .ok nextEnv => pure nextEnv
       | .error message => throwErrorAt stx message
-  let data : ComponentData := { kind, value }
-  let (nextEnv, added) ← match addComponent env { source := location, data } with
+  let (nextEnv, added) ← match addComponent env { source := location, kind, value } with
     | .ok result => pure result
     | .error message => throwErrorAt stx message
   unless added do

@@ -74,13 +74,20 @@ structure InfoEvent where
   source : Foundation.SourceLocation
   deriving Inhabited, ToJson, FromJson
 
-/-- Imported payloads stay in the extension's module tables. The state counts local commits. -/
+/-- Imported payloads stay in the extension's module tables. The state is the local
+metadata clock; integrations can advance it without adding an Info event. -/
 initialize infoEventExt : SimplePersistentEnvExtension InfoEvent Nat ←
   registerSimplePersistentEnvExtension {
     name := `ProofScript.Info.events
     addEntryFn := fun count _ => count + 1
     addImportedFn := fun _ => 0
   }
+
+/-- Reserve an ordered metadata transaction without manufacturing a renderable Info event.
+The state change rolls back with the Environment and need not persist: entries carry their
+own sequence, and every importing module starts its own clock at zero. -/
+def advanceBoundary (env : Environment) : Environment :=
+  infoEventExt.modifyState env (· + 1)
 
 def currentBoundary (env : Environment) : Boundary :=
   .before (infoEventExt.getState env)
@@ -99,7 +106,7 @@ def queryEvents (env : Environment) (query : Query) : Except Diagnostic (Array I
     query.includes event.owner event.sequence
 
 /-- Validation at the wire/commit boundary does not demand a complete record. -/
-def validatePatch (schema : Schema Record) (patch : Patch) : Except Diagnostic Patch := do
+def validatePatch (schema : InfoSchema Record) (patch : Patch) : Except Diagnostic Patch := do
   let mut assigned : Array FieldKey := #[]
   let mut result := #[]
   for assignment in patch do
@@ -125,14 +132,15 @@ def validatePatch (schema : Schema Record) (patch : Patch) : Except Diagnostic P
   return result
 
 /-- Construct the entire new environment before the elaborator installs it once. -/
-def commitInfo (spec : InfoSpec Record) (env : Environment) (target : Name ⊕ String)
+def commitInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (target : Name ⊕ String)
     (patch : Patch) (source : Foundation.SourceLocation)
     (initialization : Option Patch := none) (bindings : Array ContextBinding := #[]) :
     Except Diagnostic Environment := do
-  spec.schema.validateDefinition
-  let patch ← validatePatch spec.schema patch
+  let schema : InfoSchema Record := inferInstance
+  schema.validateDefinition
+  let patch ← validatePatch schema patch
   let initialization ← initialization.mapM fun initial => do
-    let initial ← validatePatch spec.schema initial
+    let initial ← validatePatch schema initial
     if initial.any (fun assignment => match assignment.operation with | .reset => true | _ => false) then
       throw { message := "initialization must store explicit values, not reset operations" }
     return initial
@@ -148,7 +156,7 @@ def commitInfo (spec : InfoSpec Record) (env : Environment) (target : Name ⊕ S
       throw { message := s!"empty or duplicate context binding `{binding.key}`", source := some binding.source }
     keys := keys.push binding.key
   let event : InfoEvent := {
-    schemaId := spec.schema.id, schemaVersion := spec.schema.version, identity
+    schemaId := schema.id, schemaVersion := schema.version, identity
     owner := env.mainModule, sequence := infoEventExt.getState env
     initialization, assignments := patch, bindings, source }
   return infoEventExt.addEntry env event

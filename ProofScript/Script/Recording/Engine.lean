@@ -1,3 +1,4 @@
+import ProofScript.Utils.Tactic
 import ProofScript.Script.Recording.Plan
 import ProofScript.Core.References
 
@@ -15,17 +16,7 @@ partial def commitValue : RecordedValue → TacticM Json
   | .optional none => pure (json% null)
   | .optional (some value) => commitValue value
 
-/-- Roll back all Lean recording and execution state on failure, including record headers,
-    expression exports, references, goals, and strategy bookkeeping. External IO is excluded. -/
-def withRollback (action : TacticM α) : TacticM α := do
-  let saved ← Tactic.saveState
-  try
-    action
-  catch ex =>
-    saved.restore
-    throw ex
-
-/-- Options for a direct capture; plan captures pass their declared policies. -/
+/-- Options for a direct capture; parameter captures pass their declared policies. -/
 structure CaptureOptions where
   goal : Option MVarId := none
   onFailure : FailurePolicy := .required
@@ -47,8 +38,8 @@ def withCaptureGoal (goal : Option MVarId) (action : TacticM α) : TacticM α :=
 def captureValue (field : String) (capture : TacticM RecordedValue)
     (failure : FailurePolicy := .required) : TacticM RecordedValue := do
   match ← tryCapture capture with
-  | .success value => return value
-  | .failed message =>
+  | .ok value => return value
+  | .error message =>
     if failure == .required then
       throwError "failed to record parameter `{field}`: {message}"
     return .scalar (json% null)

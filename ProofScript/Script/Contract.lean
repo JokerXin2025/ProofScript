@@ -19,23 +19,13 @@ structure RecordingContract where
   strategy : Bool
   continuation : Option Nat
   fields : Option (Array Recording.OutputField)
-  deriving Inhabited
+  deriving Inhabited, ToJson
 
 def RecordingContract.ofRegistration (registration : ScriptTacticRegistration) : RecordingContract :=
   { ruleId := registration.ruleId, name := registration.name, strategy := registration.strategy,
     continuation := registration.continuation, fields := registration.recordedFields }
 
-def RecordingContract.toJson (contract : RecordingContract) := json% {
-  contractVersion: $(contract.contractVersion),
-  recordingVersion: $(contract.recordingVersion),
-  ruleId: $(contract.ruleId),
-  name: $(contract.name),
-  strategy: $(contract.strategy),
-  continuation: $(contract.continuation),
-  fields: $(contract.fields.map fun fields => fields.map Recording.OutputField.toJson)
-}
-
-def RecordingContract.id (contract : RecordingContract) : String := contract.toJson.sha256
+def RecordingContract.id (contract : RecordingContract) : String := (toJson contract).sha256
 
 /-- Only presentation validation uses this descriptor; it cannot dispatch execution. -/
 def RecordingContract.registration (contract : RecordingContract) : ScriptTacticRegistration :=

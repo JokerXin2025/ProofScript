@@ -21,11 +21,6 @@ inductive RecordedValue where
   | object (fields : List (String × RecordedValue))
   | optional (value : Option RecordedValue)
 
-/-- Failure is not represented by an absent optional argument. -/
-inductive CaptureResult where
-  | success (value : RecordedValue)
-  | failed (message : String)
-
 /-- Inspect a value before commit. Expression references still belong to the snapshot's
     local table; use `RecordingStep.recordValue` when writing to a proof export. -/
 partial def RecordedValue.toJson : RecordedValue → Json
@@ -35,6 +30,8 @@ partial def RecordedValue.toJson : RecordedValue → Json
   | .object fields => Json.mkObj (fields.map fun (name, value) => (name, value.toJson))
   | .optional none => (json% null)
   | .optional (some value) => value.toJson
+
+instance : ToJson RecordedValue := ⟨RecordedValue.toJson⟩
 
 partial def RecordedValue.references : RecordedValue → Array Name
   | .scalar _ => #[]

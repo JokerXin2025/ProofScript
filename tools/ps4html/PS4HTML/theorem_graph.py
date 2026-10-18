@@ -82,9 +82,10 @@ class TheoremGraph:
                 value = envelope.get("value") if isinstance(envelope, dict) else None
                 if not isinstance(value, dict) or not isinstance(value.get("proof"), str) or not value["proof"]:
                     raise PS4HTMLError(f"Theorem page component lacks an explicit proof artifact: {page.path}")
-                record = bundle.theorem(value["proof"])
-                if name_text(list(record.owner)) != page.module or record.snapshot_id != page_artifact["snapshotId"]:
-                    raise PS4HTMLError(f"Theorem page reference disagrees with its proof owner/snapshot: {value['proof']}")
+                try:
+                    record = bundle.theorem_component(component, page.module)
+                except ValueError as error:
+                    raise PS4HTMLError(f"Invalid theorem page reference {value['proof']}: {error}") from error
                 if record.key in destinations:
                     raise PS4HTMLError(f"Ambiguous theorem page destination: {record.key}")
                 title = value.get("name")

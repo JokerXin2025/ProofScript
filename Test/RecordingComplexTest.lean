@@ -16,7 +16,7 @@ run_cmd do
   try
     elabCommand (← `(command| script_info Test.RecordingComplexRules.labels {
       template := [{ lang := "zh", tag := "Labels", content := "${labels}" }] }))
-    match resolveScriptInfo (← getEnv) { moduleName := env.mainModule } ⟨`Test.RecordingComplexRules.labels⟩ with
+    match resolveScriptInfo (← getEnv) { moduleName := env.mainModule } `Test.RecordingComplexRules.labels with
     | .error error => (throwError error.message : CommandElabM Unit)
     | .ok _ => (throwError "invalid template was consumed" : CommandElabM Unit)
   finally setEnv env

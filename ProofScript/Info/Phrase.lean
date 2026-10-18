@@ -11,8 +11,8 @@ structure PhraseTemplate where
   content : String
   deriving Inhabited, InfoSchema
 
-def phraseTemplateSchema : Schema PhraseTemplate :=
-  InfoSchema.schema.withOverrides! {
+instance : InfoSchema PhraseTemplate :=
+  (inferInstance : InfoSchema PhraseTemplate).withOverrides! {
     fields := #[PhraseTemplate.infoFields.lang.withValidation fun value =>
       if value.isEmpty then .error "language must not be empty" else .ok ()]
     validateRecord := fun value =>
@@ -20,21 +20,21 @@ def phraseTemplateSchema : Schema PhraseTemplate :=
         .error { message := s!"unknown placeholder `{unknown}`", path := #[.field "content"] }
       else .ok () }
 
-instance (priority := high) : InfoCodec PhraseTemplate := schemaCodec phraseTemplateSchema
-
 structure PhraseInfo where
   template : Array PhraseTemplate
   extra : ExtraFields := {}
   deriving Inhabited, InfoSchema
 
-def phraseSpec : InfoSpec PhraseInfo := {
-  kind := "phrase"
-  schema := InfoSchema.schema.withOverrides! {
+instance : InfoSchema PhraseInfo :=
+  (inferInstance : InfoSchema PhraseInfo).withOverrides! {
     fields := #[PhraseInfo.infoFields.template.withMerge (keyedArray (·.lang))]
     validateRecord := fun value =>
       if value.template.isEmpty then
         .error { message := "at least one phrase template is required", path := #[.field "template"] }
-      else .ok () } }
+      else .ok () }
+
+def phraseSpec : InfoSpec PhraseInfo := {
+  kind := "phrase" }
 
 def resolvePhraseInfo (env : Environment) (query : Query) (target : Name) :
     Except Diagnostic (ResolvedInfo PhraseInfo) :=

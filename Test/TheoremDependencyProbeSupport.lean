@@ -71,7 +71,7 @@ elab "expect_dependency_failure " name:ident " => " command:command : command =>
 def dependencies (env : Environment) (root : Name) : Except String (Array Name) := do
   let probes := probeExt.getState env
   let roots := probes.map (·.declaration)
-  -- This includes generated check theorems, by exact transaction provenance, not a prefix test.
+  -- Expand only helpers introduced by a proof transaction, never by a name-prefix test.
   let introduced := probes.flatMap (·.introduced) |>.filter (!roots.contains ·)
   -- A cache hit need not introduce any constant in this command. Cache membership is provenance.
   let cached := (auxLemmasExt.getState env).lemmas.foldl

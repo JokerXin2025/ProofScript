@@ -6,11 +6,11 @@ open Lean.Elab.Command
 open ProofScript
 
 
-elab "@""references" : command => do
+elab "@""references" : command => whenPageBuild do
   let references := (← getTheoremRefs).toArray
   let component : Component := {
     source := ← liftCoreM <| sourceLocation (← getRef)
-    data := { kind := "references", value := toJson references, references } }
+    kind := "references", value := toJson references, references }
   match addComponent (← getEnv) component with
   | .error message => throwError message
   | .ok (env, added) =>

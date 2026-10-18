@@ -57,7 +57,7 @@ script_recorder embed
   let tag ← currentRecordingTag
   let boxName := tag
   -- ① 目标快照与其他字段一起写入单个步骤对象。
-  let goalJson ← Lean.Elab.Tactic.withMainContext <| Expr2JSON (← GetGoal) { withTypes := true }
+  let goalJson ← Lean.Elab.Tactic.withMainContext <| Expr2JSON (← getMainGoalExpr) { withTypes := true }
   -- ② elaborate 定理应用 → 头常量、结论类型、参数
   let e ← Lean.Elab.Tactic.withMainContext <| Lean.Elab.Tactic.elabTerm proof none
   let e ← Lean.instantiateMVars e

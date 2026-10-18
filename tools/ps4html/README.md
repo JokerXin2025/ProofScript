@@ -40,7 +40,13 @@ ps4html clean
 `MyLibrary` 是项目 `lean_lib` 名称，不是单个 Lean 模块。Python 命令也可通过
 `python3 -m PS4HTML` 运行；`-c` 是 `--cache` 的短选项。
 
-Lake facet 编译整个库、重新导出所需模块、按需 build/finalize 计算资源，然后渲染 HTML。
+普通 `lake build` 和 IDE 默认只验证原生 theorem，不录制步骤或导出页面。
+页面 facet 自动启用 `proofScript.pageBuild`，只清理专用的
+`.lake/ps4html/<包名>/<库名>/`，保留普通 `.lake/build/` 与自定义普通构建目录。
+一次隔离的 Lake 构建生成所选库及所需用户源码依赖的 Lean 产物、页面、证明 JSON 和资源，
+并在同一工作空间中运行 Info exporter；随后按需 build/finalize 计算资源并渲染 HTML。
+页面源码包不恢复旧 artifact cache，以确保 JSON 实际生成；Mathlib、ProofScript 运行库等支持依赖复用缓存。
+计算工具读取 Lake 会话提供的真实 C/setup 路径，因此也支持隔离后的构建目录。
 导出快照放在 `.PS4HTML/inputs/<包名>/<库名>/.ProofScript/`。输入与 HTML 经同一个版本指针原子发布，编译、导出或渲染失败时保留已发布版本。
 `--cache` 只消费已有导出，不检查源码新旧，不执行 Lean、Wasm 构建或 finalize。
 `clean` 删除项目 `.ProofScript/` 与 `.PS4HTML/`，不删除 `.lake/`。
@@ -53,7 +59,7 @@ Lake facet 编译整个库、重新导出所需模块、按需 build/finalize �
 
 - ProofText 标题、段落、列表、引用、字体、代码、公式和链接。
 - theorem/lemma 结构化证明、源码卡片、源码翻转、分支展开与缩进控制。
-- 正常渲染、`sorryAx`、JSON/结构错误状态；未知 tactic 可见 fallback。
+- 正常渲染、`sorryAx`、JSON/结构错误状态；未记录步骤显示红色“未导出数据”提示。
 - ProjectInfo、跨页标签、文献、模块与定理依赖导航。
 - LaTeX SVG、图片、嵌入证明资源与共享表达式表。
 - KaTeX 数学、关联变量高亮、中英文证明和引用面板切换。
@@ -61,9 +67,9 @@ Lake facet 编译整个库、重新导出所需模块、按需 build/finalize �
 
 PS4HTML 不重新验证证明；LaTeX 编译发生在 Lean 导出阶段。
 项目 ID 统一使用非空字符串字面量，例如 `project_info "课程笔记" { title := "课程笔记" }`；定理可通过 `project := "课程笔记"` 指定归属。
-统一 Info 协议使用 `4.0.0`，录制协议保持 `0.0.0`，契约描述版本为 `1`。每个 script 步骤对应一个 JSON 对象，goal_before / goal_after 与其他字段一样按实际调用的输出契约校验，并可直接用作模板占位符。证明结束后 goal_after 为 null。旧缓存缺少 `info/index.json` 时必须重新运行 `lake build MyLibrary:ps4html`；缓存命令不会自动执行 Lean。配置与导出接口见[统一 Info 配置](../../README-zh.md#统一-info-配置)。
+统一 Info 协议使用 `5.0.0`，录制协议保持 `0.0.0`，契约描述版本为 `1`。每个 script 步骤对应一个 JSON 对象，普通默认录制器提供 `goal_before` / `goal_after`，策略默认录制器只提供 `goal_before`。这些字段与其他字段一样按实际调用的输出契约校验，并可直接用作模板占位符。普通步骤没有剩余目标时，`goal_after` 为 `null`。旧缓存需要重新运行 `lake build MyLibrary:ps4html`；缓存命令不会自动执行 Lean。配置与导出接口见[统一 Info 配置](../../README-zh.md#统一-info-配置)。
 
-命名 theorem/lemma 的 proof artifact 使用 manifest `4`，必需包含 `declaration`、非空字符串 `projectId`、无损 Lean 名称数组 `proofDependencies` 和 `proofFactsDigest`。依赖来自 Lean 最终证明及其冻结项目视图；空数组表示成功采集后的零依赖。摘要绑定 artifact ID、源证明摘要、快照 ID 与三个定理字段。页面和未命名录制 artifact 不携带这些证明事实字段。配置 snapshot payload 保持版本 `3`，其外层文档随 bundle 升为 `4.0.0`。
+命名 theorem/lemma 的 proof artifact 使用 manifest `5`，必需包含 `declaration`、非空字符串 `projectId`、无损 Lean 名称数组 `proofDependencies` 和 `proofFactsDigest`。依赖来自 Lean 最终证明及其创建位置的项目视图；空数组表示成功采集后的零依赖。摘要绑定 artifact ID、源证明摘要、快照 ID 与三个定理字段。页面和未命名录制 artifact 不携带这些证明事实字段。配置 snapshot payload 版本为 `4`，外层文档使用 `5.0.0`。每个页面组件还通过 `snapshotId` 关联自己的配置；`page_end` 只导出内容，不定义元信息边界，其后的配置仍对下游模块生效。
 
 Python 通过 `InfoBundle.theorems[(project_id, name_key(declaration))]` 或 `InfoBundle.theorem(proof_path)` 取得同一份不可变 `TheoremRecord`，其中 `proof_dependencies` 为名称元组数组。该接口先校验整份 bundle，缺字段、重复/自依赖、项目与冻结元数据不一致或摘要错误均拒绝；旧缓存必须重新运行 Lean 构建，不能补成空数组。
 
@@ -110,13 +116,23 @@ Lean 在 `info/index.json` 中为每个 proof 绑定 snapshotId，并按完成�
 Lean2TeX 的 `def_info` / `var_info` / `phrase_info` 控制数学表达式排版，
 不属于 tactic/strategy 规则。
 
+没有手写 recorder 且自动 recorder 无法生成时，Lean 发出警告并继续执行，步骤使用保留
+`_ruleId: "ProofScript.Recording.unrecorded"`，`name` 保存原策略关键字。PS4HTML 复用“未知策略”的红色样式显示
+“未导出数据”（英文为 “Data not exported”），并继续展示已录制的分支和后续步骤。
+
 ## 开发资源
 
-依赖导航重构的六个阶段已全部完成。集成示例在 [`../../examples/site/`](../../examples/site/)。完整检查使用 `lake build proofscriptExport Test ProofScript`，在示例项目执行 `lake build PS4HTMLDemo:ps4html`，再从仓库根目录执行 `node Test/test_theorem_navigation_browser.mjs` 和 `node Test/test_theorem_site_browser.mjs`。浏览器检查需要 Node 22+ 与 Chrome；真实站点检查加载页面正常使用的 KaTeX CDN 资源。内部 Python 测试脚本已在验收后统一删除，正式构建与运行不依赖这些脚本。
+未导出步骤的渲染回归测试：`PYTHONPATH=tools/ps4html python3 -m unittest Test/test_unrecorded.py`；Lean 端用 `lake build TestPage:pageTests` 检查警告、策略分支、continuation 和手写覆盖。
 
-`@theorem` / `@lemma` 在声明时保存默认项目；后来只改标题不会改变归属。页面关闭或独立证明导出前必须已有项目归属，可用 `project_info "P" { ... }` 设置默认项目或 `theorem_info T { project := "P" }` 显式指定。同一项目的多个模块应使用同一个字符串 ID；仅有相近命名空间不能建立项目关系。普通 Lean theorem 也需要明确归属才能成为项目内依赖。
+单次构建与失败发布的回归测试：`PYTHONPATH=tools/ps4html python3 -m unittest Test/test_ps4html_build.py`。
 
-从旧版迁移时先更新 ProofScript 和 PS4HTML，再执行 `lake build MyLibrary:ps4html` 重新导出。旧 bundle、缺失证明事实或混用协议版本会明确报错，`ps4html make --cache` 不迁移旧 JSON。若旧版在发布链接的位置使用普通目录，应先将该项目 `.PS4HTML` 归档后重建；现行发布结构的失败构建会保留已发布版本。设计、验收及清理记录见[重构方案](../../docs/Theorem-Navigation-Refactor-Plan-zh.md)。
+真实双用户包的模式切换与缓存隔离：`python3 -m unittest Test/test_page_mode_integration.py`。先完成普通 `lake build`；此检查使用本地依赖，验证跨包内联配置、定理依赖和 HTML 发布，不需要 LaTeX、Wasm 或联网。
+
+依赖导航重构的六个阶段已全部完成。集成示例在 [`../../examples/site/`](../../examples/site/)。完整检查使用 `lake build proofscriptExport Test ProofScript` 和 `lake build TestPage:pageTests`，在示例项目执行 `lake build PS4HTMLDemo:ps4html`，再从仓库根目录执行 `node Test/test_theorem_navigation_browser.mjs` 和 `node Test/test_theorem_site_browser.mjs`。浏览器检查需要 Node 22+ 与 Chrome；真实站点检查加载页面正常使用的 KaTeX CDN 资源。
+
+`@theorem` / `@lemma` 在声明时保存默认项目，并按创建时捕获的配置边界确定自身的归属和展示。请在声明前用 `project_info "P" { ... }` 选择活动项目，或在声明名之后、binders 之前写 `(info := { project := "P", name := "展示标题" })`。后置 `theorem_info T` 仅影响后续内容和导入模块，不能补改已有证明的标题或归属；`page_end` 不延后该边界。同一项目的多个模块应使用同一个字符串 ID；仅有相近命名空间不能建立项目关系。普通 Lean theorem 在被证明引用前也需要用 `theorem_info` 明确归属，才能成为项目内依赖。
+
+从旧版迁移时先更新 ProofScript 和 PS4HTML，再执行 `lake build MyLibrary:ps4html` 重新导出。旧 bundle、缺失证明事实或混用协议版本会明确报错，`ps4html make --cache` 不迁移旧 JSON。若旧版在发布链接的位置使用普通目录，应先将该项目 `.PS4HTML` 归档后重建；现行发布结构的失败构建会保留已发布版本。页面构建模式与验收结果见[页面编译模式重构方案](../../docs/Page-Build-Mode-Refactor-Plan-zh.md)。
 录制 Schema 在 [`../../docs/schema/`](../../docs/schema/)，Info Schema 随导出生成到 `info/schema/`。浏览器源文件位于 `PS4HTML/assets/js/`，
 样式和字体位于 `PS4HTML/assets/css/`，模板位于 `PS4HTML/Templates/`。
 

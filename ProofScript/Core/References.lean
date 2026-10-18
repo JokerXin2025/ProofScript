@@ -12,6 +12,7 @@ open Lean
 namespace ProofScript
 variable {m : Type → Type} [Monad m] [MonadOptions m] [MonadEnv m]
 
+-- References collected in async proofs must be visible to later commands.
 initialize theoremRefsExt : EnvExtension (List Name) ←
   registerEnvExtension (pure []) (asyncMode := .sync)
 

@@ -28,6 +28,7 @@ def addComponent  (env : Environment)
   let state := getPageState env
   if state.exported then
     return (env, false)
+  let component := { component with boundary := Info.currentBoundary env }
   return (modifyPageState env (fun state =>
     { state with components := state.components.push component }), true)
 

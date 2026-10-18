@@ -14,11 +14,11 @@ def isolatedCapture (action : TacticM RecordedValue) : TacticM RecordedValue := 
     saved.restore
 
 /-- Capture errors are reported separately from an absent optional argument. -/
-def tryCapture (action : TacticM RecordedValue) : TacticM CaptureResult := do
+def tryCapture (action : TacticM RecordedValue) : TacticM (Except String RecordedValue) := do
   try
-    return .success (← isolatedCapture action)
+    return .ok (← isolatedCapture action)
   catch ex =>
-    return .failed (← ex.toMessageData.toString)
+    return .error (← ex.toMessageData.toString)
 
 /-- Snapshot an already elaborated expression while its metavariables and local context exist. -/
 def snapshotExpression (expr : Expr) : TacticM RecordedValue := do
@@ -55,18 +55,10 @@ def syntaxText (value : Syntax) : TacticM RecordedValue :=
 def expressionType (raw : Syntax) : TacticM RecordedValue := withMainContext do
   snapshotExpression (← inferType (← elabTerm raw none))
 
-/-- Extensible leaf-category dispatch. Instances for containers are derived below. -/
-class RecordCategory (name : Name) where
-  schema : ParamSchema
-  capture : TSyntax name → TacticM RecordedValue
-
+/-- Extensible parameter dispatch. Category instances compose into containers below. -/
 class RecordParam (shape : ParamShape) where
   schema : ParamSchema
   capture : ParamInput shape → TacticM RecordedValue
-
-instance (name : Name) [RecordCategory name] : RecordParam (.category name) where
-  schema := RecordCategory.schema name
-  capture := RecordCategory.capture
 
 instance (shape : ParamShape) [RecordParam shape] : RecordParam (.array shape) where
   schema := .array (RecordParam.schema shape)
@@ -82,7 +74,7 @@ instance (shape : ParamShape) [RecordParam shape] : RecordParam (.optional shape
 /-- Typeclass selection happens at the generated call site; a later plan can erase the
     heterogeneous inputs into closures without doing runtime category-string dispatch. -/
 def captureParam (shape : ParamShape) [RecordParam shape]
-    (value : ParamInput shape) : TacticM CaptureResult :=
+    (value : ParamInput shape) : TacticM (Except String RecordedValue) :=
   tryCapture (RecordParam.capture value)
 
 end ProofScript.Recording

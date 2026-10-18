@@ -75,6 +75,45 @@ example (P Q R : Prop) (hp : P) (hPQ : P → Q) (hQR : Q → R)
   | left => exact hQ
   | right => exact hR
 
+-- Captures happen before execution: the first proof is available, whereas later
+-- proofs using the previous result are represented by the recorder's hole marker.
+open Lean Elab Command ProofScript in
+run_cmd do
+  for (decl, expectedSize, closesGoal) in [
+      (`test_infer_export, 2, true), (`test_recorded_infer_by, 4, false),
+      (`test_recorded_infer_named, 4, false)] do
+    let document ← ofExcept <| Json.parse
+      (← IO.FS.readFile (proofOutputPath (← getEnv).mainModule decl))
+    let expressions ← ofExcept (document.getObjVal? "expressions")
+    let checkExpression (value : Json) : CommandElabM Unit := do
+      let reference ← ofExcept (value.getObjValAs? String "$ref")
+      let expression ← ofExcept (expressions.getObjVal? reference)
+      unless (expression.getObjValAs? String "kind").isOk do
+        throwError "infer exported an invalid expression reference {reference}"
+    let steps ← ofExcept (document.getObjValAs? (Array Json) "proof")
+    let some step := steps.find? fun step =>
+        (step.getObjValAs? String "_ruleId").toOption ==
+          some "ProofScript.Script.Basic.infer"
+      | throwError "missing recorded infer for {decl}"
+    checkExpression (← ofExcept (step.getObjVal? "goal_before"))
+    checkExpression (← ofExcept (step.getObjVal? "init"))
+    let after ← ofExcept (step.getObjVal? "goal_after")
+    if closesGoal then
+      unless after == Json.null do throwError "completed infer retained a goal"
+    else
+      checkExpression after
+    let chain ← ofExcept (step.getObjValAs? (Array Json) "chain")
+    unless chain.size == expectedSize do throwError "infer lost a chain step"
+    for i in [:chain.size] do
+      let entry := chain[i]!
+      checkExpression (← ofExcept (entry.getObjVal? "rhs"))
+      let proof ← ofExcept (entry.getObjVal? "proof")
+      if i == 0 then
+        checkExpression proof
+      else
+        unless proof == (json% { kind: "hole" }) do
+          throwError "infer lost a proof hole requiring a preceding result"
+
 @theorem test_recorded_infer_shallower_continuation (P Q R : Prop) (hp : P)
     (hPQ : P → Q) (hQR : Q → R) : Q ∧ R := script
   infer

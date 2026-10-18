@@ -108,8 +108,8 @@ structure DefinitionStyle where
   isolated_arguments : Array Nat := #[]
   deriving Inhabited, InfoSchema
 
-def definitionStyleSchema : Schema DefinitionStyle :=
-  InfoSchema.schema.withOverrides! {
+instance : InfoSchema DefinitionStyle :=
+  (inferInstance : InfoSchema DefinitionStyle).withOverrides! {
     fields := #[
       DefinitionStyle.infoFields.precedence.withValidation fun value =>
         if value > 100 then .error "precedence exceeds 100" else .ok (),
@@ -117,8 +117,6 @@ def definitionStyleSchema : Schema DefinitionStyle :=
         if values.any (·.count == 0) then throw "binder count must be positive"
         uniqueIndices (values.map (·.argument)),
       DefinitionStyle.infoFields.isolated_arguments.withValidation uniqueIndices] }
-
-instance (priority := high) : InfoCodec DefinitionStyle := schemaCodec definitionStyleSchema
 
 instance (priority := high) : InfoCodec (Option DefinitionKind) := optionalInputCodec
 instance (priority := high) : InfoCodec (Option DefinitionArguments) := optionalInputCodec
@@ -212,12 +210,14 @@ def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := 
         relatedPaths := #[#[.field DefinitionInfo.infoFields.arguments.name],
           #[.field DefinitionInfo.infoFields.dynamic_arity.name], #[.field DefinitionInfo.infoFields.styles.name]] }
 
-def definitionSpec : InfoSpec DefinitionInfo := {
-  kind := "definition"
-  schema := InfoSchema.schema.withOverrides! {
+instance : InfoSchema DefinitionInfo :=
+  (inferInstance : InfoSchema DefinitionInfo).withOverrides! {
     fields := #[DefinitionInfo.infoFields.calc_symbol.withValidation fun value =>
       if value.any String.isEmpty then .error "calc_symbol must not be empty" else .ok ()]
     validateRecord := validateDefinitionInfo }
+
+def definitionSpec : InfoSpec DefinitionInfo := {
+  kind := "definition"
   dependencies := fun value => value.alias.toList.toArray.map fun reference => ("definition", reference.name) }
 
 private def aliasSources (info : ResolvedInfo DefinitionInfo) : Array RelatedSource :=

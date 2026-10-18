@@ -4,19 +4,19 @@ namespace ProofScript.Recording
 
 open Lean Elab Tactic
 
-instance termRecordCategory : RecordCategory `term where
+instance termRecordParam : RecordParam (.category `term) where
   schema := .expression
   capture value := expression value.raw
 
-instance identRecordCategory : RecordCategory `ident where
+instance identRecordParam : RecordParam (.category `ident) where
   schema := .expression
   capture value := expression value.raw
 
-instance strRecordCategory : RecordCategory `str where
+instance strRecordParam : RecordParam (.category `str) where
   schema := .string
   capture value := pure (.scalar (Json.str value.getString))
 
-instance numRecordCategory : RecordCategory `num where
+instance numRecordParam : RecordParam (.category `num) where
   schema := .number
   capture value := do
     return .scalar (toJson value.getNat)

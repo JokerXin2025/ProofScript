@@ -17,7 +17,7 @@ structure ProjectInfo where
   deriving Inhabited, InfoSchema
 
 def projectSpec : InfoSpec ProjectInfo :=
-  { kind := "project", schema := InfoSchema.schema }
+  { kind := "project" }
 
 /-- References never enter this table: only committed project configurations do. -/
 def knownProjects (env : Environment) (query : Query) : Except Diagnostic (Array String) := do
@@ -76,7 +76,7 @@ def resolveProjectTarget (stx : TSyntax `str) (allowNew := false) : CommandElabM
 
 def updateProjectInfo (target : Option (TSyntax `str)) (fields : Array InputField)
     (ref : Syntax) : CommandElabM Unit := do
-  let patch ← parsePatch projectSpec.schema fields
+  let patch ← parsePatch (inferInstance : InfoSchema ProjectInfo) fields
   let env ← getEnv
   let project ← match target with
     | some id => resolveProjectTarget id (allowNew := true)

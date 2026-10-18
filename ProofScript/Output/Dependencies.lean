@@ -115,7 +115,7 @@ where
       let ruleId ← step.getObjValAs? String "_ruleId"
       let matching := bindings.filter (·.path == path)
       unless matching.size == 1 && matching[0]!.contract.ruleId.toString == ruleId do
-        throw s!"missing or mismatched invocation contract at {(pathJson path).compress}"
+        throw s!"missing or mismatched invocation contract at {(toJson path).compress}"
       paths := paths.push path
       if let .ok branches := step.getObjValAs? (Array Json) "branches" then
         for branchIndex in [:branches.size] do

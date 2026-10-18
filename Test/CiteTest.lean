@@ -1,11 +1,10 @@
 import ProofScript
 
-@theorem citedTheorem (P : Prop) (h : P) : P := script
+@theorem citedTheorem (info := {
+  name := "Cited theorem"
+}) (P : Prop) (h : P) : P := script
   assumption
 
-theorem_info citedTheorem {
-  name := "Cited theorem"
-}
 
 example (P : Prop) (h : P) : P := script
   cite citedTheorem P h

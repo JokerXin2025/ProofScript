@@ -1,20 +1,13 @@
+/-
+    ProofScript.Utils.Sundry
+    Released under Apache 2.0 license as described in the file LICENSE.
+    Authors: JokerXin
+-/
+
 import Lean
 
-open Lean
-open Parser.Tactic (rcasesPatMed)
 
-
-namespace ProofScript
-
-
-open Lean Elab Tactic in
-/-- Get the expression of current goal -/
-def GetGoal : TacticM Expr := do
-  let goal ← getMainGoal
-  let goal_expr ← goal.getType
-  return ← instantiateMVars goal_expr
-
-partial def toRoman (n : Nat) :=
+partial def Nat.toRoman (n : Nat) : String :=
   if n >= 1000 then "M" ++ toRoman (n - 1000)
   else if n >= 900 then "CM" ++ toRoman (n - 900)
   else if n >= 500 then "D" ++ toRoman (n - 500)
@@ -30,29 +23,15 @@ partial def toRoman (n : Nat) :=
   else if n >= 1 then "I" ++ toRoman (n - 1)
   else ""
 
-
-end ProofScript
-
-
-/-
-# Copied From `Batteries`
-
-Copyright (c) 2021 Mario Carneiro. All rights reserved.
-Released under Apache 2.0 license as described in the file LICENSE.
-Authors: Mario Carneiro
--/
-
-macro "by_contra_core" : tactic => `(tactic|
-  first
-  | guard_target = Not _
-    change _ → False
-  | refine @Decidable.byContradiction _ _ ?_
-  | refine @Classical.byContradiction _ ?_
-)
-
-syntax (name := byContra) "by_contra" (ppSpace colGt rcasesPatMed)? (" : " term)? : tactic
-
-macro_rules
-| `(tactic| by_contra $[$pat?]? $[: $ty?]?) => do
-  let pat ← pat?.getDM `(rcasesPatMed| $(mkIdent `this):ident)
-  `(tactic| (by_contra_core; rintro ($pat:rcasesPatMed) $[: $ty?]?))
+def String.editDistance (left right : String) : Nat := Id.run do
+  let letters := right.toList.toArray
+  let mut previous := List.range (letters.size + 1) |>.toArray
+  for a in left.toList do
+    let mut next := #[previous[0]! + 1]
+    for index in [:letters.size] do
+      let cost := if a == letters[index]! then 0 else 1
+      next := next.push <|
+        min (previous[index]! + cost) <|
+          min (next[index]! + 1) (previous[index + 1]! + 1)
+    previous := next
+  return previous[letters.size]!

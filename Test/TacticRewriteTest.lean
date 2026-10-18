@@ -7,11 +7,13 @@ script_macro «recordedIdentity»
 
 script_recorder «recordedIdentity»
 (fields := ProofScript.Recording.goalFields ++ #[{ name := "proof", schema := .expression, nullable := false }])
-"recorded_identity" proof:term => do
-  ProofScript.recordStep
-    (before := #[
-      ProofScript.Recording.param (.category `term) "proof" proof .required
-    ])
+"recorded_identity" proof:term => recording_step do
+  capture_params #[
+    ProofScript.Recording.goalParam "goal_before",
+    ProofScript.Recording.param (.category `term) "proof" proof .required
+  ]
+  execute_recorded
+  capture_params #[ProofScript.Recording.goalParam "goal_after"]
 
 @theorem recorded_identity_default_action (P : Prop) (h : P) : P := script
   recorded_identity h

@@ -6,6 +6,30 @@ namespace ProofScript.Recording
 open Lean Elab Command
 open scoped Lean.Elab.ConfigEval
 
+inductive CaptureTiming where
+| once
+| before
+| after
+| both
+deriving Inhabited, BEq, Repr
+
+/-- Validate declaration names and emitted names against the recording envelope. -/
+def validateOutputFields (parameters : List (String × CaptureTiming)) : Except String Unit := do
+  let mut bases : List String := []
+  let mut names : List String := []
+  for (name, timing) in parameters do
+    validateFieldName name
+    if bases.contains name then throw s!"duplicate recorded parameter field `{name}`"
+    bases := name :: bases
+    let emitted := if timing == .both then
+      [name ++ "_before", name ++ "_after"]
+    else [name]
+    for name in emitted do
+      validateFieldName name
+      if names.contains name then
+        throw s!"duplicate recorded parameter field `{name}`"
+      names := name :: names
+
 -- These infrequently evaluated declaration values use Lean's supported expression interpreter.
 derive_eval_expr_instance_using_meta_eval ParamSchema
 derive_eval_expr_instance_using_meta_eval OutputField

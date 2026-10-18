@@ -1,7 +1,8 @@
 import Lean.Elab.Command
 import Lean.Elab.Tactic
 import Lean.Parser.Term
-import ProofScript.Script.Record
+import ProofScript.Utils.Syntax
+import ProofScript.Script.Recording
 import ProofScript.Script.Recording.Normalize
 import ProofScript.Script.Registry
 import ProofScript.Script.Recording.Metadata
@@ -25,7 +26,7 @@ private def validateRegistrationId (id : TSyntax `ident) : CommandElabM Name := 
     throwErrorAt id "script registration ID must be a single local identifier; the defining module supplies its namespace"
   return name
 
-/-- Delay unsupported automatic-parameter errors until a recorded invocation. -/
+/-- Delay unsupported automatic-parameter diagnostics until a recorded invocation. -/
 private def autoRecordingError (name : String)
     (args : Array (TSyntax ``macroArg)) (overrides : List String := []) : CommandElabM (Option String) := do
   for arg in args[1:] do
@@ -66,25 +67,12 @@ private partial def scriptKeywords (stx : Syntax) : Syntax :=
   else
     stx.modifyArgs (·.map scriptKeywords)
 
-/-- 把 `doElem` 数组拼成 `doSeqIndent` 节点（`do` 块的 body）。 -/
-def mkDoSeq (elems : Array Syntax) : Syntax :=
-  let items := elems.map fun e => mkNode ``doSeqItem #[e, mkNullNode]
-  mkNode ``doSeqIndent #[mkNullNode items]
-
-/-- 擦除语法树中所有 ident 的宏作用域（`✝`）。
-     录制版 elab 经 `(command| …)`/`(doElem| …)` 引号构造，字面量 ident（如 `recordStep`
-    等全局名）会被 hygiene 加 `_hyg` 作用域而无法解析；擦除后按名解析。参数名（`lemma` 等）也一并
-    擦成无作用域——binder 与引用同时擦除仍同名匹配，作用域封闭，安全。 -/
-partial def eraseMacroScopes (stx : Syntax) : Syntax :=
-  match stx with
-  | .ident info raw val pre => .ident info raw val.eraseMacroScopes pre
-  | .node info kind args => .node info kind (args.map eraseMacroScopes)
-  | _ => stx
-
 private def registerTacticRegistration (registration : ScriptTacticRegistration) :
     CommandElabM Unit := do
   let owner ← getMainModule
   let ruleId := owner ++ registration.ruleId
+  if ruleId == unrecordedRuleId then
+    throwError m!"reserved script registration ID `{ruleId}`"
   if (scriptTacticRegistrations (← getEnv)).any (fun r => r.ruleId == ruleId) then
     throwError m!"duplicate script registration ID `{ruleId}`; give each overload a distinct explicit ID"
   let registration := { registration with ruleId }
@@ -143,7 +131,7 @@ private def parameterTiming (cfg : ScriptCfg) (name : String)
 
 private def recordingFields (args : Array (TSyntax ``macroArg)) (cfg : ScriptCfg) :
     CommandElabM (Array Recording.OutputField) := do
-  let mut fields := Recording.goalFields
+  let mut fields := if cfg.strategy then Recording.strategyGoalFields else Recording.goalFields
   for arg in args[1:] do
     match arg with
     | `(macroArg| $id:ident:$stx) =>
@@ -162,7 +150,7 @@ private def recordingFields (args : Array (TSyntax ``macroArg)) (cfg : ScriptCfg
     | _ => pure ()
   return fields
 
-/-- 声明时解析实例及 timing，生成分别传给 before/after 的捕获组。 -/
+/-- 声明时解析实例及 timing，直接生成捕获、执行和策略收尾的录制 DSL。 -/
 private def genRecording (syntaxName : String)
     (args : Array (TSyntax ``macroArg)) (cfg : ScriptCfg) : CommandElabM Lean.Name := do
   let tacticCat : TSyntax `ident := ⟨mkIdent `tactic⟩
@@ -178,8 +166,11 @@ private def genRecording (syntaxName : String)
   if cfg.strategy then
     recArgs := recArgs.push (← `(macroArg| "_strategy_cases"))
     recArgs := recArgs.push (← `(macroArg| strategyCases:str))
-  let mut beforeCaptures : Array (TSyntax `term) := #[]
+  let goalBefore ← `(term| ProofScript.Recording.goalParam "goal_before")
+  let mut beforeCaptures : Array (TSyntax `term) := #[goalBefore]
   let mut afterCaptures : Array (TSyntax `term) := #[]
+  if !cfg.strategy then
+    afterCaptures := afterCaptures.push (← `(term| ProofScript.Recording.goalParam "goal_after"))
   for arg in args[1:] do
     match arg with
     | `(macroArg| $id:ident:$stx) =>
@@ -223,14 +214,16 @@ private def genRecording (syntaxName : String)
         afterCaptures := afterCaptures.push (← `(term| { $capture with field := $(quote (field ++ "_after")) }))
     | _ => pure ()
   let recCall ← if cfg.strategy then
-      `(doElem| recordStrategy (($strategyCasesId:ident).getString.splitOn "\n")
-        (before := #[$beforeCaptures,*])
-        (after := #[$afterCaptures,*])
-        (continuationIndex := $(quote cfg.continuation)))
+      `(doElem| recording_strategy (($strategyCasesId:ident).getString.splitOn "\n")
+          (continuation := $(quote cfg.continuation)) do
+        capture_params #[$beforeCaptures,*]
+        execute_recorded
+        capture_params #[$afterCaptures,*])
     else
-      `(doElem| recordStep
-        (before := #[$beforeCaptures,*])
-        (after := #[$afterCaptures,*]))
+      `(doElem| recording_step do
+        capture_params #[$beforeCaptures,*]
+        execute_recorded
+        capture_params #[$afterCaptures,*])
   -- Register the recording syntax once and reuse its actual kind for elab_rules.
   let (recStxParts, recPatArgs) := (← recArgs.mapM expandMacroArg).unzip
   let recKind ← elabSyntax (← `(syntax $[$recStxParts]* : $tacticCat))
@@ -286,17 +279,6 @@ private def parseParamCfg (stx : Syntax) : CommandElabM (String × ParamCfg) := 
     | "field" => cfg := { cfg with field := some value }
     | _ => throwErrorAt entry "unknown parameter option `{key}`"
   return (name, cfg)
-
-/-- 递归收集语法树中所有 ident 的名字（配置值 `[a, b]` 里只有 ident 与 `[`/`]`/`,` 标点，
-    直接遍历取 ident 名）。 -/
-partial def collectIdentNames (stx : Syntax) : List String :=
-  if stx.isIdent then [stx.getId.toString]
-  else stx.getArgs.toList.flatMap collectIdentNames
-
-/-- 递归收集配置项中的 atom，用于不依赖内部节点下标地读取关键字与布尔值。 -/
-partial def collectAtomValues (stx : Syntax) : List String :=
-  if stx.isAtom then [stx.getAtomVal]
-  else stx.getArgs.toList.flatMap collectAtomValues
 
 /-- 直接解析声明配置的语法树，不在编译期求值用户表达式。 -/
 private def parseScriptCfg  (cfg : Syntax)
@@ -387,8 +369,9 @@ private def validateCfgParams (name : String)
       let field := ((cfg.params.lookup pname).bind (·.field)).getD pname
       some (field, parameterTiming cfg pname ((Recording.normalizeParam stx).toOption.map (·.shape)))
     | _ => none
+  let goalFields := if cfg.strategy then Recording.strategyGoalFields else Recording.goalFields
   if let .error message := Recording.validateOutputFields
-      (Recording.goalFields.toList.map (fun field => (field.name, .once)) ++ fields) then
+      (goalFields.toList.map (fun field => (field.name, .once)) ++ fields) then
     throwError "[script config] '{name}': {message}"
 
 private def registrationParameters (args : Array (TSyntax ``macroArg)) :

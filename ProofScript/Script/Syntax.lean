@@ -54,7 +54,7 @@ def scriptElabTacticTail := leading_parser darrow >> withPosition termParser
 
 /-- `script_recorder <id>`：按本地注册 ID 覆盖默认自动录制入口。
     ID 后的第一个字符串仍是该注册原本的策略关键字。
-     `recordStep` / `recordStrategy` 按注册 ID 执行对应的执行版。 -/
+    录制器 DSL 中的 `execute_recorded` 执行该调用原始参数对应的执行版。 -/
 def scriptRecorderCfg := leading_parser "(" >> nonReservedSymbol "fields" >> " := " >> termParser >> ")"
 
 @[command_parser] def scriptRecorder := leading_parser
