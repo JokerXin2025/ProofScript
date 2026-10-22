@@ -166,6 +166,18 @@ open Lean Elab Command ProofScript
 
 run_cmd do
   let env ← getEnv
+  for owner in #[`ProofScript.Builtin.Script, `ProofScript.Builtin.Lean2TeX,
+      `ProofScript.Mathlib.Info] do
+    unless (!(Info.moduleEvents env owner).isEmpty) == {expected} do
+      throwError "framework Info defaults disagree with the imported build mode"
+  if {expected} then
+    for (rule, renderer) in #[(`ProofScript.Script.Basic.renderCalc, Info.ScriptRenderer.calc),
+        (`ProofScript.Script.Basic.infer, Info.ScriptRenderer.infer)] do
+      let resolved ← match Info.resolveScriptInfo env {{ moduleName := `Downstream }} rule with
+        | .ok resolved => pure resolved.value
+        | .error error => throwError error.render
+      unless resolved.renderer == renderer do
+        throwError "framework script renderer configuration was lost"
   for owner in #[`Upstream, `Downstream] do
     let some mode := moduleBuildMode? env owner | throwError "missing imported build-mode marker"
     unless mode.pageBuild == {expected} && mode.version == buildModeVersion do
@@ -215,25 +227,33 @@ run_cmd do
                     if path.endswith(".olean") and Path(path) not in normal_products}
         self.assertTrue(any(path.is_relative_to(REPOSITORY / ".lake/packages/mathlib") for path in supports),
                         "the fixture must reuse real mathlib support artifacts")
-        support_state = self._stat_state(supports)
-        support_bytes = self._content_state([REPOSITORY / ".lake/build/lib/lean/ProofScript/Build/Mode.olean",
-                                             REPOSITORY / ".lake/build/lib/lean/ProofScript.olean"])
+        ordinary_dependency_state = self._stat_state(supports)
+        framework_bytes = self._content_state([
+            REPOSITORY / ".lake/build/lib/lean/ProofScript/Core/BuildMode.olean",
+            REPOSITORY / ".lake/build/lib/lean/ProofScript.olean",
+            REPOSITORY / ".lake/build/lib/lean/ProofScript/Script/Basic.olean",
+            REPOSITORY / ".lake/build/lib/lean/ProofScript/Builtin/Script.olean",
+            REPOSITORY / ".lake/build/lib/lean/ProofScript/Builtin/Lean2TeX.olean",
+            REPOSITORY / ".lake/build/lib/lean/ProofScript/Mathlib/Info.olean",
+        ])
 
         output = self._run("page-facet", ["build", "Downstream:ps4html"])
         self.assertIn("[PS4HTML] Building and exporting Downstream/Downstream with Lake", output)
         self.assertEqual(self._content_state(normal_products), normal_state,
                          "page compilation modified ordinary user oleans")
-        self.assertEqual(self._stat_state(supports), support_state,
-                         "page compilation rebuilt cached support modules")
-        self.assertEqual(self._content_state(map(Path, support_bytes)), support_bytes)
+        self.assertEqual(self._stat_state(supports), ordinary_dependency_state,
+                         "page compilation modified ordinary dependency artifacts")
+        self.assertEqual(self._content_state(map(Path, framework_bytes)), framework_bytes)
 
         page_root = self.downstream / ".lake/ps4html/Downstream/Downstream"
         page_products = {}
-        for module in ("Upstream", "Downstream"):
-            matches = list(page_root.glob(f"*/lib/lean/{module}.olean"))
+        for module in ("Upstream", "Downstream", "ProofScript", "ProofScript.Script.Basic", "ProofScript.Builtin.Script",
+                       "ProofScript.Builtin.Lean2TeX", "ProofScript.Mathlib.Info"):
+            relative = module.replace(".", "/")
+            matches = list(page_root.glob(f"*/lib/lean/{relative}.olean"))
             self.assertEqual(len(matches), 1, f"missing isolated {module} olean")
             page_products[module] = matches[0]
-            setup_path = next(page_root.glob(f"*/ir/{module}.setup.json"))
+            setup_path = next(page_root.glob(f"*/ir/{relative}.setup.json"))
             setup = json.loads(setup_path.read_text())
             self.assertTrue(any(key.removeprefix("weak.") == "proofScript.pageBuild" and value is True
                                 for key, value in setup["options"].items()),
@@ -242,7 +262,7 @@ run_cmd do
                 page_setup = setup
         self.assertEqual(Path(page_setup["importArts"]["Upstream"][0]), page_products["Upstream"])
         self.assertEqual(Path(page_setup["importArts"]["ProofScript"][0]),
-                         REPOSITORY / ".lake/build/lib/lean/ProofScript.olean")
+                         page_products["ProofScript"])
         page_setup.update(name="InspectPage", options={})
         page_setup["importArts"]["Downstream"] = [str(page_products["Downstream"])]
         inspect_setup = self.fixture / "inspect-page.setup.json"
@@ -263,6 +283,12 @@ run_cmd do
                            for record in snapshot["payload"]["records"]
                            if record["identity"]["kind"] == "theorem"}
         self.assertEqual(theorem_records[("Downstream", "usesUpstream")]["name"], DOWNSTREAM_TITLE)
+        script_records = {tuple(record["identity"]["target"]): record
+                          for record in snapshot["payload"]["records"]
+                          if record["identity"]["kind"] == "script"}
+        exact = script_records[("ProofScript", "Script", "Basic", "exact")]
+        self.assertTrue(exact["configured"], "framework script_info was lost during page compilation")
+        self.assertEqual(len(exact["value"]["template"]), 2)
         for module, name in (("Upstream", "base"), ("Downstream", "usesUpstream")):
             proof = json.loads((export_root / f"proofs/{module}/{name}.json").read_text())
             self.assertTrue(proof["proof"], f"{module} was not recorded")
@@ -283,8 +309,8 @@ run_cmd do
         self._inspect_imports(False)
         self.assertEqual(self._content_state(normal_products), normal_state,
                          "returning to verification recompiled ordinary user oleans")
-        self.assertEqual(self._stat_state(supports), support_state)
-        self.assertEqual(self._content_state(map(Path, support_bytes)), support_bytes)
+        self.assertEqual(self._stat_state(supports), ordinary_dependency_state)
+        self.assertEqual(self._content_state(map(Path, framework_bytes)), framework_bytes)
         for directory in (self.upstream, self.downstream):
             self.assertFalse((directory / ".ProofScript").exists())
 
@@ -298,11 +324,13 @@ run_cmd do
             self.environment.pop("PROOF_SCRIPT_OUTPUT_ROOT", None)
         test_root = self.downstream / ".lake/ps4html-tests/Downstream/Downstream"
         test_products = {}
-        for module in ("Upstream", "Downstream"):
-            matches = list(test_root.glob(f"*/lib/lean/{module}.olean"))
+        for module in ("Upstream", "Downstream", "ProofScript", "ProofScript.Script.Basic", "ProofScript.Builtin.Script",
+                       "ProofScript.Builtin.Lean2TeX", "ProofScript.Mathlib.Info"):
+            relative = module.replace(".", "/")
+            matches = list(test_root.glob(f"*/lib/lean/{relative}.olean"))
             self.assertEqual(len(matches), 1, f"pageTests did not isolate {module}")
             test_products[module] = matches[0]
-            setup = json.loads(next(test_root.glob(f"*/ir/{module}.setup.json")).read_text())
+            setup = json.loads(next(test_root.glob(f"*/ir/{relative}.setup.json")).read_text())
             self.assertTrue(any(key.removeprefix("weak.") == "proofScript.pageBuild" and value is True
                                 for key, value in setup["options"].items()),
                             "pageTests did not trace page mode in the module setup")
@@ -310,7 +338,7 @@ run_cmd do
                 test_setup = setup
         self.assertEqual(Path(test_setup["importArts"]["Upstream"][0]), test_products["Upstream"])
         self.assertEqual(Path(test_setup["importArts"]["ProofScript"][0]),
-                         REPOSITORY / ".lake/build/lib/lean/ProofScript.olean")
+                         test_products["ProofScript"])
         test_setup.update(name="InspectPage", options={})
         test_setup["importArts"]["Downstream"] = [str(test_products["Downstream"])]
         test_inspect_setup = self.fixture / "inspect-page-tests.setup.json"
@@ -324,9 +352,9 @@ run_cmd do
         self._inspect_imports(False, label="inspect-verification-after-page-tests")
         self.assertEqual(self._content_state(normal_products), normal_state,
                          "combined normal/pageTests targets modified ordinary user oleans")
-        self.assertEqual(self._stat_state(supports), support_state,
-                         "combined normal/pageTests targets rebuilt cached support modules")
-        self.assertEqual(self._content_state(map(Path, support_bytes)), support_bytes)
+        self.assertEqual(self._stat_state(supports), ordinary_dependency_state,
+                         "combined normal/pageTests targets modified ordinary dependency artifacts")
+        self.assertEqual(self._content_state(map(Path, framework_bytes)), framework_bytes)
         for directory in (self.upstream, self.downstream):
             self.assertFalse((directory / ".ProofScript").exists())
         self.success = True

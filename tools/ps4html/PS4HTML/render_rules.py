@@ -15,6 +15,7 @@ from PS4HTML.Rules.unrecorded import rule_unrecorded
 from PS4HTML.recording import (PROOF_SCHEMA_VERSION, validate_contract,
                                validate_fields, validate_slots, slot_value,
                                slot_schema, validate_value)
+from PS4HTML.schema import Expression
 
 
 SPECIAL_RENDERERS = {
@@ -101,11 +102,11 @@ def template_texts(entries):
                 yield from case["introducer"].values()
 
 
-def validate_record(rule, step):
+def validate_record(rule, step, *, resolver=None, path=None):
     """Check facts supplied by Lean; renderer implementations need not infer missing fields."""
     if not isinstance(step, dict):
         raise ValueError("Recorded step must be an object")
-    validate_fields(step, rule.get("recordedFields"))
+    validate_fields(step, rule.get("recordedFields"), resolver=resolver, path=path)
     fields = rule["fields"]
     if fields.get("display") is False:
         if rule["strategy"]:
@@ -216,6 +217,11 @@ def _language(entries, language):
 
 
 def _slot(value, proof, schema=None):
+    # Resolution is manifest-based, including typed leaves deliberately composed
+    # inside schema.json. An ordinary {kind: ...} or {$ref: ...} stays data.
+    value = proof.resolve(value)
+    if isinstance(value, Expression):
+        return proof.tex(value)
     if schema and schema["kind"] == "optional":
         return _slot(value, proof, schema["element"])
     if schema and schema["kind"] == "union":
@@ -234,19 +240,13 @@ def _slot(value, proof, schema=None):
         return html.escape(str(value))
     if value is None:
         return "—"
-    if isinstance(value, dict) and set(value) == {"$ref"}:
-        return proof.tex(proof.resolve(value))
     if isinstance(value, dict) and schema and schema["kind"] == "expression":
-        return proof.tex(value)
-    if isinstance(value, dict) and schema and schema["kind"] in {"object", "json"}:
-        children = {field["name"]: field["schema"] for field in schema.get("fields", [])}
+        raise ValueError("Rendering expression requires a registered expression occurrence")
+    if isinstance(value, dict):
+        children = {field["name"]: field["schema"] for field in (schema or {}).get("fields", [])}
         return ", ".join(f"{html.escape(key)}: {_slot(item, proof, children.get(key))}"
                          for key, item in value.items())
-    if isinstance(value, dict) and "isProp" not in value and value.get("kind") not in {
-            "const", "fvar", "bvar", "app", "lambda", "forall", "sort", "lit", "mvar", "proj", "let"}:
-        return ", ".join(f"{html.escape(key)}: {_slot(item, proof)}" for key, item in value.items())
-    else:
-        raise ValueError("Rendering expression must be a recorded expression reference")
+    raise ValueError("Unsupported recorded template value")
 
 
 def _template(text, step, proof):
@@ -287,19 +287,21 @@ def _introducer(entry, step, proof):
 
 def render_rule(rule, step, proof, path, index):
     fields = rule["fields"]
-    validate_record(rule, step)
+    validate_record(rule, step, resolver=proof.expression_resolver, path=proof._structural_step)
     if fields.get("display") is False:
         return ""
     special = fields.get("renderer")
     if special is not None and special != "none":
         if special in ("embed", "strategy", "unrecorded"):
             handler = SPECIAL_RENDERERS[special]
-            value = proof.resolve(step) if special == "embed" else step
+            value = proof.resolve(step, path=proof._structural_step) if special == "embed" else step
+            if special == "embed" and isinstance(step.get("proof"), list):
+                value["proof"] = step["proof"]
             rendered = handler(value, proof, language=proof.language,
                                   path=path, index=index,
                                   **({"style": _rule_style(fields)} if special == "strategy" else {}))
         else:
-            rendered = SPECIAL_RENDERERS[special](proof.resolve(step), proof, language=proof.language)
+            rendered = SPECIAL_RENDERERS[special](proof.resolve(step, path=proof._structural_step), proof, language=proof.language)
         if special != "strategy" and "color" in fields and any(fields["color"]):
             return f'<div class="proof-rule-wrapper"{_rule_style(fields)}>{rendered}</div>'
         return rendered

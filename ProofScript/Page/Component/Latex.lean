@@ -71,5 +71,6 @@ private def addLatexComponent (metadataStx : Syntax)
   let value : LatexComponent := { metadata, source := codeStx.getString, svg }
   addPageComponent codeStx.raw "latex" (toJson value) labels
 
-elab "@""latex" metadata:componentMeta code:str : command =>
+elab "@""latex" metadata:componentMeta code:str : command => do
+  addComponentMetadataInfo metadata.raw
   whenPageBuild <| addLatexComponent metadata.raw code

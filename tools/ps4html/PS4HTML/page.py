@@ -11,7 +11,7 @@ from PS4HTML.project import PS4HTMLError
 from PS4HTML.Rules.proof_text import ProofTextRenderer
 from PS4HTML.Rules.media import render_figure, render_latex
 from PS4HTML.Rules.references import render_references
-from PS4HTML.schema import ExpressionResolver, ResourceLoader, SCHEMA_VERSION, PROOF_SCHEMA_VERSION
+from PS4HTML.schema import ResourceLoader, SCHEMA_VERSION, PROOF_SCHEMA_VERSION, validate_document
 from PS4HTML.Rules.computation import render_computation
 from PS4HTML.info import InfoBundle, name_text
 from PS4HTML.theorem_graph import TheoremGraph, theorem_id
@@ -333,6 +333,7 @@ class PageRenderer:
         proof_relative = self.bundle.relative(record.path)
         proof_path = self.bundle.file_path(proof_relative)
         proof_document = self.bundle.read(proof_relative)
+        expression_resolver = validate_document(proof_document)
         if isinstance(proof_document, dict):
             if proof_document.get("schemaVersion") != PROOF_SCHEMA_VERSION:
                 state = ERROR
@@ -341,15 +342,7 @@ class PageRenderer:
             else:
                 state = ERROR
             if isinstance(proof_document.get("proof"), list):
-                expressions = proof_document.get("expressions", {})
-                if not isinstance(expressions, dict):
-                    state = ERROR
-                else:
-                    try:
-                        expression_resolver = ExpressionResolver(expressions)
-                        proof_data = proof_document["proof"]
-                    except PS4HTMLError:
-                        state = ERROR
+                proof_data = proof_document["proof"]
             elif isinstance(proof_document.get("code"), str) and state != ERROR:
                 code = proof_document["code"]
                 highlighted_code, _applied = highlight_code(code, "lean4", theme="light")

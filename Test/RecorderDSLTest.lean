@@ -12,10 +12,9 @@ private def withTestRecording (execution : Syntax) (action : TacticM α) : Tacti
   let previousRefs := theoremRefsExt.getState (← getEnv)
   modifyEnv (recordingSessionExt.setState · (some {}))
   try
-    withExprJsonExport do
-      clearTheoremRefs
-      ensureBox ""
-      withRecordingRule `Test.RecorderDSLTest execution action
+    clearTheoremRefs
+    ensureBox ""
+    withRecordingRule `Test.RecorderDSLTest execution action
   finally
     modifyEnv fun env =>
       theoremRefsExt.setState (recordingSessionExt.setState env previous) previousRefs
@@ -56,7 +55,7 @@ example : True → True := by
         capture_params #[param (.category `ident) "before" hypothesis]
         execute_recorded
         capture_params after
-      let proof ← takeBox ""
+      let proof := (← takeBox "").map RecordedData.toJson
       unless proof.size == 2 &&
           (proof[0]!.getObjValAs? Nat "count").toOption == some 5 &&
           (proof[0]!.getObjValAs? String "label").toOption == some "outer" &&
@@ -83,7 +82,7 @@ example : True ∧ True := by
       advanceStrategyCase
       advanceStrategyCase
       finishRecordingStrategy
-      let proof ← takeBox ""
+      let proof := (← takeBox "").map RecordedData.toJson
       let branches ← ofExcept (proof[0]!.getObjValAs? (Array Json) "branches")
       unless branches.size == 2 &&
           (branches[0]!.getObjValAs? String "name").toOption == some "left" &&
@@ -104,7 +103,7 @@ example : True := by
         ]
       advanceStrategyCase
       finishRecordingStrategy
-      let proof ← takeBox ""
+      let proof := (← takeBox "").map RecordedData.toJson
       unless (proof[0]!.getObjVal? "hypothesis").isOk &&
           (proof[0]!.getObjVal? "hypothesis").toOption != some Json.null do
         throwError "continuation capture lost its local context"
@@ -134,7 +133,7 @@ example : True := by
         rewriteTacticCall sourceCall registration.name
           (recordingTacticName registration.name) kind⟩
       evalTactic (← `(tactic| run_recorded_step $source:scriptTactic $recorder:tactic))
-      let proof ← takeBox ""
+      let proof := (← takeBox "").map RecordedData.toJson
       unless proof.size == 1 &&
           (proof[0]!.getObjValAs? Nat "marker").toOption == some 11 &&
           (proof[0]!.getObjValAs? String "_ruleId").toOption ==

@@ -1,14 +1,14 @@
 import ProofScript.Utils.SHA256
-import ProofScript.Foundation.Name
+import ProofScript.Utils.Json
 import ProofScript.Script.Registry
 
 namespace ProofScript
 
 open Lean
-open scoped Foundation
+open scoped InfoJson
 
 def recordingContractVersion : String := "1"
-def recordingProtocolVersion : String := "0.0.0"
+def recordingProtocolVersion : String := "0.1.0"
 
 /-- Immutable invocation metadata; generated parser/elaborator names are not contract identity. -/
 structure RecordingContract where

@@ -19,14 +19,14 @@ def InfoTarget.validate (identity : InfoTarget) : Except String Unit :=
   | .inl _ =>
     if identity.kind == "project" then .error "project targets must be strings" else .ok ()
 
-open scoped Foundation in
+open scoped InfoJson in
 instance : ToJson InfoTarget where
   toJson identity := json% {
     kind: $(identity.kind),
     target: $(identity.target.elim toJson toJson)
   }
 
-open scoped Foundation in
+open scoped InfoJson in
 instance : FromJson InfoTarget where
   fromJson? value := do
     let kind ← value.getObjValAs? String "kind"

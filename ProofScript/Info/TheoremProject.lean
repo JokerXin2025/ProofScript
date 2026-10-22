@@ -17,11 +17,11 @@ def resolveTheoremProject (env : Environment) (query : Query) (declaration : Nam
     -- JSON null/reset is an assignment. Only the absence of candidates permits the default.
     let project ← if unit.candidates.isEmpty then pure defaultProject else do
       let some value ← unit.value.mapError view.attach
-        | throw ({ message := "missing project assignment", path := #[.field "project"] } : Diagnostic)
+        | throw ({ message := "missing project assignment", path := #[.key "project"] } : Diagnostic)
       (projectReferenceCodec.decode value).mapError fun error => view.attach (error.atField "project")
     if let some project := project then
       discard <| (resolveProjectInfo env query project).mapError fun error =>
-        view.attach { error with path := #[.field "project"] }
+        view.attach { error with path := #[.key "project"] }
     return project : Except Diagnostic (Option String)).mapError fun error =>
       { error with kind := some theoremSpec.kind, target := some declaration.toString }
 
@@ -33,7 +33,7 @@ def requireTheoremProject (env : Environment) (query : Query) (declaration : Nam
         message := "cannot export proof dependencies without a project; configure theorem_info.project"
         kind := some theoremSpec.kind
         target := some declaration.toString
-        path := #[.field "project"] } : Diagnostic)
+        path := #[.key "project"] } : Diagnostic)
   return project
 
 end ProofScript.Info

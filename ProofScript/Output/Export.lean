@@ -1,10 +1,10 @@
 import ProofScript.Output.Protocol
-import ProofScript.Build.Mode
+import ProofScript.Core.BuildMode
 
 namespace ProofScript.Output
 
 open Lean Info System
-open scoped Foundation
+open scoped InfoJson
 
 private def writeDocument (root : FilePath) (relative : String) (value : Json) : IO Json := do
   let path := root / relative

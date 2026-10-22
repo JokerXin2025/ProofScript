@@ -14,11 +14,11 @@ instance identRecordParam : RecordParam (.category `ident) where
 
 instance strRecordParam : RecordParam (.category `str) where
   schema := .string
-  capture value := pure (.scalar (Json.str value.getString))
+  capture value := pure (.plain (Json.str value.getString))
 
 instance numRecordParam : RecordParam (.category `num) where
   schema := .number
   capture value := do
-    return .scalar (toJson value.getNat)
+    return .plain (toJson value.getNat)
 
 end ProofScript.Recording

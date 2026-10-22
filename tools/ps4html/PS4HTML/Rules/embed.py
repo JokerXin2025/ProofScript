@@ -1,6 +1,7 @@
 import html
 
 from PS4HTML.engine import render_details, render_step
+from PS4HTML.schema import Expression
 
 
 def rule_embed(step, proof, *, language, path=(), index=None):
@@ -21,8 +22,8 @@ def rule_embed(step, proof, *, language, path=(), index=None):
     if isinstance(proof_value, list):
         content = proof.render_embedded(proof_value, path + (f"{index}:embed",))
     else:
-        if not isinstance(proof_value, dict):
-            raise ValueError("embed.proof must be an expression or a proof array")
+        if not isinstance(proof_value, Expression):
+            raise ValueError("embed.proof must be a registered expression or a proof array")
         content = render_step(
             "嵌入定理" if language == "zh" else "Embedded theorem",
             summary,

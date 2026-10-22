@@ -1,4 +1,5 @@
-import ProofScript.Foundation.Name
+import ProofScript.Utils.Json
+import ProofScript.Info.JsonSchemas
 import ProofScript.Info.Resolve
 import ProofScript.Info.Elab
 
@@ -8,24 +9,51 @@ open Lean Elab Command
 
 /-- All declaration-based domains use Lean's namespace, alias and overload resolution. -/
 def resolveDeclaration (id : TSyntax `ident) : CommandElabM Name := do
+  addCompletionInfo <| .id id.raw id.getId (danglingDot := false) {} none
   let declaration ← Lean.resolveGlobalConstNoOverload id.raw
   unless (← getEnv).contains declaration do
     throwErrorAt id m!"unknown declaration `{id.getId}`"
+  addConstInfo id.raw declaration
   return declaration
+
+/-- Verification builds retain editor references without validating or consuming metadata.
+Only ordinary resolution errors are optional; cancellation and resource failures must propagate.
+-/
+def addDeclarationReferenceInfo (id : TSyntax `ident) : CommandElabM Unit := do
+  unless (← getInfoState).enabled do return
+  let messages := (← get).messages
+  try
+    discard <| resolveDeclaration id
+  catch error =>
+    if error.isRuntime then throw error
+    match error with
+    | .error .. => pure ()
+    | .internal .. => throw error
+  modify fun state => { state with messages }
+
+/-- Schema keys denote the actual model projections, even when their values are skipped.
+This reads syntax only: it does not run codecs, validation, or metadata transactions.
+-/
+def addInfoFieldInfos (schema : InfoSchema Record) (fields : TSyntax ``infoFields) : CommandElabM Unit := do
+  unless (← getInfoState).enabled do return
+  annotateInfoFields schema (← readFields fields)
 
 /-- Declaration references preserve name components on the wire and resolve through Lean at input. -/
 structure DeclarationRef where
   name : Name
   deriving Inhabited, Repr, BEq
 
-open scoped Foundation in
+open scoped InfoJson in
 instance : InfoCodec DeclarationRef where
   parse stx := do
     let `(term| $id:ident) := stx | throwErrorAt stx "expected a declaration identifier"
     return ⟨← resolveDeclaration id⟩
   toJson reference := Lean.toJson reference.name
   decode value := (DeclarationRef.mk <$> fromJson? value).mapError fun message => { message }
-  jsonSchema := Foundation.qualifiedNameSchema
+  jsonSchema := InfoJson.qualifiedNameSchema
+  annotate stx := do
+    if let `(term| $id:ident) := stx then
+      addDeclarationReferenceInfo id
 
 /-- A configured record is required even when all its schema fields have defaults. -/
 def resolveConfiguredInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name) :

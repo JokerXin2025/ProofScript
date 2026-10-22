@@ -1,4 +1,4 @@
-"""Small public helpers for the ProofScript ExprJSON representation."""
+"""Small public helpers for resolved structural expression occurrences."""
 
 from __future__ import annotations
 

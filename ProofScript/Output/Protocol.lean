@@ -1,10 +1,13 @@
 import ProofScript.Info.Snapshot
+import ProofScript.Info.JsonSchemas
 import ProofScript.Output.Path
 
 namespace ProofScript.Output
 
 open Lean Info
-open scoped Foundation
+open InfoJson (qualifiedNameSchema objectSchema stringSchema boolSchema natSchema digestSchema arraySchema
+  nullableSchema constantSchema targetSchema theoremExportSchema)
+open scoped InfoJson
 
 def infoProtocolVersion : String := "5.0.0"
 
@@ -75,37 +78,19 @@ def modelSchemas := json% {
   phrase: $((inferInstance : InfoSchema PhraseInfo).jsonSchema)
 }
 
-private def objectSchema (properties : List (String × Json)) (required : Array String) :=
-  json% {
-    type: "object",
-    properties: $(Json.mkObj properties),
-    required: $required,
-    additionalProperties: false
-  }
-
-private def stringSchema := json% { type: "string" }
-private def digestSchema := json% { type: "string", pattern: "^[0-9a-f]{64}$" }
-private def arraySchema (items : Json) := json% { type: "array", items: $items }
-private def nullableSchema (value : Json) := json% { anyOf: [$value, { type: "null" }] }
-private def constantSchema (value : String) := json% { const: $value }
-
-private def targetSchema (kind : String) : Json :=
-  if kind == "project" then json% { type: "string", minLength: 1 }
-  else Foundation.qualifiedNameSchema
-
 private def recordSchema [InfoSchema Record] (spec : InfoSpec Record) : Json :=
   let schema : InfoSchema Record := inferInstance
   objectSchema [
     ("identity", objectSchema [("kind", constantSchema spec.kind), ("target", targetSchema spec.kind)] #["kind", "target"]),
     ("schemaId", constantSchema schema.id.toString), ("schemaVersion", constantSchema schema.version),
-    ("configured", json% { type: "boolean" }), ("value", schema.jsonSchema)]
+    ("configured", boolSchema), ("value", schema.jsonSchema)]
     #["identity", "schemaId", "schemaVersion", "configured", "value"]
 
 private def contractSchema : Json := objectSchema [
   ("contractVersion", constantSchema recordingContractVersion), ("recordingVersion", constantSchema recordingProtocolVersion),
-  ("ruleId", Foundation.qualifiedNameSchema), ("name", stringSchema),
-  ("strategy", json% { type: "boolean" }),
-  ("continuation", nullableSchema (json% { type: "integer", minimum: 0 })),
+  ("ruleId", qualifiedNameSchema), ("name", stringSchema),
+  ("strategy", boolSchema),
+  ("continuation", nullableSchema natSchema),
   ("fields", nullableSchema (arraySchema (json% { type: "object" })))]
   #["contractVersion", "recordingVersion", "ruleId", "name", "strategy", "continuation", "fields"]
 
@@ -115,11 +100,11 @@ def snapshotSchema : Json :=
     $(recordSchema scriptSpec), $(recordSchema definitionSpec),
     $(recordSchema variableSpec), $(recordSchema phraseSpec)] }
   let boundary := objectSchema [
-    ("before", objectSchema [("sequence", json% { type: "integer", minimum: 0 })] #["sequence"])] #["before"]
+    ("before", objectSchema [("sequence", natSchema)] #["sequence"])] #["before"]
   let payload := objectSchema [
     ("schemaVersion", constantSchema snapshotSchemaVersion),
     ("recordingVersion", constantSchema recordingProtocolVersion), ("contractVersion", constantSchema recordingContractVersion),
-    ("query", objectSchema [("module", Foundation.qualifiedNameSchema), ("boundary", boundary)] #["module", "boundary"]),
+    ("query", objectSchema [("module", qualifiedNameSchema), ("boundary", boundary)] #["module", "boundary"]),
     ("records", arraySchema records),
     ("contracts", arraySchema (objectSchema [("id", digestSchema), ("value", contractSchema)] #["id", "value"]))]
     #["schemaVersion", "recordingVersion", "contractVersion", "query", "records", "contracts"]
@@ -131,20 +116,20 @@ private def dependencySchema : Json :=
   let variants := #["project", "theorem", "definition", "script", "variable", "phrase"].map fun kind =>
     objectSchema [
       ("kind", constantSchema kind), ("target", targetSchema kind),
-      ("required", json% { type: "boolean" })] #["kind", "target", "required"]
+      ("required", boolSchema)] #["kind", "target", "required"]
   json% { oneOf: $variants }
 
 private def artifactSchema : Json := (objectSchema [
   ("schemaVersion", constantSchema manifestSchemaVersion), ("id", digestSchema),
-  ("owner", Foundation.qualifiedNameSchema), ("module", stringSchema),
-  ("kind", json% { enum: ["page", "proof"] }), ("name", Foundation.qualifiedNameSchema),
+  ("owner", qualifiedNameSchema), ("module", stringSchema),
+  ("kind", json% { enum: ["page", "proof"] }), ("name", qualifiedNameSchema),
   ("path", stringSchema), ("snapshotId", digestSchema), ("contentDigest", digestSchema),
-  ("declaration", nullableSchema Foundation.qualifiedNameSchema),
+  ("declaration", nullableSchema qualifiedNameSchema),
   ("projectId", nullableSchema (targetSchema "project")),
-  ("proofDependencies", arraySchema Foundation.qualifiedNameSchema), ("proofFactsDigest", digestSchema),
+  ("proofDependencies", arraySchema qualifiedNameSchema), ("proofFactsDigest", digestSchema),
   ("dependencies", arraySchema dependencySchema),
   ("bindings", arraySchema (objectSchema [
-    ("path", arraySchema (json% { anyOf: [$stringSchema, { type: "integer", minimum: 0 }] })),
+    ("path", arraySchema (json% { anyOf: [$stringSchema, $natSchema] })),
     ("contractId", digestSchema)] #["path", "contractId"])),
   ("publishedDigest", digestSchema), ("transform", constantSchema "finalize-computations")]
   #["schemaVersion", "id", "owner", "module", "kind", "name", "path", "snapshotId", "contentDigest", "declaration", "projectId", "dependencies", "bindings"])
@@ -164,7 +149,7 @@ def protocolSchema : Json :=
     ("schemaVersion", constantSchema infoProtocolVersion), ("recordingVersion", constantSchema recordingProtocolVersion),
     ("contractVersion", constantSchema recordingContractVersion), ("complete", json% { const: true }),
     ("modules", arraySchema (objectSchema [
-      ("name", Foundation.qualifiedNameSchema), ("module", stringSchema), ("events", stringSchema),
+      ("name", qualifiedNameSchema), ("module", stringSchema), ("events", stringSchema),
       ("defaultSnapshot", nullableSchema digestSchema)] #["name", "module", "events", "defaultSnapshot"])),
     ("artifacts", arraySchema artifactSchema),
     ("snapshots", arraySchema (objectSchema [("id", digestSchema), ("path", stringSchema)] #["id", "path"])),

@@ -17,7 +17,7 @@ instance : InfoSchema PhraseTemplate :=
       if value.isEmpty then .error "language must not be empty" else .ok ()]
     validateRecord := fun value =>
       if let some unknown := (namedPlaceholders value.content).find? (!#["body", "binder", "type"].contains ·) then
-        .error { message := s!"unknown placeholder `{unknown}`", path := #[.field "content"] }
+        .error { message := s!"unknown placeholder `{unknown}`", path := #[.key "content"] }
       else .ok () }
 
 structure PhraseInfo where
@@ -30,7 +30,7 @@ instance : InfoSchema PhraseInfo :=
     fields := #[PhraseInfo.infoFields.template.withMerge (keyedArray (·.lang))]
     validateRecord := fun value =>
       if value.template.isEmpty then
-        .error { message := "at least one phrase template is required", path := #[.field "template"] }
+        .error { message := "at least one phrase template is required", path := #[.key "template"] }
       else .ok () }
 
 def phraseSpec : InfoSpec PhraseInfo := {

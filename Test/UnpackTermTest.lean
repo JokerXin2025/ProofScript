@@ -1,5 +1,17 @@
 import ProofScript
 
+-- Application heads are derived from structural fn edges; they are not wire fields.
+private def structuralHeadConstant (table initial : Lean.Json) : Except String (Option String) := do
+  let mut current := initial
+  for _ in [:((← table.getObj?).size + 1)] do
+    match (← current.getObjValAs? String "kind") with
+    | "app" =>
+      let fn ← current.getObjVal? "fn"
+      current ← table.getObjVal? (← fn.getObjValAs? String "$ref")
+    | "const" => return some (← current.getObjValAs? String "name")
+    | _ => return none
+  throw "cyclic structural application"
+
 set_option linter.unusedVariables false
 
 example (P Q R : Prop) (h : (P ∧ Q) ∧ R) : P := script
@@ -114,9 +126,16 @@ run_cmd do
     let expr ← ofExcept (expressions.getObjVal? ref)
     unless (expr.getObjValAs? String "kind").toOption == some "app" do
       throwError "nonlocal input missing for {decl}"
-    unless (expr.getObjValAs? String "headConstant").toOption ==
+    unless (← ofExcept (structuralHeadConstant expressions expr)) ==
         (if head.isEmpty then none else some head) do
       throwError "wrong input recorded for {decl}"
+    let display ← ofExcept (step.getObjVal? "h_display")
+    unless (display.getObjValAs? String "field").toOption == some "h" do
+      throwError "compound input lost its explicit display companion for {decl}"
+    let views ← ofExcept (display.getObjValAs? (Array Json) "views")
+    unless views.any (fun view => (view.getObjVal? "root").toOption ==
+        some (json% { kind: "field", path: [] })) do
+      throwError "compound input display is not anchored at its field root for {decl}"
     for binder in binders do
       unless (step.getObjVal? binder).isOk do
         throwError "missing {binder} for {decl}"

@@ -82,7 +82,7 @@ open Lean Elab Command in
 run_cmd do
   let .ok doc := Json.parse (← IO.FS.readFile (proofOutputPath `Test.RecordingComplexTest `recordingComplexArrays))
     | throwError "invalid proof JSON"
-  unless (doc.getObjValAs? String "schemaVersion").toOption == some "0.0.0" do
+  unless (doc.getObjValAs? String "schemaVersion").toOption == some "0.1.0" do
     throwError "wrong proof version"
   let steps ← ofExcept (doc.getObjValAs? (Array Json) "proof")
   for (index, count) in [(0, 0), (1, 1), (2, 2)] do

@@ -11,7 +11,7 @@ structure SourceLocation where
   stop : Nat
   deriving Inhabited, Repr, BEq, ToJson, FromJson
 
-def SourceLocation.ofSyntax (file : String) (stx : Lean.Syntax) : SourceLocation :=
+def SourceLocation.ofSyntax (file : String) (stx : Syntax) : SourceLocation :=
   let start := stx.getPos?.getD 0
   { file, start := start.byteIdx, stop := (stx.getTailPos?.getD start).byteIdx }
 

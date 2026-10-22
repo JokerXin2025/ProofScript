@@ -1,6 +1,8 @@
 # Lean2TeX
 
-PS4HTML 使用 ProofScript 导出的 ExprJSON 和 Lean-owned 配置，将表达式转换为 DisplayTree 并渲染为 TeX。Lean 按模块与消费边界完成合并，配置保存在 `.ProofScript/info/snapshots/`，产物清单 `info/index.json` 选择具体快照。Python 不重放配置事件。`make --cache` 使用隔离的 `.PS4HTML/inputs/<包>/<库>/.ProofScript/` 完成版本。
+PS4HTML 使用录制协议 `0.1.0` 的结构表达式、显式 Display 与 Lean-owned 配置，将表达式转换为 DisplayTree 并渲染为 TeX。Lean 按模块与消费边界完成合并，配置保存在 `.ProofScript/info/snapshots/`，产物清单 `info/index.json` 选择具体快照。Python 不重放配置事件。`make --cache` 使用隔离的 `.PS4HTML/inputs/<包>/<库>/.ProofScript/` 完成版本。
+
+生产入口通过 `validate_document` / `ExpressionResolver.resolve_at` 取得已注册的表达式 occurrence，再按调用契约应用 Display。同一结构节点的不同 occurrence 可使用不同的名字、类型或位置。旧的内嵌 `isProp/typeOf/headConstant/appArgs` 不提供展示语义。应用头与参数顺序由结构得到；`arguments := explicit` 需要完整 `appBinders`，信息缺省时保留完整应用并给出 `L2T011`，不猜测隐式参数。自由变量缺少 declaration hint 时按 ID 缓存稳定的回退名称，缺少类型时不猜测分类。
 
 ## 在 Lean 文件中配置
 
@@ -26,7 +28,7 @@ phrase_info "forall" { template := [
 
 样式的 `isolated_arguments := [0, 1]` 表示模板已将对应显示参数独立分组（索引从 0 开始），渲染时跳过这些位置由优先级或结合方向产生的自动括号。例如 `\frac{#0}{#1}` 的分子和分母、`{#0}^{#1}` 的指数；其他参数仍按原优先级规则加括号。
 
-ProofScript 基础配置位于 `ProofScript/Defaults/Lean2TeX.lean`，Mathlib 的 `Real` / `Set` 配置位于 `ProofScript/Mathlib/Info.lean`。`import ProofScript` 加载完整默认展示；只需表达式默认配置时导入 `ProofScript.Defaults.Lean2TeX`。每份证明和页面组件使用创建时捕获的配置边界：上游模块提供全部最终配置，本模块只读取该内容之前提交的配置。独立 proof 使用相同规则；`page_end` 只负责页面输出，不改变配置作用范围。未知顶层字段保存为 `extra`，已知字段类型错误会报错。
+ProofScript 基础配置位于 `ProofScript/Builtin/Lean2TeX.lean`，Mathlib 的 `Real` / `Set` 配置位于 `ProofScript/Mathlib/Info.lean`。`import ProofScript` 加载完整默认展示；只需表达式默认配置时导入 `ProofScript.Builtin.Lean2TeX`。每份证明和页面组件使用创建时捕获的配置边界：上游模块提供全部最终配置，本模块只读取该内容之前提交的配置。独立 proof 使用相同规则；`page_end` 只负责页面输出，不改变配置作用范围。未知顶层字段保存为 `extra`，已知字段类型错误会报错。
 
 ## Python 接口
 
@@ -44,11 +46,28 @@ config = InfoBundle(export_root).configuration(proof_module, snapshot_id=artifac
 renderer = Expr2TeX.from_config(config)
 ```
 
+`expr` 由录制文档的根清单和该次调用的输出契约取得，例如：
+
+```python
+from PS4HTML.schema import validate_document
+
+resolver = validate_document(document)
+step = document["proof"][0]
+# contract 是该步骤 artifact binding 指定的 invocation contract。
+resolver.apply_fields(step, contract["fields"], path=("proof", 0))
+expr = resolver.resolve_at(("proof", 0, "subject"))
+tex = renderer.render(expr)
+```
+
+普通 `schema.json` 中类似表达式或 Display 的对象仍按数据处理。专用渲染器可调用 `resolver.register_display(step, "subject_display", "subject", path=("proof", 0))` 明确选择并验证展示信息；不会扫描 marker 自动选择。
+
 模块所有产物消费同一个快照时可省略 `snapshot_id`，存在多个视图或没有消费快照时必须选择产物的 snapshotId。
 `renderer.convert(expr)` 返回 DisplayTree，`renderer.render_display(display)` 将其转成 TeX，`renderer.render_relation(expr)` 为 calc 链提供关系符号。每个渲染器拥有独立的变量分配和诊断状态。缺少宏配置时保留可见的 fallback 和 `L2T001` 诊断；错误或缺失的完成快照阻止站点发布。
 
+旧的 `convert(expr, fvars, bvar_env)` 与 `render(..., fvars=..., bvar_env=...)` 参数已删除。自定义自由变量名称应写入该 occurrence 的 Display declaration；绑定变量名称取自所属的 `lam`、`forall` 或 `let`，调用者应传入包含相应 binder 的表达式根。旧 `ExpressionOccurrence` 别名已删除，表达式类型统一使用 `PS4HTML.schema.Expression`。旧录制产物需要重新构建为 `0.1.0`；渲染器不再解包旧 `mdata` 节点。
+
 ## 变量联动
 
-公式使用 KaTeX `\htmlData` 携带语义引用：同一 fvar 按 `fvarId`，binder 与正文 bvar 按 `bindId` / `bindRef` 联动；独立表达式转换的 binder 身份互不相同。前端只在同一个 `.theorem-proof` 中高亮相同引用，binder 声明使用不同颜色。
+公式使用 KaTeX `\htmlData` 携带语义引用：同一 fvar 按 `fvarId`，binder 与正文 bvar 按 `bindId` / `bindRef` 联动；独立表达式转换的 binder 身份互不相同。前端只在同一个 `.theorem-proof` 中高亮相同引用，binder 声明使用不同颜色。显式 declaration 的类型和局部定义值通过 `data-l2t-info` 提供纯文本悬停提示，缺省时不产生推断的提示。
 
 构建诊断汇总位于 `.PS4HTML/build/<包>/<库>/lean2tex-report.json`。

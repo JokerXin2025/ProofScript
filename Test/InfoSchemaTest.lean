@@ -6,7 +6,7 @@ namespace InfoSchemaTest
 
 /-- Configuration consumers and standard JSON decoding must apply the same final rules. -/
 private def checkRejected [InfoSchema Record] [FromJson Record]
-    (spec : InfoSpec Record) (value : Json) (path : FieldPath) : CommandElabM Unit := do
+    (spec : InfoSpec Record) (value : Json) (path : JsonPath) : CommandElabM Unit := do
   let schema : InfoSchema Record := inferInstance
   let object ← match value.getObj? with
     | .ok object => pure object
@@ -27,15 +27,15 @@ private def checkRejected [InfoSchema Record] [FromJson Record]
   | _, _, _ => throwError "canonical schema, configuration or FromJson bypassed validation"
 
 run_cmd do
-  checkRejected phraseSpec (json% { template: [] }) #[.field "template"]
+  checkRejected phraseSpec (json% { template: [] }) #[.key "template"]
   checkRejected phraseSpec (json% {
     template: [{ lang: "en", content: "${body}" }, { lang: "en", content: "${type}" }]
-  }) #[.field "template"]
+  }) #[.key "template"]
   checkRejected phraseSpec (json% { template: [{ lang: "", content: "${body}" }] })
-    #[.field "template", .index 0, .field "lang"]
-  checkRejected scriptSpec (json% {}) #[.field "template"]
-  checkRejected definitionSpec (json% { calc_symbol: "" }) #[.field "calc_symbol"]
-  checkRejected definitionSpec (json% {}) #[.field "styles"]
+    #[.key "template", .index 0, .key "lang"]
+  checkRejected scriptSpec (json% {}) #[.key "template"]
+  checkRejected definitionSpec (json% { calc_symbol: "" }) #[.key "calc_symbol"]
+  checkRejected definitionSpec (json% {}) #[.key "styles"]
 
 run_cmd do
   let phrase ← match fromJson? (α := PhraseInfo) (json% {

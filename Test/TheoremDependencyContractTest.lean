@@ -1,9 +1,8 @@
-import ProofScript.Info.Commands
 import ProofScript.Info.TheoremProject
 import ProofScript.Output.Theorem
 
 open Lean Elab Command ProofScript.Info ProofScript.Output
-open scoped ProofScript.Foundation
+open scoped InfoJson
 
 namespace TheoremDependencyContract
 
@@ -48,18 +47,25 @@ run_cmd do
       (TheoremExport.create root "P" #[.str .anonymous ""]).isOk then
     throwError "fact creation bypassed identity validation"
 
-project_info "项目.甲" { title := "Local project" }
-project_info "External" { title := "Other project" }
-
 theorem sample : True := True.intro
 theorem foreign : True := True.intro
-theorem_info foreign { project := "External" }
 
 run_cmd do
-  let original ← getEnv
+  -- The ownership contract is a pure API test, independent of page command mode.
+  let source : ProofScript.Foundation.SourceLocation := ⟨"project-contract", 0, 0⟩
+  let mut original ← getEnv
+  for (project, title) in #[("项目.甲", "Local project"), ("External", "Other project")] do
+    original ← match commitInfo projectSpec original project
+        #[ProjectInfo.infoFields.title.assignment title source] source none
+        #[{ key := activeProjectBinding, value := toJson project, source }] with
+      | .ok env => pure env
+      | .error error => throwError error.render
+  original ← match commitInfo theoremSpec original `TheoremDependencyContract.foreign
+      #[TheoremInfo.infoFields.project.assignment (some "External") source] source with
+    | .ok env => pure env
+    | .error error => throwError error.render
   let query : Query := { moduleName := original.mainModule }
   let root := `TheoremDependencyContract.sample
-  let source : ProofScript.Foundation.SourceLocation := ⟨"project-contract", 0, 0⟩
   let check := fun env query defaultProject expected => do
     match resolveTheoremProject env query root defaultProject with
     | .ok actual => unless actual == expected do
@@ -69,7 +75,7 @@ run_cmd do
   check original query (some "项目.甲") (some "项目.甲")
   check original query none none
   match requireTheoremProject original query root with
-  | .error error => unless error.path == #[.field "project"] do
+  | .error error => unless error.path == #[.key "project"] do
       throwError "missing source ownership must have a project diagnostic"
   | .ok _ => throwError "missing ownership must not look like an empty dependency list"
   let titled ← match commitInfo theoremSpec original root
@@ -99,7 +105,7 @@ run_cmd do
     throwError "ordinary theorem ownership must use its own metadata"
   for missing in #["Missing", ""] do
     match resolveTheoremProject original query root (some missing) with
-    | .error error => unless error.path == #[.field "project"] do
+    | .error error => unless error.path == #[.key "project"] do
         throwError "unknown source project must retain its diagnostic field"
     | .ok _ => throwError "unconfigured project was accepted"
   if (resolveTheoremProject original query `UnknownDeclaration (some "项目.甲")).isOk then

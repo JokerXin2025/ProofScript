@@ -2,7 +2,7 @@ import ProofScript.Page.Component.Core
 import Lean.Data.Json
 import ProofScript.Output.Path
 import ProofScript.Page.Model
-import ProofScript.Script.ExprJSON
+import ProofScript.Script.Recording.ComputationEncoding
 
 open Lean
 open System
@@ -71,14 +71,15 @@ end ProofScript.Computation
 namespace ProofScript
 
 
-/-- Stable description of the Lean declaration backing an interactive computation. -/
+/-- Frozen provenance for the Lean declaration backing an interactive computation.
+    Complete JSON export goes through `encode`, which exports its independent expression graph. -/
 structure ComputationFunction where
-  declaration : String
-  type : String
-  expression : Json
-  implementation : Json
-  expressions : Json
-deriving Inhabited, ToJson
+  recording : Recording.RecordedValue
+deriving Inhabited
+
+/-- Encode frozen provenance without consulting the declaration again. -/
+def ComputationFunction.encode (function : ComputationFunction) : Except String Json :=
+  Recording.encodeComputationFunction function.recording
 
 structure ComputationExecution where
   backend : String := "wasm"
@@ -104,7 +105,15 @@ structure ComputationComponent where
   function : ComputationFunction
   execution : ComputationExecution
   payload : Json
-deriving Inhabited, ToJson
+deriving Inhabited
+
+def ComputationComponent.encode (component : ComputationComponent) : Except String Json := do
+  let function ← component.function.encode
+  return json% {
+    schemaVersion: $(component.schemaVersion), metadata: $(component.metadata),
+    renderer: $(component.renderer), function: $function,
+    execution: $(component.execution), payload: $(component.payload)
+  }
 
 private structure FunctionShape where
   input : Expr
@@ -203,21 +212,19 @@ private def addComputationComponent (metadataStx : Syntax)
                   | .ok metadata => pure metadata
                   | .error message => throwErrorAt metadataStx message
   let declaration ← resolveDeclaration functionStx.raw functionStx.getId
+  Elab.addConstInfo functionStx.raw declaration
   let env ← getEnv
   let info := env.constants.find! declaration
   let implementation ← match info with
     | .defnInfo value => pure value.value
     | .opaqueInfo value => pure value.value
     | _ => throwErrorAt functionStx s!"@computation requires a definition with an implementation; '{declaration}' is not executable"
-  let (expression, implementation, expressions) ← withExprJsonExport do
-    let expression ← liftTermElabM do
-      Expr2JSON (mkConst declaration)
-    let implementation ← liftTermElabM do
-      Expr2JSON implementation
-    let expressions ← getExprJsonTable
-    return (expression, implementation, expressions)
   let type ← liftTermElabM do
     return toString (← Meta.ppExpr info.type)
+  let captured ← liftTermElabM do
+    let action := Recording.CaptureM.run <|
+      Recording.captureComputationFunction declaration type implementation (some functionStx.raw)
+    (action { elaborator := .anonymous }).run' { goals := [] }
   let payload ← parseJsonAt payloadStx.raw payloadStx.getString
   let shape ← functionShape functionStx.raw info
   let wrapper ← addWrapper declaration shape
@@ -241,7 +248,7 @@ private def addComputationComponent (metadataStx : Syntax)
   let value : ComputationComponent := {
     metadata
     renderer := rendererStx.getString
-    function := { declaration := declaration.toString, type, expression, implementation, expressions }
+    function := { recording := captured }
     execution := {
       bundleId
       entry := declaration.toString
@@ -250,7 +257,8 @@ private def addComputationComponent (metadataStx : Syntax)
     }
     payload
   }
-  addPageComponent functionStx.raw "computation" (toJson value) labels
+  let encoded ← ofExcept <| value.encode
+  addPageComponent functionStx.raw "computation" encoded labels
 
 /--
 Adds an interactive computation backed by a Lean declaration.
@@ -263,7 +271,34 @@ syntax computationField := ident " := " computationFieldValue
 syntax (name := computationCmd) "@computation" "{" sepBy1(computationField, ", ") "}" : command
 
 elab_rules : command
-  | `(command| @computation { $[$fields:computationField],* }) => whenPageBuild do
+  | `(command| @computation { $[$fields:computationField],* }) => do
+      for field in fields do
+        if let `(computationField| $key:ident := $value:computationFieldValue) := field then
+          match key.getId with
+          | `metadata =>
+              Elab.addConstInfo key.raw ``ComputationComponent.metadata
+              if let `(computationFieldValue| $metadata:componentMeta) := value then
+                addComponentMetadataInfo metadata.raw
+          | `renderer => Elab.addConstInfo key.raw ``ComputationComponent.renderer
+          | `function => Elab.addConstInfo key.raw ``ComputationComponent.function
+          | `payload => Elab.addConstInfo key.raw ``ComputationComponent.payload
+          | _ => pure ()
+      unless ← recordModuleBuildMode do
+        -- Skipped page payloads remain unchecked, while existing function names
+        -- still participate in editor navigation and reference highlighting.
+        for field in fields do
+          match field with
+          | `(computationField| $key:ident := $value:computationFieldValue) =>
+              if key.getId == `function then
+                if let `(computationFieldValue| $functionStx:ident) := value then
+                  try
+                    let declaration ← resolveDeclaration functionStx.raw functionStx.getId
+                    Elab.addConstInfo functionStx.raw declaration
+                  catch error =>
+                    if error.isInterrupt || error.isMaxHeartbeat || error.isMaxRecDepth then
+                      throw error
+          | _ => pure ()
+        return
       let mut metadata : Option Syntax := none
       let mut renderer : Option (TSyntax `str) := none
       let mut function : Option (TSyntax `ident) := none

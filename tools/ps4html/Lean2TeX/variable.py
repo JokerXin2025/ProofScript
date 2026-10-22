@@ -40,8 +40,9 @@ class VariableAllocator:
         self.configs: list[VarTypeConfig] = configs or []
         # 已分配名字集合（跨类型共享，保证无重名）
         self.allocated: list[str] = []
-        # FVarId → 名字缓存（同一 fvar 多处渲染复用同一名字）
-        self.cache: dict[str, str] = {}
+        # Naming depends on the occurrence's explicit declaration and category.
+        # The same structural fvar ID may have different or absent Display hints.
+        self.cache: dict[tuple[str, str | None, str, str | None], str] = {}
 
     # ─────────────────────────────────────────────────────────────────────────
     # 重置 / 释放
@@ -112,12 +113,15 @@ class VariableAllocator:
             self.allocated.append(fallback)
             return fallback
 
-    def allocate_fvar(self, fvar_id: str, type_name: str) -> str:
-        """为 fvar 分配名字，优先读缓存（对应 `allocateFVar`）。"""
-        if fvar_id in self.cache:
-            return self.cache[fvar_id]
-        name = self.allocate_var(type_name)
-        self.cache[fvar_id] = name
+    def allocate_fvar(self, fvar_id: str, type_name: str, *,
+                      display_name: str | None = None,
+                      classification: str | None = None) -> str:
+        """Reuse a name only for an equivalent occurrence naming context."""
+        key = (fvar_id, display_name, type_name, classification)
+        if key in self.cache:
+            return self.cache[key]
+        name = self.reserve(display_name) if display_name else self.allocate_var(type_name)
+        self.cache[key] = name
         return name
 
     # ─────────────────────────────────────────────────────────────────────────

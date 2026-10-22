@@ -37,6 +37,7 @@ lean_lib TestPage where
     `Test.ObtainExistTest,
     `Test.CalcTest,
     `Test.NativeTacticIsolationTest,
+    `Test.EmbedIDEInfoTest,
     `Test.NestedStrategyTest,
     `Test.CustomComponentTest,
     `Test.ComputationComponentTest,
@@ -75,12 +76,13 @@ namespace ProofScriptPageBuild
 private partial def dependsOn (pkg : Package) (key : Name) : Bool :=
   pkg.keyName == key || pkg.depPkgs.any (dependsOn · key)
 
-def sourcePackages (ws : Workspace) (selected : Package) (support : NameSet := {}) : NameSet := Id.run do
+def sourcePackages (ws : Workspace) (selected : Package) : NameSet := Id.run do
   let mut result := ({} : NameSet).insert selected.keyName
   let some framework := ws.packages.find? (·.baseName == `ProofScript) | return result
   for pkg in ws.packages do
-    if pkg.keyName != framework.keyName && dependsOn selected pkg.keyName &&
-        dependsOn pkg framework.keyName && !support.contains pkg.baseName then
+    -- Framework defaults use the same page-only Info commands as user modules.
+    -- Its dependents must also be isolated from their ordinary import artifacts.
+    if dependsOn selected pkg.keyName && dependsOn pkg framework.keyName then
       result := result.insert pkg.keyName
   return result
 
@@ -139,7 +141,6 @@ structure Session where
   value : Json
   buildRoot : FilePath
   exportRoot : FilePath
-  support : NameSet
 
 /-- The Python coordinator owns the project lock and cleans this session's Lean directory. -/
 def readSession (ws : Workspace) (lib : LeanLib) : IO Session := do
@@ -170,8 +171,13 @@ def readSession (ws : Workspace) (lib : LeanLib) : IO Session := do
   let supportNames : Array String ← match value.getObjVal? "supportPackages" with
     | .error _ => pure #[]
     | .ok _ => checkedJson value "supportPackages"
-  let support := supportNames.foldl (fun names name => names.insert name.toName) ({} : NameSet)
-  return { file, value, buildRoot := sessionBuild, exportRoot, support }
+  let required := sourcePackages ws lib.pkg
+  for name in supportNames do
+    let some pkg := ws.packages.find? (·.baseName.toString == name)
+      | throw <| IO.userError s!"unknown PS4HTML support package: {name}"
+    if required.contains pkg.keyName then
+      throw <| IO.userError s!"PS4HTML package {name} requires page compilation; supportPackages cannot exclude the selected package, ProofScript, or its dependent packages"
+  return { file, value, buildRoot := sessionBuild, exportRoot }
 
 def mappedLibrary (ws : Workspace) (original : LeanLib) : FetchM LeanLib := do
   let some pkg := ws.findPackageByKey? original.pkg.keyName | error "page build package not found"
@@ -220,7 +226,7 @@ end ProofScriptPageBuild
 library_facet ps4htmlInputs (original) : Unit := do
   let ws ← getWorkspace
   let session ← ProofScriptPageBuild.readSession ws original
-  let sources := ProofScriptPageBuild.sourcePackages ws original.pkg session.support
+  let sources := ProofScriptPageBuild.sourcePackages ws original.pkg
   let workspace := ProofScriptPageBuild.remapWorkspace ws sources session.buildRoot
   let options := ProofScriptPageBuild.pageOptions ws sources (← getLeanOptOverrides)
   withTheReader BuildContext (fun context => { context with

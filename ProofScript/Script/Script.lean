@@ -187,6 +187,8 @@ elab "run_script_step" name:ident call:scriptTactic : tactic => do
   let some (registration, sourceCall) := registeredTacticCall registrations call.raw
     | let hint := (nativeHintMap.lookup nameStr).getD "unknown script tactic"
       withRef name (throwError hint)
+  if let some keyword := findFirstAtom sourceCall then
+    Elab.addConstInfo keyword registration.sourceKind
   let rewritten ← match rewriteTacticCall sourceCall registration.name (scriptTacticName registration.name)
       registration.executionKind with
     | .ok rewritten => pure rewritten
@@ -209,6 +211,8 @@ elab "run_recorded_step" source:scriptTactic call:tactic : tactic => do
   let registrations := scriptTacticRegistrations (← getEnv)
   let some (registration, sourceCall) := registeredTacticCall registrations source.raw
     | throwErrorAt source "recorded tactic has no matching registration"
+  if let some keyword := findFirstAtom sourceCall then
+    Elab.addConstInfo keyword registration.sourceKind
   unless registration.recordingKind == some call.raw.getKind ||
       (registration.recordingKind.isNone && call.raw.getKind == ``unrecordedStep) do
     throwErrorAt call "recorder changed after this script call was converted; rebuild the recording call"

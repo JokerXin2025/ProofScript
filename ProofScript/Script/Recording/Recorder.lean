@@ -50,7 +50,7 @@ def withStrategyRecorder (spec : StrategySpec) (body : RecorderContext → Tacti
     return result
 
 private def captureInContext (context : RecorderContext) (parameter : ParamCapture) :
-    TacticM RecordedValue := do
+    CaptureM RecordedData := do
   if parameter.context == .main then
     return ← parameter.capture
   let some spec := context.strategy
@@ -70,37 +70,49 @@ def recordValue [context : RecorderContext] [ToRecordedValue α]
     (field : String) (value : α) (collectReferences : Bool := true) : TacticM Unit :=
   context.step.captureField field (ToRecordedValue.capture value) { collectReferences }
 
+/-- Explicit display opt-in for typed values; ordinary `recordValue` stays unchanged. -/
+def recordValueWithDisplay [context : RecorderContext] [ToRecordedValue α]
+    (field : String) (value : α) (collectReferences : Bool := true)
+    (source : Option Syntax := none) : TacticM Unit :=
+  context.step.captureFieldWithDisplay field (ToRecordedValue.capture value)
+    { collectReferences } source
+
+/-- Commit a previously paired capture without querying its expired context. -/
+def recordCapturedWithDisplay [context : RecorderContext] (field : String)
+    (captured : RecordedValue) (collectReferences : Bool := true) : TacticM Unit :=
+  context.step.recordCapturedWithDisplay field captured collectReferences
+
 /-- Execute this invocation's selected original tactic. Recording blocks never execute it implicitly. -/
 def execute [RecorderContext] : TacticM Unit := executeRecordedStep
 
-/-- A recorder is ordinary term/do code; its primitives require the block's lexical context. -/
-syntax (name := recordingStep) "recording_step " "do " doSeq : term
-syntax (name := recordingStrategy) "recording_strategy " term:max " do " doSeq : term
-syntax (name := recordingStrategyContinuation)
-  "recording_strategy " term:max " (" &"continuation" " := " term ")" " do " doSeq : term
+macro "recording_step " "do " body:doSeq : term => `(term|
+  withStepRecorder fun context => do
+    letI : RecorderContext := context
+    do $body:doSeq
+)
 
-syntax (name := captureParamsStatement) "capture_params " term : doElem
-syntax (name := recordValueStatement) "record_value " term:arg term:arg : doElem
-syntax (name := executeRecordedStatement) "execute_recorded" : doElem
+macro "recording_strategy " nodes:term:max " do " body:doSeq : term => `(term|
+  withStrategyRecorder { nodes := $nodes } fun context => do
+    letI : RecorderContext := context
+    do $body:doSeq
+)
 
-macro_rules
-  | `(recording_step do $body:doSeq) =>
-    `(withStepRecorder fun context => do
+macro "recording_strategy " nodes:term:max " (" &"continuation" " := "
+    continuation:term ")" " do " body:doSeq : term => `(term|
+  withStrategyRecorder { nodes := $nodes, continuationIndex := $continuation }
+    fun context => do
       letI : RecorderContext := context
-      do $body:doSeq)
-  | `(recording_strategy $nodes (continuation := $continuation) do $body:doSeq) =>
-    `(withStrategyRecorder { nodes := $nodes, continuationIndex := $continuation } fun context => do
-      letI : RecorderContext := context
-      do $body:doSeq)
-  | `(recording_strategy $nodes do $body:doSeq) =>
-    `(withStrategyRecorder { nodes := $nodes } fun context => do
-      letI : RecorderContext := context
-      do $body:doSeq)
-  | `(doElem| capture_params $parameters) =>
-    `(doElem| captureParams $parameters)
-  | `(doElem| record_value $field $value) =>
-    `(doElem| recordValue $field $value)
-  | `(doElem| execute_recorded) =>
-    `(doElem| execute)
+      do $body:doSeq
+)
+
+macro "capture_params " parameters:term : doElem => `(doElem|
+  captureParams $parameters
+)
+
+macro "record_value " field:term:arg value:term:arg : doElem => `(doElem|
+  recordValue $field $value
+)
+
+macro "execute_recorded" : doElem => `(doElem| execute)
 
 end ProofScript.Recording

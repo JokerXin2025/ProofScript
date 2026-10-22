@@ -2,7 +2,7 @@
 
 ProofScript is a compile-time language extension for [Lean 4](https://lean-lang.org/).
 It provides a structured, extensible, and semantically enriched proof DSL that records Lean's live proof goals, tactic arguments, and branch structure and exports them as JSON.
-ProofScript also integrates page components such as ProofText body content, theorem statements, images, and LaTeX SVG. This data is automatically compiled and exported as JSON for renderers or other downstream tools to consume.
+ProofScript also integrates page components such as ProofText body content, theorem statements, images, and LaTeX SVG. Page builds compile and export this data as JSON for renderers or other downstream tools to consume.
 
 ## Table of Contents
 
@@ -32,7 +32,7 @@ After configuring the Lean project's ProofScript dependency and running `lake up
 `.PS4HTML/build/index.html`, then `ps4html serve` to preview it.
 See [`examples/site/`](examples/site/) and the [PS4HTML guide](tools/ps4html/README.md).
 Computation pages additionally need Node, Emscripten, and a matching Lean/Wasm runtime.
-The unified Info protocol is `5.0.0`; the recording protocol remains `0.0.0`. Each script step is one object with ordinary goal snapshot fields. Artifact manifests select configuration snapshots and invocation contracts. Rebuild older caches with the Lake facet; see the [configuration and export documentation](#unified-info-configuration).
+The unified Info protocol is `5.0.0`; the recording protocol is `0.1.0`. Each script step is one object with ordinary goal snapshot fields. Artifact manifests select configuration snapshots and invocation contracts. Rebuild older caches with the Lake facet; see the [configuration and export documentation](#unified-info-configuration).
 
 Add ProofScript as a dependency in `lakefile.toml` and run `lake update`. You can then use it in a Lean project.
 
@@ -413,13 +413,13 @@ Conclusions may optionally be named, for example `P => hQ : Q := hPQ hP` followe
 
 ### Mathlib Script Tactics
 
-`import ProofScript` includes Mathlib tactics and their presentation through `ProofScript.Mathlib.Info`. To load only tactic implementations and registrations, use:
+`import ProofScript` includes Mathlib tactics and their presentation modules through `ProofScript.Mathlib.Info`. Presentation configuration is registered during page builds. To load only tactic implementations and registrations, use:
 
 ```lean
 import ProofScript.Mathlib.Scripts
 ```
 
-For builtin tactics, `ProofScript.Script.Basic` provides execution and registrations; `ProofScript.Defaults.Script` adds their presentation. The public `ProofScript` entry loads all defaults. See [Unified Info Configuration](#unified-info-configuration). The currently wrapped tactics, in alphabetical order, are:
+For builtin tactics, `ProofScript.Script.Basic` provides execution and registrations; `ProofScript.Defaults.Script` adds their page presentation. The public `ProofScript` entry imports all defaults, whose Info commands are active only in page mode. See [Unified Info Configuration](#unified-info-configuration). The currently wrapped tactics, in alphabetical order, are:
 
 | Tactic | Supported Simplified Forms |
 | :- | :- |
@@ -467,7 +467,7 @@ macro "finish" proof:term : term => `(script
   finish $proof:term)
 ```
 
-Parameters use `RecordParam` instances: a leaf category registers `RecordParam (.category name)`, and array and optional inputs compose these instances automatically. Builtins include `term`, `ident`, `str`, `num`, `location`, `rwRuleSeq`, `simpArgs` and `optConfig`. Parenthesized categories, `+`, `*`, `?`, `sepBy` and `sepBy1` compose their codecs; an unnamed sequence needs a named category or a handwritten recorder. Arrays always remain arrays, including zero or one element. `num` records a JSON number; a numeral parsed as `term` remains a Lean expression reference.
+Parameters use `RecordParam` instances: a leaf category registers `RecordParam (.category name)`, and array and optional inputs compose these instances automatically. Builtin include `term`, `ident`, `str`, `num`, `location`, `rwRuleSeq`, `simpArgs` and `optConfig`. Parenthesized categories, `+`, `*`, `?`, `sepBy` and `sepBy1` compose their codecs; an unnamed sequence needs a named category or a handwritten recorder. Arrays always remain arrays, including zero or one element. `num` records a JSON number; a numeral parsed as `term` remains a Lean expression reference.
 
 The declaration configuration supports:
 
@@ -541,16 +541,41 @@ script_recorder snapshotThenClear (fields := goalFields ++ #[
 
 `ParamCapture` and `param` describe captures without scheduling them. Constructing the array does not capture anything: `capture_params` runs its entries in order using the state present at that point. `onFailure` defaults to `.bestEffort`, which writes `null` on capture failure; `.required` aborts. Each capture restores temporary elaboration state before committing its snapshot, and a failed batch rolls back all fields it wrote even if the caller catches the error. Set `collectReferences := false` to omit a field's citations. `ParamCapture.field` defaults to `name`; overriding it changes the emitted key while preserving the logical name for diagnostics. Use distinct keys for manual before/after snapshots.
 
-`record_value` supports `RecordedValue`, `Json`, `String`, `Bool`, `Nat`, `Int` and `Expr`, with composing instances for arrays, lists and options. `Expr` is captured in the current context; a previously captured `RecordedValue` retains its original snapshot. Custom types can implement `ToRecordedValue`. Conversion is isolated and required. To capture before execution and commit afterward, keep the complete value:
+`record_value` supports `RecordedValue`, `Json`, `String`, `Bool`, `Nat`, `Int` and `Expr`, with composing instances for arrays, lists and options. `ToRecordedValue.capture` returns `CaptureM RecordedData`; `Expr` is captured in the current context, and custom types can implement this interface. Conversion is isolated and required. Use `CaptureM.run` to save a `RecordedValue` before execution and commit it afterward:
 
 ```lean
 -- Inside a recording_step or recording_strategy block:
-let saved ← isolatedCapture (expression h.raw)
+let saved ← CaptureM.run (expression h.raw)
 execute_recorded
 record_value "evidence" saved
 ```
 
-Expression snapshots carry a local reference table and citations. Commit them through `record_value`; converting a `RecordedValue` to ordinary `Json` with `toJson` drops that table and citation data and is only suitable for inspection. Nested expression containers also retain their tables through `ToRecordedValue` conversion and commit.
+`RecordedValue` is the pure `{ data, nodes }` result of `CaptureM.run`. It has no `ToJson` instance; `RecordedValue.encode : Json` exports its data, expression table and root paths together. Its expression nodes can be imported into a new builder or committed to a proof's shared node array, with relocated references. Steps and branches keep structured `RecordedData` until final proof export. Passing it through `record_value`, including inside containers, preserves its graph without consulting the original context again; citations come from the pure graph.
+
+The recording format is `0.1.0`. `recordedProofJson` exports the pure structural graph and explicit `expressionRoots`. PS4HTML follows only these registered roots and applies display companions only through their invocation contract; ordinary JSON stays data. Old caches must be regenerated with `lake build MyLibrary:ps4html`; `ps4html make --cache` does not migrate them. The old expression exporter and compatibility adapters have been removed.
+
+Use explicit `<field>_display` companions for declaration names/types/local values, proposition hints and application binder information. Enable them with `goalParamWithDisplay`, `paramWithDisplay`, `explicitParamWithDisplay` or `recordValueWithDisplay`, and extend the output contract with `withDisplayFields`. Companions are ordinary `RecordedData`; auxiliary expressions share the subject's graph but add no citations. A missing subject or best-effort failure writes two nulls atomically. Ordinary `record_value` and custom conversions do not add companions automatically.
+
+```lean
+-- Freeze both fields while the context exists, then commit the saved pair:
+let saved ← CaptureM.run <| captureWithDisplay "evidence" (expression h.raw) (some h.raw)
+execute_recorded
+recordCapturedWithDisplay "evidence" saved
+```
+
+Custom conversions still compose structure. Use `snapshotExpression` for expression leaves, as below; callers explicitly request display for the whole conversion with `recordValueWithDisplay "evidence" value`. Nested expression occurrences receive paths relative to that field. Importing an existing snapshot relocates nodes without querying declarations again, so capture its display when first saving the subject.
+
+```lean
+structure Evidence where
+  term : Lean.Expr
+  label : String
+
+instance : ToRecordedValue Evidence where
+  capture value := do
+    return .object [
+      ("term", ← snapshotExpression value.term),
+      ("label", .plain (Lean.toJson value.label))]
+```
 
 Strategies use `recording_strategy nodes do ...`, with optional `(continuation := some index)`. `nodes` is a `List String` describing the script's proof branches; parenthesize compound expressions. A handwritten strategy recorder receives the runner's newline-separated labels through the additional `"_strategy_cases" strategyCases:str` parser arguments:
 
@@ -574,7 +599,7 @@ The block prepares branches automatically after its body succeeds, including aft
 
 Each `ParamCapture.context` is interpreted when that capture runs: `.main` selects the current main goal, while a strategy block also supports `.continuation` and `.branch "label"`. Selectors read current goals rather than a cached post-execution snapshot. Missing or invalid selected contexts follow that parameter's failure policy; non-main selectors outside a strategy block do likewise. Main-goal captures before execution do not require strategy branches to exist yet.
 
-Automatic ordinary recorders explicitly capture `goal_before` and `goal_after`; automatic strategy recorders capture only `goal_before`. Handwritten recorders choose their own snapshots with `goalParam` and declare matching contracts with `goalFields`, `strategyGoalFields` or custom fields. Declaring a field does not capture it. A goal snapshot with no remaining goal writes `null`; goal snapshots preserve expression types and omit citations from goal constants. Templates may reference only fields supplied by their recorder.
+Automatic ordinary recorders capture `goal_before`, `goal_after` and their `_display` companions; strategy recorders capture only the before pair. Expression parameters also receive companions, named `<field>_before_display` and `<field>_after_display` for `both` timing. Handwritten recorders choose snapshots with `goalParam` or `goalParamWithDisplay`, and declare matching contracts with `goalFields`, `strategyGoalFields`, `withDisplayFields` or custom fields. Declaring a field does not capture it. No remaining goal writes null for the goal and its enabled companion; goal constants add no citations. Templates may reference only fields supplied by their recorder.
 
 `timing` belongs only to declaration configuration. Automatic generation places `once`/`before` captures before execution and `after` captures afterward; `both` emits `<field>_before` and `<field>_after`. Handwritten DSL code schedules captures by statement position. Empty keys, reserved keys (`_ruleId`, `branches`) and duplicate writes always fail, including conflicts across capture and value statements; `bestEffort` cannot suppress these errors. Cross-phase collisions may be detected after tactic execution. Declaration checks still reject invalid names and collisions after expanding timing.
 
@@ -588,13 +613,13 @@ Defining script tactics in the style of `macro_rules` / `elab_rules` is not curr
 
 Declare a page theorem with `@theorem` or `@lemma`, then run `lake build MyLibrary:ps4html` to export it. In page JSON, they use the tags `"theorem"` and `"lemma"`, respectively.
 Published proof data is available under `.PS4HTML/inputs/<package>/<library>/.ProofScript/proofs/` in the Lean project.
-At the top level, every proof tree contains `schemaVersion` and the complete Lean source in `code`. Script-mode trees also contain the expression table `expressions` and recorded step array `proof`. Each array entry is a single step object containing `_ruleId`, captured fields, and any strategy `branches`; each branch's `proof` uses the same format. Default ordinary recorders include `goal_before` and `goal_after` as expression references or `null`; default strategy recorders include only `goal_before`.
+At the top level, every proof tree contains `schemaVersion` and the complete Lean source in `code`. Script-mode trees also contain the expression table `expressions`, the registered expression paths `expressionRoots` and recorded step array `proof`. Each array entry is a single step object containing `_ruleId`, captured fields, and any strategy `branches`; each branch's `proof` uses the same format. Default ordinary recorders include `goal_before` and `goal_after` as expression references or `null`; default strategy recorders include only `goal_before`.
 
-Within `:= script`, use unprefixed DSL names directly; the framework automatically adds the `script_` prefix and checks every step, recording it during page builds. `:= by` accepts ordinary Lean tactics but cannot use ProofScript's script tactics. Its exported tree retains only `schemaVersion` and the complete `code`, and does not output `expressions` or `proof`. Both proof forms collect references during page builds.
+Within `:= script`, use unprefixed DSL names directly; the framework automatically adds the `script_` prefix and checks every step, recording it during page builds. `:= by` accepts ordinary Lean tactics but cannot use ProofScript's script tactics. Its exported tree retains only `schemaVersion`, `module` and the complete `code`, and does not output `expressions`, `expressionRoots` or `proof`. Both proof forms collect references during page builds.
 
-`@theorem` and `@lemma` create native Lean theorems in both verification and page builds. They no longer generate `scriptcheck_<name>` declarations. Ordinary `lake build` and IDE checking use the execution version of `script` or native `by`, preserve asynchronous proof checking, and skip recording and page export. Inline `info` and citation presentation checks are consumed during page builds; standalone Info declarations and explicit low-level recorder APIs retain their behavior.
+`@theorem` and `@lemma` create native Lean theorems in both verification and page builds. They no longer generate `scriptcheck_<name>` declarations. Ordinary `lake build` and IDE checking use the execution version of `script` or native `by`, preserve asynchronous proof checking, and skip recording and page export. Inline `info` and citation presentation checks are consumed during page builds. All six standalone Info commands skip field decoding, semantic validation and configuration registration in verification mode; their syntax must still parse. Both modes retain editor references, including best-effort resolution of metadata targets. Explicit low-level recorder APIs retain their recording capability.
 
-`lake build MyLibrary:ps4html` automatically enables `proofScript.pageBuild` and compiles the required user source packages in `.lake/ps4html/<package>/<library>/`. It preserves ordinary `.lake/build/` artifacts and reuses support dependencies. Page builds currently record the source modules afresh; a module cannot change build mode midway through its commands.
+`lake build MyLibrary:ps4html` automatically enables `proofScript.pageBuild` and compiles the required source packages, including the ProofScript framework and configuration-bearing dependencies, in `.lake/ps4html/<package>/<library>/`. This restores framework presentation defaults as well as user configuration. It preserves ordinary `.lake/build/` artifacts and reuses base dependencies that need no page or Info data, such as Mathlib. Page builds currently record the source modules afresh; a module cannot change build mode midway through its commands.
 
 The repository's default build runs verification tests. Run `lake build TestPage:pageTests` for tests that require recording, page components or exported state; this target uses isolated page build artifacts.
 
@@ -670,7 +695,7 @@ ProofScript exports both the ProofText source and the parsed semantic AST to the
 
 ### Registering Publication Information
 
-`project_info` configures and selects an active project and persists it in `.olean`. Use `project_info "MyProject" { ... }` for a stable named identity. Without a target, it updates the active project or creates one using the module name. Projects support repeated updates, and a site can contain multiple projects.
+During page builds, `project_info` configures and selects an active project and persists it in the page-build `.olean`. Use `project_info "MyProject" { ... }` for a stable named identity. Without a target, it updates the active project or creates one using the module name. Projects support repeated updates, and a site can contain multiple projects. Verification builds skip this configuration command.
 
 ```lean
 project_info {
@@ -766,7 +791,11 @@ def chooseOffset (large : Bool) : Nat := if large then 128 else 112
 }
 ```
 
-The output includes the declaration's full name, readable type, function body, and a structured Lean expression table. These fields are source information and intermediate artifacts; they do not promise a browser ABI for Lean compiler internals. Actual execution is jointly determined by the versioned renderer ID and manifest. See `docs/Embedded-Computation-Renderer-zh.md` for details.
+The output includes the declaration's full name, readable type, function body, and a structured Lean expression table. These fields are source information and intermediate artifacts; they do not promise a browser ABI for Lean compiler internals. Actual execution is jointly determined by the versioned renderer ID and manifest. See `docs/Frontend-Computation-Handoff-zh.md` for details.
+
+Function provenance uses an independent structural capture and pure encoding boundary. The default command and `ComputationFunction.encode` / `ComputationComponent.encode` export `function.recordingVersion = "0.1.0"`, its own graph, `expressionRoots` and display companions, with paths relative to `function`. Consumers reject missing or old function versions and require a page rebuild. Component, pending manifest and bundle versions remain `0.0.0`; the `proofscript-json-v1` execution ABI is unchanged, and finalization preserves the complete function data.
+
+`ComputationFunction` stores one `recording : RecordedValue`. Export functions and components through `.encode`, which returns `Except String Json`; neither type has an unchecked `ToJson` instance.
 
 The computation entry point must have the form `α → β` or `α → Except String β`, with `Lean.FromJson α` and `Lean.ToJson β` instances available. The command generates a `String → String` wrapper and a pending build manifest; the actual Wasm resource is generated by a later bundler stage.
 
@@ -786,7 +815,7 @@ node /path/to/ProofScript/scripts/finalize-computations.mjs
 
 Finalization publishes resources to a content-addressed directory and updates page execution to `ready`. For the frontend implementation, see `docs/Frontend-Computation-Handoff-zh.md`.
 
-For the implemented computation pipeline and renderer API, see `docs/Embedded-Computation-Renderer-zh.md`.
+For the implemented computation pipeline and renderer API, see `docs/Frontend-Computation-Handoff-zh.md`.
 
 Frontend renderers can use the Fibonacci example in `docs/Embedded-Computation-Quickstart-zh.md` for an initial end-to-end test.
 
@@ -794,7 +823,9 @@ Frontend renderers can use the Fibonacci example in `docs/Embedded-Computation-Q
 
 See the [Info command reference (Chinese)](docs/Info-Commands-zh.md) for all builtin fields, defaults, template syntax, and examples.
 
-All six commands use typed models in `ProofScript.Info`, schema-derived fields, persistent updates and the same export protocol:
+All six commands are page-only configuration actions. In ordinary builds and IDE checking they skip field decoding, semantic validation and persistent updates; syntax parsing and module-mode consistency checks still apply. Existing targets and known fields retain editor navigation and highlighting, while unresolved metadata targets remain optional. See [IDE and language server support (Chinese)](docs/IDE-Support-zh.md). The rules and examples below describe page mode.
+
+During page builds, they use typed models in `ProofScript.Info`, schema-derived fields, persistent updates and the same export protocol:
 
 | Command | Model | Target |
 | --- | --- | --- |
@@ -823,19 +854,19 @@ Lean resolves the actual import graph: later local writes and descendant writes 
 
 ### Modules and Maintenance
 
-`import ProofScript` includes scripts, pages and all presentation defaults. `ProofScript.Info` supplies metadata models and commands without the execution runtime; `Script.Registry` supplies pure registrations, `Script.Command` declares tactics, and `Page.Command` integrates pages. `Script.Basic` / `Mathlib.Scripts` contain execution and registrations; `Defaults.Script` / `Defaults.Lean2TeX` / `Mathlib.Info` provide presentation.
+`import ProofScript` includes scripts, pages and all presentation default modules; their Info registration occurs only in page builds. `ProofScript.Info` supplies metadata models and commands without the execution runtime; `Script.Registry` supplies pure registrations, `Script.Command` declares tactics, and `Page.Command` integrates pages. `Script.Basic` / `Mathlib.Scripts` contain execution and registrations; `Defaults.Script` / `Defaults.Lean2TeX` / `Mathlib.Info` provide presentation.
 
-Use model names such as `ProofScript.Info.ProjectInfo` and source locations from `ProofScript.Foundation.SourceLocation`. Domain queries such as `resolveProjectInfo` explicitly take `Info.Query` with a module and optional boundary; exporters must query the requested owner.
+Use model names such as `ProofScript.Info.ProjectInfo` and source locations from `ProofScript.Foundation.SourceLocation`. Domain queries such as `resolveProjectInfo` explicitly take `Info.Query` with a module and optional boundary; exporters must query the requested owner. Queries cannot recover Info commands skipped during verification. Models, schemas, codecs, query APIs and explicit low-level recording remain available in both modes.
 
 Add ordinary fields to the domain structure and derive `InfoSchema`. The `InfoSchema` typeclass holds the field rules directly. Register special merge and validation rules as an `InfoSchema` instance using the generated typed handles and `withOverrides!`; configuration consumers and JSON decoding then share the final rules. New value types implement `InfoCodec`, which extends Lean's `ToJson` and automatically supplies `FromJson` through its structured decoder. Use `toJson` / `fromJson?` for ordinary JSON consumers; Info validation retains `Diagnostic` paths and related fields. New domains also need an `InfoSpec` for the kind and dependency query, target resolution, a thin command and snapshot dependency handling. Consumers obtain field rules from the `InfoSchema` instance. The Python backend adapts frozen values for rendering. It does not maintain another input field list or replay configuration events.
 
-Derivation currently supports ordinary nonrecursive structures without parameters, inheritance, dependent field types or dependent defaults. Configuration codecs remain separate from Recording capture APIs. `script_info` does not change recorders or output contracts. A ruleId includes its defining module; moving a registration changes its identity.
+Derivation currently supports ordinary nonrecursive structures without parameters, inheritance, dependent field types or dependent defaults. Custom Info commands should place all target resolution, field processing and registration inside `whenPageBuild do`; explicit low-level APIs such as `commitInfo` remain available in either mode. Configuration codecs remain separate from Recording capture APIs. `script_info` does not change recorders or output contracts. A ruleId includes its defining module; moving a registration changes its identity.
 
 Public interface smoke tests are `Test.InfoCoreAPITest` and `Test.InfoAPITest`; `Test.InfoSchemaTest` checks that configuration consumers and JSON decoding apply the same rules; `Test/test_theorem_site_browser.mjs` checks theorem navigation on the generated example site. Internal Python scripts used for stage acceptance have been removed. See the [Chinese configuration section](README-zh.md#统一-info-配置) for query examples.
 
 ## Page Export
 
-`page_end` writes the page using each component’s captured configuration; subsequent page components are ignored. Info commands after `page_end` remain available to later code and importing modules. Build complete sites with `lake build MyLibrary:ps4html`. Info uses protocol `5.0.0`, recording uses `0.0.0`, and `info/index.json` is the completion index containing digests, schemas, snapshots and invocation-contract associations. Metadata is reconstructed from `.olean`; build steps generate page/proof/resource contents. `ps4html make --cache` only reads completed exports; incomplete or incompatible caches require rebuilding.
+During page builds, `page_end` writes the page using each component’s captured configuration; subsequent page components are ignored. Info commands after `page_end` remain available to later code and importing modules in that mode. Build complete sites with `lake build MyLibrary:ps4html`. Info uses protocol `5.0.0`, recording uses `0.1.0`, and `info/index.json` is the completion index containing digests, schemas, snapshots and invocation-contract associations. Metadata is reconstructed from page-build `.olean` files; build steps generate page/proof/resource contents. Verification `.olean` files omit skipped Info data and must be rebuilt for page export. `ps4html make --cache` only reads completed exports; incomplete or incompatible caches require rebuilding.
 
 ## Requirements
 

@@ -21,7 +21,7 @@ run_cmd do
   let query : Query := { moduleName := env.mainModule }
   match freezeTheoremFacts env query "test" `conflictConsumer with
   | .error error =>
-    unless error.path == #[.field "project"] &&
+    unless error.path == #[.key "project"] &&
         error.related.any (·.owner == `Test.TheoremDependencyModuleTest) &&
         error.related.any (·.owner == `Test.TheoremDependencyConflict) do
       throwError "conflicting target projects lost their independent origins"

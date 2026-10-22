@@ -5,32 +5,28 @@ Lean/Wasm bundle，并将计算结果交给具体页面组件。
 
 当前内置实现位于 `tools/ps4html/PS4HTML/assets/js/computation.js`，注册入口为
 `PS4HTMLComputation.register`。本文 TypeScript/React 片段为下游接入参考，不表示内置实现使用 React。
-所有公开 `schemaVersion` 均为 `0.0.0`。
+component、pending 和 bundle 的 `schemaVersion` 仍为 `0.0.0`，执行 ABI 为 `proofscript-json-v1`。函数来源信息单独采用 `function.recordingVersion = "0.1.0"`；缺失或旧版本必须重新运行 `lake build MyLibrary:ps4html`。缓存读取不会迁移旧来源数据。
 
 ## 站点构建器职责
 
 前端仓库或页面渲染器不只负责读取已经存在的 JSON。负责发布网站的 build pipeline 必须先编译
-Lean/ProofScript 项目，再构建和 finalize 计算资源。完整且不可省略的顺序是：
+Lean/ProofScript 项目，再构建和 finalize 计算资源。标准入口会依次完成页面编译、Wasm 构建、finalize、Info 完成清单校验和站点发布：
 
 ```sh
-# 1. 编译项目；产生 page JSON、pending manifests、wrapper 和最新 C IR
-lake build
-
-# 2. 按 bundleId 构建多入口 Lean/Wasm
+# 配置与当前 Lean commit 匹配的 Wasm runtime，然后构建页面
 PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
-  node /path/to/ProofScript/scripts/build-computations.mjs
-
-# 3. 发布内容寻址资源，并将页面 execution 从 pending 回填为 ready
-node /path/to/ProofScript/scripts/finalize-computations.mjs
+  lake build MyLibrary:ps4html
 ```
 
-渲染器的生产构建必须在上述任一步失败时失败，不能继续发布旧页面或静态 fallback 冒充成功。推荐在
+普通 `lake build` 只验证证明，不产生页面录制。自定义管线也必须先执行页面模式编译，取得 page/pending/wrapper/C IR，再以同一 `PROOF_SCRIPT_OUTPUT_ROOT` 调用 `build-computations.mjs` 和 `finalize-computations.mjs`，最后生成完整 Info 清单。标准 facet 已处理这些步骤；发布输入位于 `.PS4HTML/inputs/<包>/<库>/.ProofScript/`。
+
+渲染器的生产构建必须在任一步失败时失败，不能继续发布旧页面或静态 fallback 冒充成功。推荐在
 部署前额外检查：
 
 ```sh
 # 不应有要部署的 pending 页面；所有 ready 资源必须存在
 node /path/to/ProofScript/scripts/test-finalized-computation.mjs \
-  .ProofScript/pages/<page>.json
+  .PS4HTML/inputs/<包>/<库>/.ProofScript/pages/<page>.json
 ```
 
 重要约束：
@@ -78,16 +74,27 @@ Finalized component 示例：
         },
         "renderer": "proofscript/test-json-v1",
         "function": {
-          "declaration": "doubleValue",
-          "type": "ComputationRequest → Except String ComputationResponse"
+          "recordingVersion": "0.1.0",
+          "declaration": "Demo.compute",
+          "type": "Bool → Nat",
+          "expression": {"$ref": "e0"},
+          "implementation": {"$ref": "e3"},
+          "expressions": {
+            "e0": {"kind": "const", "name": "Demo.compute", "levels": []},
+            "e1": {"kind": "const", "name": "Bool", "levels": []},
+            "e2": {"kind": "lit", "lit": {"kind": "literal.nat", "value": 0}},
+            "e3": {"kind": "lam", "name": "_", "type": {"$ref": "e1"},
+              "body": {"$ref": "e2"}, "binderInfo": "default"}
+          },
+          "expressionRoots": [["expression"], ["implementation"]]
         },
         "execution": {
           "backend": "wasm",
           "status": "ready",
           "abi": "proofscript-json-v1",
           "bundleId": "Test.ComputationComponentTest",
-          "entry": "doubleValue",
-          "wrapper": "__proofScript_doubleValue",
+          "entry": "Demo.compute",
+          "wrapper": "__proofScript_compute",
           "manifest": {"$resource": {}},
           "module": {"$resource": {}},
           "wasm": {"$resource": {}}
@@ -111,6 +118,8 @@ Finalized component 示例：
 | `execution.wasm` | Lean 函数和 Lean runtime 的 Wasm 二进制 |
 | `execution.manifest` | bundle entries 和产物元数据 |
 | `payload` | renderer 专用初始配置、fallback 和领域数据 |
+
+`function` 的根路径相对于函数对象，节点表不与 proof 或其他函数共用。可选的 `expression_display` / `implementation_display` 由生产者显式提供，其辅助表达式仍属于本图。Finalizer 只回填执行资源，保留全部 function 数据；来源字段不参与浏览器执行 ABI。
 
 前端必须要求：
 

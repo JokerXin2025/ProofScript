@@ -81,8 +81,9 @@ def finishRecordingStrategy : TacticM Unit := withRollback do
     let label := pending.labels[index]!
     let (proof, bindings) ← takeBoxWithContracts (pending.childPrefix ++ "_" ++ label)
     attachRecordingSlotContracts pending.slot <| bindings.map fun binding =>
-      { binding with path := #[.field "branches", .index index, .field "proof"] ++ binding.path }
-    branches := branches.push <| json% { name: $label, proof: $proof }
-  mergeRecordingSlotFields pending.slot [("branches", Json.arr branches)]
+      { binding with path := #[.key "branches", .index index, .key "proof"] ++ binding.path }
+    branches := branches.push <| .object [
+      ("name", .plain (toJson label)), ("proof", .array proof)]
+  mergeRecordingSlotFields pending.slot [("branches", .array branches)]
 
 end ProofScript.Recording

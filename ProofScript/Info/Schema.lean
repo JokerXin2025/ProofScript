@@ -1,5 +1,5 @@
 import ProofScript.Info.Codec
-import ProofScript.Foundation.Name
+import ProofScript.Utils.Json
 
 open Lean Elab Command
 
@@ -133,7 +133,7 @@ def InfoSchema.decode (schema : InfoSchema Record) (value : Json) : Except Diagn
     let value ← match object.get? field.name, field.defaultJson with
       | some value, _ => pure value
       | none, some value => pure value
-      | none, none => throw { message := "missing required field", path := #[.field field.name] }
+      | none, none => throw { message := "missing required field", path := #[.key field.name] }
     let checked ← (field.decode value).mapError (Diagnostic.atField field.name)
     values := values ++ [(field.name, toJson checked)]
   let record ← schema.decodeValues (Json.mkObj values)
@@ -151,7 +151,7 @@ def InfoSchema.jsonSchema (schema : InfoSchema Record) := json% {
 
 def decodeField [InfoCodec Value] (object : Json) (name : String) : Except Diagnostic Value := do
   let value ← (object.getObjVal? name).mapError fun message =>
-    { message, path := #[.field name] }
+    { message, path := #[.key name] }
   (InfoCodec.decode value).mapError (Diagnostic.atField name)
 
 def FieldHandle.withCodec (handle : FieldHandle Record Value)

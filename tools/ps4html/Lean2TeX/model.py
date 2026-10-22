@@ -8,7 +8,7 @@ from typing import Any
 
 @dataclass
 class DisplayNode:
-    """A renderer-oriented tree independent from ProofScript's ExprJSON shape."""
+    """A renderer-oriented tree independent from the recorded expression graph."""
 
     macro_name: str
     kind: str = ""

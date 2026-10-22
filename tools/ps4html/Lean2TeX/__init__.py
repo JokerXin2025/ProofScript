@@ -1,9 +1,9 @@
 """Lean2TeX —— PS4HTML 页面生成器的 TeX 直译接口。
 
-Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 将 Lean 表达式导出为与 Lean
-语法树同构的 ExprJSON，本模块将其转换为 DisplayTree，再渲染为 TeX。因此本模块的职责是：
+Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 导出结构表达式图和显式 Display，
+由文档根清单解析出具体表达式 occurrence，本模块将其转换为 DisplayTree，再渲染为 TeX：
 
-    **接收证明树的一个子树（JSON 表达式 AST），输出对应的 TeX 代码。**
+    **接收已解析的表达式 occurrence，输出对应的 TeX 代码。**
 
 渲染配置由 Lean 冻结并导出到 `.ProofScript/info/snapshots/`，完成清单为 `info/index.json`。
 
@@ -12,7 +12,7 @@ Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 将 Lean 表达
     from Lean2TeX import load
 
     renderer = load(export_root, proof_module, snapshot_id=artifact["snapshotId"])
-    tex = renderer.render(node)                # node 是 JSON 表达式子树
+    tex = renderer.render(node)                # node 由 ExpressionResolver 解析
     display = renderer.convert(node)
     tex = renderer.render_display(display)
 

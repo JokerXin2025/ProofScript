@@ -1,3 +1,4 @@
+import ProofScript.Script.Recording.Encoding
 import ProofScript.Script.Recording.Recorder
 import ProofScript.Script.Recording.Builtins
 import ProofScript.Script.Recording.Complex

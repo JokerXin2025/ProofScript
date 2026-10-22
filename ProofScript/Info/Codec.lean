@@ -1,4 +1,5 @@
 import ProofScript.Info.Syntax
+import ProofScript.Info.JsonSchemas
 
 open Lean Elab.Command Parser.Term
 
@@ -12,6 +13,10 @@ class InfoCodec (α : Type) extends ToJson α where
   parse : TSyntax `term → CommandElabM α
   decode : Json → Except Diagnostic α
   jsonSchema : Json
+  /-- Record editor semantics without parsing, validating, or evaluating the value.
+  Malformed or incomplete input must be ignored; cancellation and resource failures propagate.
+  -/
+  annotate : TSyntax `term → CommandElabM Unit := fun _ => pure ()
 
 def decodeJson [FromJson α] (value : Json) : Except Diagnostic α :=
   (fromJson? value).mapError fun message => { message }
@@ -22,7 +27,7 @@ instance : InfoCodec String where
     | throwErrorAt stx "expected a string literal"
     return text.getString
   decode := decodeJson
-  jsonSchema := json% { type: "string" }
+  jsonSchema := InfoJson.stringSchema
 
 instance : InfoCodec Bool where
   parse
@@ -30,7 +35,7 @@ instance : InfoCodec Bool where
   | `(term| false) => pure false
   | stx => throwErrorAt stx "expected true or false"
   decode := decodeJson
-  jsonSchema := json% { type: "boolean" }
+  jsonSchema := InfoJson.boolSchema
 
 instance : InfoCodec Nat where
   parse stx := do
@@ -38,7 +43,7 @@ instance : InfoCodec Nat where
     | throwErrorAt stx "expected a natural number literal"
     return number.getNat
   decode := decodeJson
-  jsonSchema := json% { type: "integer", minimum: 0 }
+  jsonSchema := InfoJson.natSchema
 
 instance : InfoCodec Int where
   parse
@@ -46,7 +51,7 @@ instance : InfoCodec Int where
   | `(term| - $number:num) => pure (-Int.ofNat number.getNat)
   | stx => throwErrorAt stx "expected an integer literal"
   decode := decodeJson
-  jsonSchema := json% { type: "integer" }
+  jsonSchema := InfoJson.intSchema
 
 instance : InfoCodec JsonNumber where
   parse stx := do
@@ -54,7 +59,7 @@ instance : InfoCodec JsonNumber where
     | throwErrorAt stx "expected a numeric literal"
     return value
   decode value := value.getNum?.mapError fun message => { message }
-  jsonSchema := json% { type: "number" }
+  jsonSchema := InfoJson.numberSchema
 
 instance : InfoCodec ExtraValue where
   parse := parseExtraValue
@@ -77,20 +82,23 @@ instance [InfoCodec α] : InfoCodec (Option α) where
   decode
   | .null => pure none
   | value => some <$> InfoCodec.decode value
-  jsonSchema := json% {
-    anyOf: [
-      $(InfoCodec.jsonSchema α),
-      { type: "null" }
-    ]
-  }
+  jsonSchema := InfoJson.nullableSchema (InfoCodec.jsonSchema α)
+  annotate
+  | `(term| some $value:term) => InfoCodec.annotate (α := α) value
+  | _ => pure ()
 
 /-- Fields with conditional defaults retain absence but accept the ordinary bare input syntax. -/
 @[implicit_reducible] def optionalInputCodec [InfoCodec α] : InfoCodec (Option α) :=
   let ordinary : InfoCodec (Option α) := inferInstance
-  { ordinary with parse := fun stx => do
+  { ordinary with
+    parse := fun stx => do
       match stx with
       | `(term| none) | `(term| some $_:term) => ordinary.parse stx
-      | _ => some <$> InfoCodec.parse stx }
+      | _ => some <$> InfoCodec.parse stx
+    annotate := fun stx => do
+      match stx with
+      | `(term| none) | `(term| some $_:term) => ordinary.annotate stx
+      | _ => InfoCodec.annotate (α := α) stx }
 
 instance [InfoCodec α] : InfoCodec (Array α) where
   parse stx := do
@@ -101,12 +109,16 @@ instance [InfoCodec α] : InfoCodec (Array α) where
     let items ← value.getArr?.mapError fun message => { message }
     items.mapIdxM fun index item =>
       (InfoCodec.decode item).mapError (Diagnostic.atIndex index)
-  jsonSchema := json% { type: "array", items: $(InfoCodec.jsonSchema α) }
+  jsonSchema := InfoJson.arraySchema (InfoCodec.jsonSchema α)
+  annotate
+  | `(term| [$[$items:term],*]) => items.forM (InfoCodec.annotate (α := α))
+  | _ => pure ()
 
 instance [InfoCodec α] : InfoCodec (List α) where
   parse stx := Array.toList <$> InfoCodec.parse stx
   decode value := Array.toList <$> InfoCodec.decode value
   jsonSchema := InfoCodec.jsonSchema (Array α)
+  annotate := InfoCodec.annotate (α := Array α)
 
 /-- Domain enumerations declare their syntax and wire representation together. -/
 @[implicit_reducible] def enumCodec [BEq α] (cases : Array (String × α)) : InfoCodec α where
@@ -136,6 +148,7 @@ instance [InfoCodec α] : InfoCodec (List α) where
     let value ← InfoCodec.decode value
     (wrap value).mapError fun message => { message }
   jsonSchema := InfoCodec.jsonSchema α
+  annotate := InfoCodec.annotate (α := α)
 
 /-- Standard JSON consumers share the domain decoder; Info internals retain structured errors.
 Keep this adapter after the primitive codecs so their `decodeJson` uses Lean's decoders. -/

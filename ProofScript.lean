@@ -1,5 +1,5 @@
 import ProofScript.Info.Commands
-import ProofScript.Defaults
+import ProofScript.Builtin
 import ProofScript.Mathlib.Info
 import ProofScript.Page.Command
 import ProofScript.Page.Component.ProofText

@@ -4,7 +4,7 @@ import ProofScript.Output.Path
 import ProofScript.Page.State
 import ProofScript.Page.Component.Core
 import ProofScript.Info.Declaration
-import ProofScript.Build.Mode
+import ProofScript.Core.BuildMode
 
 open Lean Parser Elab Command Tactic
 
@@ -195,7 +195,7 @@ private def elaborateDeclarationCore (input : ParsedDeclaration)
 
   | .script statements => do
       let declarationName := name.getId.toString
-      withRecordingSession <| withExprJsonExport do
+      withRecordingSession do
         pushRecordingTag declarationName
         ensureBox declarationName
         let tactics ← collectRecordTactics (scriptStmtsToArray statements)
@@ -206,9 +206,8 @@ private def elaborateDeclarationCore (input : ParsedDeclaration)
         unless ← completeDeclaration before kind name declaration metadata do return
         let moduleName ← getMainModule
         let proofPath ← liftIO <| activeOutputPath (proofOutputPath moduleName declaration)
-        let expressions ← getExprJsonTable
         prepare
-        let proof ← recordedProofJson declarationName code expressions moduleName
+        let proof ← recordedProofJson declarationName code moduleName
           (artifactKey := some { owner := moduleName, kind := .proof, name := declaration })
           (path := (proofOutputPath moduleName declaration).toString)
         modifyEnv fun env => registerScript env declaration type.raw (scriptStmtsToArray statements)
@@ -220,6 +219,9 @@ private def elaborateDeclarationCore (input : ParsedDeclaration)
 def elaborateDeclaration (prepare : CommandElabM Unit := pure ()) : CommandElabM Unit := do
   let pageBuild ← recordModuleBuildMode
   let input ← readDeclaration
+  for metadata in input.metadata do
+    if let `(declarationInfo| (info := $fields:infoFields)) := metadata then
+      Info.addInfoFieldInfos (inferInstance : Info.InfoSchema Info.TheoremInfo) fields
   unless pageBuild do
     elabCommand (← theoremSyntax input (← verificationProof input.proof))
     return

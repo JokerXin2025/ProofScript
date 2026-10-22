@@ -49,7 +49,7 @@ script_recorder apiMixed (fields := ProofScript.Recording.goalFields ++ #[
     record_value "label" "direct"
     capture_params #[
       { name := "count", onFailure := .required,
-        capture := pure (.scalar (json% 7)) }
+        capture := pure (.plain (json% 7)) }
     ]
     execute_recorded
     capture_params #[goalParam "goal_after"]
@@ -59,7 +59,7 @@ script_recorder apiPlanCollision "api_plan_collision" => recording_step do
   capture_params #[goalParam "goal_before"]
   record_value "label" "direct"
   capture_params #[
-    { name := "label", capture := pure (.scalar (json% "plan")) }
+    { name := "label", capture := pure (.plain (json% "plan")) }
   ]
   execute_recorded
   capture_params #[goalParam "goal_after"]
@@ -75,14 +75,14 @@ script_recorder apiScheduled (fields := ProofScript.Recording.goalFields ++ #[
     capture_params #[
       goalParam "goal_after",
       param (.category `ident) "evidence_after" h,
-      { name := "closed", onFailure := .required, capture := pure (.scalar (json% "no remaining goal")) }
+      { name := "closed", onFailure := .required, capture := pure (.plain (json% "no remaining goal")) }
     ]
 
 script_macro apiPhaseCollision "api_phase_collision" => `(tactic| trivial)
 script_recorder apiPhaseCollision "api_phase_collision" => recording_step do
-  capture_params #[goalParam "goal_before", { name := "label", capture := pure (.scalar (json% "before")) }]
+  capture_params #[goalParam "goal_before", { name := "label", capture := pure (.plain (json% "before")) }]
   execute_recorded
-  capture_params #[goalParam "goal_after", { name := "label", capture := pure (.scalar (json% "after")) }]
+  capture_params #[goalParam "goal_after", { name := "label", capture := pure (.plain (json% "after")) }]
 
 script_macro apiRequiredAfter (params := [h(timing := both, failure := required)])
   "api_required_after" h:ident => `(tactic| clear $h:ident)
@@ -106,7 +106,7 @@ script_info apiMetadataOnly {
 
 script_macro apiGoalCollision "api_goal_collision" => `(tactic| trivial)
 script_recorder apiGoalCollision "api_goal_collision" => recording_step do
-  capture_params #[goalParam "goal_before", { name := "goal_before", capture := pure (.scalar (json% "conflict")) }]
+  capture_params #[goalParam "goal_before", { name := "goal_before", capture := pure (.plain (json% "conflict")) }]
   execute_recorded
   capture_params #[goalParam "goal_after"]
 
@@ -148,8 +148,8 @@ script_recorder apiSnapshots (fields := ProofScript.Recording.goalFields ++ #[
       ("proof", .expression), ("flag", .boolean)]), nullable := false }])
   "api_snapshots" h:ident => recording_step do
     capture_params #[goalParam "goal_before", param (.category `ident) "before" h .required]
-    let payload ← isolatedCapture do
-      return .array #[.object [("proof", ← expression h.raw), ("flag", .scalar (json% true))]]
+    let payload ← CaptureM.run do
+      return .array #[.object [("proof", ← expression h.raw), ("flag", .plain (json% true))]]
     record_value "payload" payload
     execute_recorded
     capture_params #[goalParam "goal_after", param (.category `ident) "after" h]
@@ -162,7 +162,7 @@ script_recorder apiFinish (fields := ProofScript.Recording.goalFields ++ #[
     execute_recorded
     capture_params #[
       goalParam "goal_after",
-      { name := "closed", onFailure := .required, capture := pure (.scalar (json% "no remaining goal")) }
+      { name := "closed", onFailure := .required, capture := pure (.plain (json% "no remaining goal")) }
     ]
 
 theorem apiDiscardedReference : True := True.intro
@@ -192,7 +192,7 @@ script_recorder apiCitations (fields := ProofScript.Recording.goalFields ++ #[
         { name := "kept", onFailure := .required,
           capture := expression (mkIdent ``apiKeptReference) }
       ]
-      let rejected ← isolatedCapture (expression (mkIdent ``apiDiscardedReference))
+      let rejected ← CaptureM.run (expression (mkIdent ``apiDiscardedReference))
       try
         record_value "kept" rejected
       catch _ => pure ()

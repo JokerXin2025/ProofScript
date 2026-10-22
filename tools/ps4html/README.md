@@ -40,12 +40,12 @@ ps4html clean
 `MyLibrary` 是项目 `lean_lib` 名称，不是单个 Lean 模块。Python 命令也可通过
 `python3 -m PS4HTML` 运行；`-c` 是 `--cache` 的短选项。
 
-普通 `lake build` 和 IDE 默认只验证原生 theorem，不录制步骤或导出页面。
+普通 `lake build` 和 IDE 默认只验证原生 theorem，不录制步骤或导出页面；六种 Info 命令也跳过字段解码、语义校验和配置登记，语法与模块模式一致性检查仍然生效。已有元数据目标和已知字段仍提供编辑器语义信息，未找到的元数据目标可以跳过。
 页面 facet 自动启用 `proofScript.pageBuild`，只清理专用的
 `.lake/ps4html/<包名>/<库名>/`，保留普通 `.lake/build/` 与自定义普通构建目录。
-一次隔离的 Lake 构建生成所选库及所需用户源码依赖的 Lean 产物、页面、证明 JSON 和资源，
+一次隔离的 Lake 构建生成所选库、所需用户源码依赖及 ProofScript 框架的 Lean 产物、页面、证明 JSON 和资源，
 并在同一工作空间中运行 Info exporter；随后按需 build/finalize 计算资源并渲染 HTML。
-页面源码包不恢复旧 artifact cache，以确保 JSON 实际生成；Mathlib、ProofScript 运行库等支持依赖复用缓存。
+页面源码包不恢复旧 artifact cache，以确保 JSON 实际生成。框架与提供 Info 的依赖必须重编译，以恢复默认 renderer、Lean2TeX 及用户配置；Mathlib 等不含所需页面或 Info 数据的基础支持依赖复用缓存。
 计算工具读取 Lake 会话提供的真实 C/setup 路径，因此也支持隔离后的构建目录。
 导出快照放在 `.PS4HTML/inputs/<包名>/<库名>/.ProofScript/`。输入与 HTML 经同一个版本指针原子发布，编译、导出或渲染失败时保留已发布版本。
 `--cache` 只消费已有导出，不检查源码新旧，不执行 Lean、Wasm 构建或 finalize。
@@ -67,9 +67,11 @@ ps4html clean
 
 PS4HTML 不重新验证证明；LaTeX 编译发生在 Lean 导出阶段。
 项目 ID 统一使用非空字符串字面量，例如 `project_info "课程笔记" { title := "课程笔记" }`；定理可通过 `project := "课程笔记"` 指定归属。
-统一 Info 协议使用 `5.0.0`，录制协议保持 `0.0.0`，契约描述版本为 `1`。每个 script 步骤对应一个 JSON 对象，普通默认录制器提供 `goal_before` / `goal_after`，策略默认录制器只提供 `goal_before`。这些字段与其他字段一样按实际调用的输出契约校验，并可直接用作模板占位符。普通步骤没有剩余目标时，`goal_after` 为 `null`。旧缓存需要重新运行 `lake build MyLibrary:ps4html`；缓存命令不会自动执行 Lean。配置与导出接口见[统一 Info 配置](../../README-zh.md#统一-info-配置)。
+统一 Info 协议使用 `5.0.0`，录制协议使用 `0.1.0`，契约描述版本为 `1`。每个 script 步骤对应一个 JSON 对象，普通默认录制器提供 `goal_before` / `goal_after`，策略默认录制器只提供 `goal_before`。这些字段与其他字段一样按实际调用的输出契约校验，并可直接用作模板占位符。普通步骤没有剩余目标时，`goal_after` 为 `null`。旧缓存需要重新运行 `lake build MyLibrary:ps4html`；缓存命令不会自动执行 Lean。配置与导出接口见[统一 Info 配置](../../README-zh.md#统一-info-配置)。
 
-命名 theorem/lemma 的 proof artifact 使用 manifest `5`，必需包含 `declaration`、非空字符串 `projectId`、无损 Lean 名称数组 `proofDependencies` 和 `proofFactsDigest`。依赖来自 Lean 最终证明及其创建位置的项目视图；空数组表示成功采集后的零依赖。摘要绑定 artifact ID、源证明摘要、快照 ID 与三个定理字段。页面和未命名录制 artifact 不携带这些证明事实字段。配置 snapshot payload 版本为 `4`，外层文档使用 `5.0.0`。每个页面组件还通过 `snapshotId` 关联自己的配置；`page_end` 只导出内容，不定义元信息边界，其后的配置仍对下游模块生效。
+命名 theorem/lemma 的 proof artifact 使用 manifest `5`，必需包含 `declaration`、非空字符串 `projectId`、无损 Lean 名称数组 `proofDependencies` 和 `proofFactsDigest`。依赖来自 Lean 最终证明及其创建位置的项目视图；空数组表示成功采集后的零依赖。摘要绑定 artifact ID、源证明摘要、快照 ID 与三个定理字段。页面和未命名录制 artifact 不携带这些证明事实字段。配置 snapshot payload 版本为 `4`，外层文档使用 `5.0.0`。每个页面组件还通过 `snapshotId` 关联自己的配置；页面模式下，`page_end` 只导出内容，不定义元信息边界，其后的配置仍对下游模块生效。
+
+有步骤的 proof 同时提供结构节点表 `expressions`、`expressionRoots` 和 `proof`；code-only 文档只含 `schemaVersion/module/code`。只有根清单指定的位置是表达式，普通 JSON 的 `kind`、`$ref` 或 Display marker 不触发解释。Display 只有在调用契约声明完整展示结构时自动应用。computation 的独立 `function.recordingVersion` 为 `0.1.0`；外层组件、pending、bundle 及资源协议仍为 `0.0.0`，执行 ABI 仍为 `proofscript-json-v1`。
 
 Python 通过 `InfoBundle.theorems[(project_id, name_key(declaration))]` 或 `InfoBundle.theorem(proof_path)` 取得同一份不可变 `TheoremRecord`，其中 `proof_dependencies` 为名称元组数组。该接口先校验整份 bundle，缺字段、重复/自依赖、项目与冻结元数据不一致或摘要错误均拒绝；旧缓存必须重新运行 Lean 构建，不能补成空数组。
 

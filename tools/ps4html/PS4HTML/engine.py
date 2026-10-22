@@ -9,6 +9,7 @@ from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
 from PS4HTML.i18n import normalize_language, tr
 from PS4HTML.recording import UNRECORDED_RULE_ID, proof_steps
+from PS4HTML.schema import Expression
 
 _CURRENT_LANGUAGE = ContextVar("ps4html_language", default="zh")
 
@@ -287,32 +288,34 @@ class ProofEngine:
         self.diagnostics = []
 
     def tex(self, node):
-        """把单个 JSON 表达式 AST 渲染为 TeX 字符串；非 AST 值原样转字符串。"""
-        if isinstance(node, dict):
-            if "kind" in node:
-                result = self.renderer.render(node, language=self.language)
-                self.diagnostics.extend(self.renderer.diagnostics_dict())
-                return result
-            return ""
+        """Render only an expression occurrence admitted by the owner manifest."""
+        if isinstance(node, Expression):
+            result = self.renderer.render(node, language=self.language)
+            self.diagnostics.extend(self.renderer.diagnostics_dict())
+            return result
+        if isinstance(node, (dict, list)):
+            raise ValueError("Rendering expression requires a registered expression occurrence")
         if node is None:
             return ""
-        return str(node)
+        return html.escape(str(node))
 
     def render_relation(self, relation):
         """Render a calc relation without exposing Lean2TeX internals to rules."""
+        if not isinstance(relation, Expression):
+            raise ValueError("Calc relation requires a registered expression occurrence")
         return self.renderer.render_relation(relation)
 
     def tex_param(self, value):
         """渲染一个录制参数值或 `ident+` 的数组。"""
+        if isinstance(value, Expression):
+            return self.tex(value)
         if isinstance(value, dict):
-            if "kind" in value:
-                return self.tex(value)
-            return ""
+            return ", ".join(f"{html.escape(str(key))}: {self.tex_param(item)}" for key, item in value.items())
         if isinstance(value, list):
             return "，".join(self.tex_param(v) for v in value)
         if value is None:
             return ""
-        return str(value)
+        return html.escape(str(value))
 
     def text(self, key, **values):
         return tr(key, self.language, **values)
@@ -349,19 +352,15 @@ class ProofEngine:
         return "\n".join(html_blocks)
 
     def render_branch(self, steps, branch_index, path):
-        if self.step_rules is None:
-            return self.render(steps, path)
         return self.render(steps, path, binding_parent=self._structural_step + ("branches", branch_index, "proof"))
 
     def render_embedded(self, steps, path):
-        if self.step_rules is None:
-            return self.render(steps, path)
         return self.render(steps, path, binding_parent=self._structural_step + ("proof",))
 
-    def resolve(self, value):
+    def resolve(self, value, path=None):
         if self.expression_resolver is None:
             return value
-        return self.expression_resolver.resolve(value)
+        return self.expression_resolver.resolve(value, path=path)
 
     @staticmethod
     def validate(steps):

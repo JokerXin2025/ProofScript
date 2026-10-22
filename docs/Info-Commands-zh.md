@@ -21,7 +21,19 @@ import ProofScript
 | `var_info "类别" { ... }` | 非空字符串 | 自动变量名分配 |
 | `phrase_info "短语键" { ... }` | 非空字符串 | 多语言表达式短语 |
 
-除导入示例外，下文每个 Lean 代码块均以 `import ProofScript` 为前提，可独立放入文件运行。`{ ... }` 等带省略号的语法表示只在行内说明中使用。
+### 构建模式
+
+普通 `lake build` 和 IDE 默认使用验证模式：六种 Info 命令均不做字段解码与语义校验、不登记 Info 配置事件。命令语法仍须能够解析，同一模块也不能在使用这些命令后切换 `proofScript.pageBuild`。
+
+两种模式都会保留 IDE 语义信息：`def_info`、`theorem_info` 的声明目标，以及 `def_info` 的 `«alias» := some 声明名` 支持悬停、跳转、同名引用联动和声明名补全；`script_info` 的注册 ID 与对应 `script_macro` / `script_elab` 定义使用同一个符号身份。内置字段名（包括模板、样式、颜色等嵌套对象）链接到配置模型的对应字段，并提供字段名补全。验证模式只尝试登记这些引用，未找到或有歧义的目标不会使构建失败，也不会执行配置值中的 Lean 代码。字符串项目 ID、变量类别、短语键、枚举值及附加字段仍按各自的字面量语法处理。
+
+脚本、页面命令和自定义扩展的语义信息约定见 [IDE 与语言服务器支持](IDE-Support-zh.md)。
+
+`lake build MyLibrary:ps4html` 自动启用页面模式，六种命令才执行下文描述的解析、校验、更新和合并。该构建会在隔离目录中重编译所需用户源码、ProofScript 框架及配置依赖，恢复基础策略 renderer、Lean2TeX 和 Mathlib 展示默认值。普通验证 `.olean` 中没有被跳过的配置，不能只在下游打开开关后恢复它们。
+
+除导入示例外，下文每个 Lean 代码块均以 `import ProofScript` 和页面模式为前提。仅实验当前模块配置时，可以在首个 Info 或页面命令前写 `set_option proofScript.pageBuild true`；它不会重新执行已按验证模式编译的导入模块中的默认配置，完整页面应使用 Lake facet 构建。`{ ... }` 等带省略号的语法表示只在行内说明中使用。
+
+模型、schema、codec、查询函数及显式底层录制 API 在两种模式中均可使用。查询只能读取实际登记的配置，不能恢复被跳过的命令；显式录制可以独立捕获数据，完整页面导出仍需要相应展示配置。
 
 ## 2. 所有命令共用的规则
 
@@ -195,7 +207,7 @@ theorem_info sample { project := none }   -- 解除归属
 
 `@lemma` 支持相同写法。页面构建中，内联字段与 `theorem_info` 使用相同 Schema、解析及校验，并属于声明事务的一部分：证明或配置失败时整条声明回滚。省略 `project` 时使用声明前的活动项目；显式 `project` 可以消除上游活动项目的歧义。声明后的同名 `theorem_info` 不会回头修改这个定理组件或它的证明。
 
-普通构建和 IDE 中，`@theorem` / `@lemma` 只生成并检查原生 theorem，跳过内联展示配置、录制和导出；`cite` 仍检查 Lean 引用项，但不消费展示元数据。独立 Info 配置命令继续登记。`lake build MyLibrary:ps4html` 自动启用页面模式，并重编译所需用户源码依赖，恢复完整的声明时配置与证明记录。
+普通构建和 IDE 中，`@theorem` / `@lemma` 只生成并检查原生 theorem，跳过内联展示配置、录制和导出；`cite` 仍检查 Lean 引用项，但不消费展示元数据。六种独立 Info 命令也跳过字段解码、语义校验和登记，同时保留已有目标和已知字段的编辑器信息。`lake build MyLibrary:ps4html` 自动启用页面模式，并重编译所需用户源码、框架及配置依赖，恢复完整的声明时配置与证明记录。
 
 项目引用必须先由 `project_info` 配置。页面中的定理 `name` 为空时使用声明末段名称；文献列表有自己的默认标题。`theorem_info` 本身不创建页面组件；页面定理通过 `@theorem` / `@lemma` 声明，文献列表通过 `@references` 插入。未配置元数据的声明不会自动作为已登记文献展示。
 
@@ -368,7 +380,7 @@ Lean 在契约已知时检查上述必要字段名称；字段值的实际形状
 | `kind` | Option DefinitionKind | `none`；普通模式通常取 `const`，有 `calc_symbol` 时取 `relation` |
 | `arguments` | Option DefinitionArguments | `none`；通常取 `[]`，有 `calc_symbol` 时取 `explicit` |
 | `dynamic_arity` | Bool | `false` |
-| `styles` | Option (Array DefinitionStyle) | `none`；普通模式须提供非空样式，或由 `calc_symbol` 生成 |
+| `styles` | Option (Array DefinitionStyle) | `none`；普通模式须提供非空样式，或由 `calc_sy mbol` 生成 |
 | `calc_symbol` | Option String | `none`；非空关系符号 |
 | `unwrap` | Option Nat | `none`；直接展示某个原始应用参数 |
 | `«alias»` | Option DeclarationRef | `none`；复用另一声明的配置 |
@@ -540,6 +552,8 @@ phrase_info "exists" {
 
 ## 9. 导入合并、页面时序与导出
 
+本节描述页面模式中实际登记的配置；验证模式跳过的 Info 命令不参与合并，也不建立配置边界。
+
 ### 9.1 跨模块合并
 
 六种命令使用同一套导入规则：
@@ -588,7 +602,7 @@ page_end
 
 ### 9.3 构建与缓存
 
-配置命令本身只更新环境，不逐条写配置文件。配置事件、快照和产物清单可从 `.olean` 统一导出；页面和证明内容由构建阶段生成。
+页面模式下，配置命令只更新环境，不逐条写配置文件；验证模式不写入这些配置事件。配置事件、快照和产物清单可从页面构建的 `.olean` 统一导出；普通验证 `.olean` 中跳过的配置必须通过页面重编译恢复。页面和证明内容由构建阶段生成。
 
 完整站点使用 `lake build MyLibrary:ps4html`。已有完整导出可用 `ps4html make --cache` 重新渲染，不重新运行 Lean。缓存渲染使用绑定的快照；编辑源文件中的 Info 命令后，需要先重新构建才能更新快照。
 
@@ -600,7 +614,7 @@ Info 协议当前为 `5.0.0`，artifact manifest 为 `5`，snapshot payload 为 
 
 ## 10. 查询与字段定义的权威来源
 
-配置通常由页面自动消费；需要在 Lean 中主动检查时可以调用强类型查询：
+配置通常由页面自动消费；需要在 Lean 中主动检查时可以调用强类型查询。以下示例同样要求页面模式，验证模式会跳过 `project_info`，因此不能据此查询到 `"Notes"`：
 
 ```lean
 project_info "Notes" { title := "查询示例" }
@@ -626,9 +640,13 @@ run_cmd do
 | 表达式模型、样式、条件默认值 | [Info/Definition.lean](../ProofScript/Info/Definition.lean) |
 | 变量和短语模型 | [Info/Variable.lean](../ProofScript/Info/Variable.lean)、[Info/Phrase.lean](../ProofScript/Info/Phrase.lean) |
 | 公共输入语法和类型解析 | [Info/Syntax.lean](../ProofScript/Info/Syntax.lean)、[Info/Codec.lean](../ProofScript/Info/Codec.lean) |
-| 基础配置实例 | [Defaults/Script.lean](../ProofScript/Defaults/Script.lean)、[Defaults/Lean2TeX.lean](../ProofScript/Defaults/Lean2TeX.lean) |
+| 基础配置实例 | [Builtin/Script.lean](../ProofScript/Builtin/Script.lean)、[Builtin/Lean2TeX.lean](../ProofScript/Builtin/Lean2TeX.lean) |
 | Mathlib 配置实例 | [Mathlib/Info.lean](../ProofScript/Mathlib/Info.lean) |
 
 若要增加新的内置字段，应修改对应结构体，让 `deriving InfoSchema` 生成字段描述；特殊合并或校验通过生成的类型化字段句柄和 `withOverrides!` 注册为 `InfoSchema` 实例，配置处理和 JSON 解码统一使用该实例。若只保存业务附加信息，直接使用 `extra` 即可。
+
+自定义 `xxx_info` 命令应先调用 `recordModuleBuildMode`，仅在返回 `true` 时解析配置值、校验目标并登记配置。需要 IDE 支持时，两种模式都可调用 `annotateInfoFields schema fields` 或 `annotateInfoObject schema object` 登记字段信息；声明目标在验证模式中使用 `addDeclarationReferenceInfo` 尝试登记引用。单纯使用 `whenPageBuild do` 也能保留验证模式的跳过行为，但编辑器看不到延迟动作中的语义信息。`commitInfo`、显式 renderer 依赖声明等底层环境 API 保持可用，由调用方决定是否门控。
+
+`InfoCodec.annotate` 是独立的编辑器入口，默认不执行任何动作。`schemaCodec` 使用它递归登记嵌套字段；`Option`、数组、列表和 `optionalInputCodec` 会转发到元素的入口。自定义值类型若包含声明引用或自定义对象语法，可以实现此入口；它只能登记可识别的语义信息，不应调用 `parse`、执行配置值、提交元数据或报告无效配置，取消和资源耗尽异常应继续传播。
 
 模型和值类型统一通过 Lean 的 `toJson` 编码、`fromJson?` 解码。`InfoCodec` 继承标准 `ToJson`，不再定义单独的 `encode`；它的 `decode` 返回结构化 `Diagnostic`，保留字段路径、数组下标和关联字段，标准 `FromJson` 实例自动调用该解码器并把诊断渲染为错误字符串。新增特殊值类型只需实现一份解码逻辑；Info 内部继续使用结构化诊断进行来源追踪。完整模型的领域消费通过相应查询，使用 `InfoSchema` 实例校验，并按 `InfoSpec` 查询依赖。

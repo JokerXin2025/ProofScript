@@ -18,6 +18,25 @@ open Elab.Command (CommandElabM elabCommand liftIO expandMacroArg elabSyntax)
 
 namespace ProofScript
 
+/-- Prefixed execution entries retain the same editor identity as script calls. -/
+def withScriptExecutionInfo (kind : Name) (action : Elab.Tactic.TacticM α) : Elab.Tactic.TacticM α := do
+  if let some keyword := findFirstAtom (← getRef) then
+    Elab.addConstInfo keyword kind
+  withScriptMode action
+
+elab (name := scriptMacroInfo) "_script_macro_info%" kind:ident source:term "=>" expanded:tactic : tactic => do
+  if let some keyword := findFirstAtom source.raw then
+    Elab.addConstInfo keyword kind.getId
+  withScriptMode <| Elab.Tactic.evalTactic expanded
+
+/-- Attach invocation info when a registered macro is called through its prefixed
+entry, preserving the original token instead of manufacturing a source span. -/
+def withScriptMacroInfo (kind : Name) (action : MacroM Syntax) : MacroM Syntax := do
+  let source ← getRef
+  let expanded ← action
+  return mkNode ``scriptMacroInfo #[mkAtom "_script_macro_info%", mkIdent kind, source,
+    mkAtom "=>", expanded]
+
 /-! ### 语法级辅助：从 `macroArg` 节点构造录制版 elab（纯 antiquotation，不经字符串） -/
 
 private def validateRegistrationId (id : TSyntax `ident) : CommandElabM Name := do
@@ -77,6 +96,21 @@ private def registerTacticRegistration (registration : ScriptTacticRegistration)
     throwError m!"duplicate script registration ID `{ruleId}`; give each overload a distinct explicit ID"
   let registration := { registration with ruleId }
   modifyEnv fun env => scriptRegistrationExt.addEntry env (.register registration)
+
+/-- A rule's existing parser declaration is also its editor symbol. Registration
+IDs need not be Lean declaration names and may collide with ordinary constants. -/
+private def addRegistrationInfo (id : TSyntax `ident) (kind : Name)
+    (args : Array (TSyntax ``macroArg)) (doc? : Option (TSyntax ``docComment)) : CommandElabM Unit := do
+  Elab.addDeclarationRangesFromSyntax kind (← getRef) id.raw
+  let documentation ← match doc? with
+    | some doc => getDocStringText doc
+    | none => pure s!"ProofScript script registration `{(← getMainModule) ++ id.getId.eraseMacroScopes}`."
+  addDocStringCore kind documentation
+  Elab.Command.liftTermElabM do
+    Elab.Term.addTermInfo' id.raw (← mkConstWithLevelParams kind) (isBinder := true)
+  if let some first := args.toList.head? then
+    if let `(macroArg| $keyword:str) := first then
+      Elab.addConstInfo keyword.raw kind
 
 /-- Check signatures before generating parser/elaborator declarations for an override. -/
 private def validateRecorderRegistration (id : Name) (name : String)
@@ -148,7 +182,7 @@ private def recordingFields (args : Array (TSyntax ``macroArg)) (cfg : ScriptCfg
       fields := fields ++ Recording.emittedFields (options.field.getD pname) schema
         (parameterTiming cfg pname (some parser.shape)) options.failure
     | _ => pure ()
-  return fields
+  return Recording.withDisplayFields fields
 
 /-- 声明时解析实例及 timing，直接生成捕获、执行和策略收尾的录制 DSL。 -/
 private def genRecording (syntaxName : String)
@@ -166,11 +200,11 @@ private def genRecording (syntaxName : String)
   if cfg.strategy then
     recArgs := recArgs.push (← `(macroArg| "_strategy_cases"))
     recArgs := recArgs.push (← `(macroArg| strategyCases:str))
-  let goalBefore ← `(term| ProofScript.Recording.goalParam "goal_before")
+  let goalBefore ← `(term| ProofScript.Recording.goalParamWithDisplay "goal_before")
   let mut beforeCaptures : Array (TSyntax `term) := #[goalBefore]
   let mut afterCaptures : Array (TSyntax `term) := #[]
   if !cfg.strategy then
-    afterCaptures := afterCaptures.push (← `(term| ProofScript.Recording.goalParam "goal_after"))
+    afterCaptures := afterCaptures.push (← `(term| ProofScript.Recording.goalParamWithDisplay "goal_after"))
   for arg in args[1:] do
     match arg with
     | `(macroArg| $id:ident:$stx) =>
@@ -192,7 +226,7 @@ private def genRecording (syntaxName : String)
       let capture ← if options.codec == .default then
           let shape ← parser.shapeTerm
           let input ← parser.inputTerm ⟨id.raw⟩
-          `(term| { (ProofScript.Recording.param $shape $(quote field) $input $failure)
+          `(term| { (ProofScript.Recording.paramWithDisplay $shape $(quote field) $input $failure)
             with context := $context })
         else
           let codec ← match options.codec with
@@ -204,7 +238,7 @@ private def genRecording (syntaxName : String)
           let .category _ := parser.shape
             | throwErrorAt id "explicit codec requires a single syntax parameter `{pname}`"
           let raw ← `(term| Lean.TSyntax.raw $id:ident)
-          `(term| ProofScript.Recording.explicitParam $(quote field)
+          `(term| ProofScript.Recording.explicitParamWithDisplay $(quote field)
             $codec $raw $context $failure)
       match timing with
       | .once | .before => beforeCaptures := beforeCaptures.push capture
@@ -373,6 +407,14 @@ private def validateCfgParams (name : String)
   if let .error message := Recording.validateOutputFields
       (goalFields.toList.map (fun field => (field.name, .once)) ++ fields) then
     throwError "[script config] '{name}': {message}"
+  -- Full semantic schemas are available only for supported automatic codecs;
+  -- unsupported registrations keep their existing delayed recorder diagnostic.
+  if (← autoRecordingError name args (cfg.params.filterMap fun (name, opt) =>
+      if opt.codec == .default then none else some name)).isNone then
+    let emitted ← recordingFields args cfg
+    if let .error message := Recording.validateOutputFields
+        (emitted.toList.map fun field => (field.name, .once)) then
+      throwError "[script config] '{name}': {message}"
 
 private def registrationParameters (args : Array (TSyntax ``macroArg)) :
     Array (String × Recording.ParamParserSignature) :=
@@ -391,9 +433,80 @@ private def extractName (args : Array Syntax)
   | `(macroArg| $s:str) => pure s.getString.trimAscii.toString
   | _ => throwError "script_macro/script_elab/script_recorder: 第一个参数必须是字符串字面量（策略名）"
 
+private def addConfigFieldInfo (structureName : Name) (key : Syntax) : CommandElabM Unit := do
+  if !key.isIdent then return
+  Elab.addCompletionInfo <| .fieldId key key.getId {} structureName
+  if let some projection := getProjFnForField? (← getEnv) structureName key.getId then
+    Elab.addConstInfo key projection
+
+/-- Configuration keys refer to their typed fields; enum spellings refer to the
+actual constructors chosen by the config parser, including renamed spellings. -/
+private def addScriptConfigInfo (cfg : Option (TSyntax ``scriptCfg)) : CommandElabM Unit := do
+  unless (← Elab.getInfoState).enabled do return
+  let some cfg := cfg | return
+  for item in cfg.raw[1].getArgs do
+    if item.isAtom then continue
+    addConfigFieldInfo ``ScriptCfg item[0]
+    if item[0].getId == `strategy then
+      if let some token := findFirstAtom item[2] then
+        let constant := if token.getAtomVal == "true" then ``Bool.true else ``Bool.false
+        Elab.addConstInfo token constant
+    if item[0].getId != `params then continue
+    for entry in item[2][0][1].getArgs do
+      if entry.isAtom then continue
+      for option in entry[1][1].getArgs do
+        if option.isAtom then continue
+        addConfigFieldInfo ``ParamCfg option[0]
+        let value := option[2]
+        if !value.isIdent then continue
+        let constant? := match option[0].getId, value.getId with
+          | `timing, `once => some ``Recording.CaptureTiming.once
+          | `timing, `before => some ``Recording.CaptureTiming.before
+          | `timing, `after => some ``Recording.CaptureTiming.after
+          | `timing, `both => some ``Recording.CaptureTiming.both
+          | `codec, `default => some ``Recording.ParamCodec.default
+          | `codec, `expression => some ``Recording.ParamCodec.expression
+          | `codec, `typeOf => some ``Recording.ParamCodec.typeOf
+          | `codec, `name => some ``Recording.ParamCodec.name
+          | `codec, `syntax => some ``Recording.ParamCodec.syntax
+          | `context, `main => some ``Recording.ContextSelector.main
+          | `context, `continuation => some ``Recording.ContextSelector.continuation
+          | `failure, `required => some ``Recording.FailurePolicy.required
+          | `failure, `bestEffort => some ``Recording.FailurePolicy.bestEffort
+          | _, _ => none
+        if let some constant := constant? then Elab.addConstInfo value constant
+
+private partial def configIdents (stx : Syntax) : Array Syntax :=
+  if stx.isIdent then #[stx]
+  else stx.getArgs.flatMap configIdents
+
+/-- Keep config identifiers as ordinary references to the generated rule's
+pattern variables. Lean then records their exact binding, context and source
+span alongside references in the user-written body. No config is evaluated. -/
+private def withConfigReferences (cfg : Option (TSyntax ``scriptCfg))
+    (body : TSyntax `term) : CommandElabM (TSyntax `term) := do
+  let some cfg := cfg | return body
+  let mut references : Array Syntax := #[]
+  for item in cfg.raw[1].getArgs do
+    if item.isAtom then continue
+    match item[0].getId with
+    | `intro | `clear =>
+      references := references ++ configIdents item[2]
+    | `params =>
+      for entry in item[2][0][1].getArgs do
+        if !entry.isAtom && entry[0].isIdent then
+          references := references.push entry[0]
+    | _ => pure ()
+  let mut body := body
+  for reference in references.reverse do
+    let id : TSyntax `ident := ⟨reference⟩
+    body ← `(let _ := $id:ident; $body)
+  return body
+
 open Lean.Elab.Command in
 elab_rules : command
   | `(command| $[$doc?:docComment]? script_macro%$_tk $id:ident $[$cfg:scriptCfg]? $args:macroArg* => $rhs) => do
+    addScriptConfigInfo cfg
     let tacticCat : TSyntax `ident := ⟨mkIdent `tactic⟩
     let name ← extractName args
     let cfg' ← match cfg with
@@ -408,13 +521,15 @@ elab_rules : command
     let prefixedKind ← elabSyntax (← `(syntax $[$prefixedParts]* : $tacticCat))
     let prefixedPat : TSyntax `term := ⟨mkNode prefixedKind prefixedPatArgs⟩
     let rhsRaw := rhs.raw
-    let macroRulesCmd ←
+    let rhsTerm ←
       if rhsRaw.getArgs.size == 1 then
-        let rhsTerm := ⟨rhsRaw[0]⟩
-        `(macro_rules | `($prefixedPat) => $rhsTerm)
+        pure (⟨rhsRaw[0]⟩ : TSyntax `term)
       else
         let rhsBody := ⟨rhsRaw[1]⟩
-        `(macro_rules | `($prefixedPat) => `($rhsBody))
+        `(`($rhsBody))
+    let rhsTerm ← withConfigReferences cfg rhsTerm
+    let rhsTerm ← `(ProofScript.withScriptMacroInfo $(quote kind) $rhsTerm)
+    let macroRulesCmd ← `(macro_rules | `($prefixedPat) => $rhsTerm)
     -- The generated name is prefixed, so this cannot shadow Lean's native
     -- tactic even when `name` itself is a native tactic.
     elabCommand macroRulesCmd
@@ -437,10 +552,12 @@ elab_rules : command
       recordedFields
       parameters := registrationParameters args
     }
+    addRegistrationInfo id kind args doc?
 
 open Lean.Elab.Command in
 elab_rules : command
   | `(command| $[$doc?:docComment]? script_elab%$_tk $id:ident $[$cfg:scriptCfg]? $args:macroArg* => $rhs) => do
+    addScriptConfigInfo cfg
     let tacticCat : TSyntax `ident := ⟨mkIdent `tactic⟩
     let name ← extractName args
     let cfg' ← match cfg with
@@ -455,7 +572,8 @@ elab_rules : command
     let (prefixedParts, prefixedPatArgs) := (← prefixedArgs.mapM expandMacroArg).unzip
     let prefixedKind ← elabSyntax (← `(syntax $[$prefixedParts]* : $tacticCat))
     let prefixedPat : TSyntax `term := ⟨mkNode prefixedKind prefixedPatArgs⟩
-    elabCommand (← `(elab_rules : $tacticCat | `($prefixedPat) => ProofScript.withScriptMode $rhs))
+    let rhs ← withConfigReferences cfg rhs
+    elabCommand (← `(elab_rules : $tacticCat | `($prefixedPat) => ProofScript.withScriptExecutionInfo $(quote kind) $rhs))
     let autoError ← autoRecordingError name args (cfg'.params.filterMap fun (n, c) =>
       if c.codec != .default then some n else none)
     let recordingKind ← if autoError.isNone then
@@ -475,6 +593,7 @@ elab_rules : command
       recordedFields
       parameters := registrationParameters args
     }
+    addRegistrationInfo id kind args doc?
 
 open Lean.Elab.Command in
 elab_rules : command
@@ -491,6 +610,12 @@ elab_rules : command
           throwErrorAt cfg "{message}"
         pure (some fields)
     let ruleId ← validateRecorderRegistration id.getId.eraseMacroScopes name (registrationParameters args)
+    let some registration := (scriptTacticRegistrations (← getEnv)).find? (·.ruleId == ruleId)
+      | throwErrorAt id "unknown script registration `{ruleId}`"
+    Elab.addConstInfo id.raw registration.sourceKind
+    if let some first := args.toList.head? then
+      if let `(macroArg| $keyword:str) := first then
+        Elab.addConstInfo keyword.raw registration.sourceKind
     let recArgs : Array (TSyntax ``macroArg) := args.mapIdx fun i a =>
       if i == 0 then (⟨mkNameArg ("script_" ++ name)⟩ : TSyntax ``macroArg) else a
     let (recParts, recPatArgs) := (← recArgs.mapM expandMacroArg).unzip

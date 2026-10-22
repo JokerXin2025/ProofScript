@@ -1,5 +1,5 @@
 import ProofScript.Page.State
-import ProofScript.Build.Mode
+import ProofScript.Core.BuildMode
 
 open Lean Elab Command
 
@@ -14,6 +14,19 @@ structure ComponentMetadata where
 
 syntax componentMetaEntry := ident " := " str
 syntax componentMeta := "(" sepBy1(componentMetaEntry, ", ") ")"
+
+/-- Annotate component field names without validating or consuming page metadata. -/
+def addComponentMetadataInfo {m : Type → Type} [Monad m] [MonadEnv m] [MonadError m]
+    [MonadInfoTree m] (stx : Syntax) : m Unit := do
+  for entry in stx[1].getSepArgs do
+    match entry with
+    | `(componentMetaEntry| $key:ident := $_value:str) =>
+        Elab.addCompletionInfo (.fieldId key.raw (some key.getId) {} ``ComponentMetadata)
+        match key.getId.eraseMacroScopes with
+        | `title => Elab.addConstInfo key.raw ``ComponentMetadata.title
+        | `label => Elab.addConstInfo key.raw ``ComponentMetadata.label
+        | _ => pure ()
+    | _ => pure ()
 
 def validComponentLabel (label : String) : Bool :=
   match label.toList with

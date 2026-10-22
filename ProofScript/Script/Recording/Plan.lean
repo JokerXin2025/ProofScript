@@ -1,4 +1,4 @@
-import ProofScript.Script.Recording.Codec
+import ProofScript.Script.Recording.Display
 
 namespace ProofScript.Recording
 
@@ -34,7 +34,10 @@ structure ParamCapture where
   onFailure : FailurePolicy := .bestEffort
   context : ContextSelector := .main
   collectReferences : Bool := true
-  capture : TacticM RecordedValue
+  /-- Explicit companion opt-in; ordinary captures keep their original value contract. -/
+  display : Bool := false
+  displaySource : Option Syntax := none
+  capture : CaptureM RecordedData
 
 /-- Check one output name against the recording envelope. -/
 def validateFieldName (name : String) : Except String Unit := do
@@ -46,10 +49,19 @@ def validateFieldName (name : String) : Except String Unit := do
 def goalParam (name : String) (goal : Option MVarId := none) : ParamCapture :=
   { name, onFailure := .required, collectReferences := false, capture := goalSnapshot goal }
 
+/-- A goal and its explicit display companion captured at the same point. -/
+def goalParamWithDisplay (name : String) (goal : Option MVarId := none) : ParamCapture :=
+  { goalParam name goal with display := true }
+
 def param (shape : ParamShape) [RecordParam shape] (name : String)
     (value : ParamInput shape)
     (onFailure : FailurePolicy := .bestEffort) : ParamCapture :=
   { name, onFailure, capture := RecordParam.capture value }
+
+/-- Opt into a companion only when the codec's declared schema contains expressions. -/
+def paramWithDisplay (shape : ParamShape) [RecordParam shape] (name : String)
+    (value : ParamInput shape) (onFailure : FailurePolicy := .bestEffort) : ParamCapture :=
+  { param shape name value onFailure with display := (RecordParam.schema shape).hasExpressions }
 
 /-- Explicit codecs apply to a single syntax node without requiring a category instance.
     Containers use `param` and the derived RecordParam instances. -/
@@ -61,8 +73,14 @@ def explicitParam (name : String) (codec : ParamCodec)
     | .typeOf => expressionType raw
     | .name => do
       unless raw.isIdent do throwError "name codec requires an identifier: {repr raw}"
-      return .scalar (Json.str raw.getId.eraseMacroScopes.toString)
+      return .plain (Json.str raw.getId.eraseMacroScopes.toString)
     | .syntax => syntaxText raw
     | .default => throwError "default codec requires a RecordParam instance" }
+
+def explicitParamWithDisplay (name : String) (codec : ParamCodec)
+    (raw : Syntax) (context : ContextSelector := .main)
+    (failure : FailurePolicy := .bestEffort) : ParamCapture :=
+  { explicitParam name codec raw context failure with
+    display := codec == .expression || codec == .typeOf, displaySource := some raw }
 
 end ProofScript.Recording

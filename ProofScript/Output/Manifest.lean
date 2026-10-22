@@ -1,19 +1,17 @@
 import ProofScript.Script.Contract
-import ProofScript.Foundation.Name
-import ProofScript.Foundation.JsonPath
+import ProofScript.Utils.Json
+import ProofScript.Utils.JsonPath
 import ProofScript.Info.State
 
 namespace ProofScript.Output
 
 open Lean
-open scoped Foundation
+open scoped InfoJson
 
 def manifestSchemaVersion : String := "5"
 
-abbrev StepPath := Array Foundation.PathPart
-
 structure StepBinding where
-  path : StepPath
+  path : JsonPath
   contract : RecordingContract
   deriving Inhabited
 

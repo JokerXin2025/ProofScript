@@ -1,7 +1,7 @@
 // Run with Node 22+ and Chrome (CHROME may override the executable).
 // Requires access to the same KaTeX CDN used by the page template.
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { tmpdir } from 'node:os';
@@ -10,6 +10,33 @@ import { join } from 'node:path';
 const assets = new URL('../tools/ps4html/PS4HTML/assets/', import.meta.url);
 const profile = mkdtempSync(join(tmpdir(), 'ps4html-hover-'));
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
+const generated = spawnSync('python3', ['-c', `
+import json
+from Lean2TeX import Expr2TeX
+from PS4HTML.schema import ExpressionResolver
+nodes = {"e0": {"kind":"const","name":"Nat","levels":[]},
+         "e1": {"kind":"fvar","id":"hover-variable"},
+         "e2": {"kind":"lit","lit":{"kind":"literal.nat","value":7}}}
+def ref(index): return {"$ref":"e"+str(index)}
+def hint(declaration=None):
+    return {"path":[],"isProp":False,"declaration":declaration,"appBinders":None,"sourceRange":None}
+step = {"subject":ref(1),"subject_display":{"kind":"expression-display-v1","field":"subject","views":[
+    {"root":{"kind":"field","path":[]},"hints":[hint({"name":"x₀","typeView":1,"valueView":None})]},
+    {"root":{"kind":"auxiliary","expression":ref(0)},"hints":[hint()]},
+    {"root":{"kind":"auxiliary","expression":ref(2)},"hints":[hint()]}]}}
+owner={"proof":[step]}
+roots=[["proof",0,"subject"],*[ ["proof",0,"subject_display","views",index,"root","expression"] for index in [1,2] ]]
+resolver=ExpressionResolver(nodes,roots,owner)
+resolver.register_display(step,"subject_display","subject",("proof",0))
+named=Expr2TeX().render(resolver.resolve_at(("proof",0,"subject")),parent="Formula")
+step["subject_display"]["views"][0]["hints"][0]["declaration"]["valueView"]=2
+resolver.register_display(step,"subject_display","subject",("proof",0))
+local=Expr2TeX().render(resolver.resolve_at(("proof",0,"subject")),parent="Formula")
+missing=Expr2TeX().render(resolver.node("e1"),parent="Formula")
+print(json.dumps([named,local,missing]))
+`], { encoding: 'utf8', env: { ...process.env, PYTHONDONTWRITEBYTECODE: '1', PYTHONPATH: new URL('../tools/ps4html', import.meta.url).pathname } });
+assert.equal(generated.status, 0, generated.stderr);
+const generatedFormulas = JSON.parse(generated.stdout);
 const server = createServer((request, response) => {
   if (request.url === '/lean2tex.css' || request.url === '/lean2tex.js') {
     const css = request.url.endsWith('.css');
@@ -71,7 +98,7 @@ try {
   const variable = (name, ref = 'x') => `\\htmlData{l2t-ref=${ref}}{${name}}`;
   const x = variable('x');
   const formulas = [x, `\\frac{${x}}{${x}}`, `a_{${x}}`, `a_{${x}}^{${x}}`,
-    variable('x_0'), `\\frac{1}{\\frac{${x}}{${x}}}`, variable('y', 'y')];
+    variable('x_0'), `\\frac{1}{\\frac{${x}}{${x}}}`, variable('y', 'y'), ...generatedFormulas];
   await evaluate(`(() => {
     for (const formula of ${JSON.stringify(formulas)}) {
       const span = document.createElement('span');
@@ -98,9 +125,13 @@ try {
     })()`);
     assert.deepEqual(state, { correct: true, other: 0 }, `Hover failed: ${JSON.stringify(point)}`);
   }
+  const titles = await evaluate(`Array.from(document.querySelectorAll('#proof .katex-html [data-l2t-info]')).map(node => node.title)`);
+  assert.deepEqual(titles, ['x₀ : Nat', 'x₀ : Nat := 7'], 'Captured declaration type/value must be readable native tooltips');
+  assert.equal(await evaluate(`Array.from(document.querySelectorAll('#proof .katex-html [data-l2t-ref]')).filter(node => !node.hasAttribute('data-l2t-info')).every(node => !node.title)`), true,
+    'Missing Display must not produce a guessed type tooltip');
   await send('Input.dispatchMouseEvent', { type: 'mouseMoved', x: 5, y: 5 });
   assert.equal(await evaluate('document.querySelectorAll("[data-l2t-active]").length'), 0);
-  console.log(`Variable hover passed: ${points.length} glyph positions, linked activation, scope isolation and pointer exit.`);
+  console.log(`Variable hover passed: ${points.length} glyph positions, linked activation, scope isolation, captured declaration tooltips and pointer exit.`);
 } finally {
   socket?.close();
   const exited = new Promise(resolve => browser.once('exit', resolve));

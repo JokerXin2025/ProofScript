@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import base64
 import re
 from dataclasses import dataclass
 
@@ -57,7 +58,7 @@ class LayoutRenderer:
             if kind == "literal" and node.metadata.get("literalKind") == "literal.str":
                 return _Rendered(self._escape_text(node.macro_name), mode="text")
             if kind == "fvar" and node.metadata.get("fvarId"):
-                return _Rendered(self._html_data(node.macro_name, "fvar", "f", str(node.metadata["fvarId"])))
+                return _Rendered(self._html_data(node.macro_name, "fvar", "f", str(node.metadata["fvarId"]), self._declaration_text(node)))
             if kind == "binder" and node.metadata.get("bindId"):
                 return _Rendered(self._html_data(node.macro_name, "binder", "b", str(node.metadata["bindId"])))
             if kind == "bvar" and node.metadata.get("bindRef"):
@@ -65,6 +66,9 @@ class LayoutRenderer:
             return _Rendered(node.macro_name)
         if kind == "sort":
             return _Rendered("\\mathbb{P}" if node.macro_name == "Prop" else "\\operatorname{Type}")
+        if kind == "local-definition":
+            value = self._render(node.children[0], requested)
+            return _Rendered(self._html_data(value.tex, "fvar", "f", str(node.metadata["fvarId"]), self._declaration_text(node)), value.mode, value.fixity, value.precedence, value.associativity)
         if kind == "application":
             rendered = [self._render(child, requested) for child in node.children]
             if not rendered:
@@ -92,7 +96,7 @@ class LayoutRenderer:
         if kind == "projection":
             source = self._render(node.children[0], requested)
             source_tex = f"\\left({source.tex}\\right)" if source.precedence < 90 else source.tex
-            return _Rendered(f"{source_tex}.\\operatorname{{{self._short_name(node.macro_name)}}}", precedence=90, fixity="postfix")
+            return _Rendered(f"{source_tex}.\\operatorname{{{self._escape_text(node.macro_name)}}}", precedence=90, fixity="postfix")
         if kind == "metavariable":
             return _Rendered("\\square")
         self.diagnostics.append(RenderDiagnostic("warning", "L2T010", f"unknown display node {node.macro_name}"))
@@ -204,9 +208,27 @@ class LayoutRenderer:
         return name.rsplit(".", 1)[-1]
 
     @staticmethod
-    def _html_data(tex: str, kind: str, prefix: str, identity: str) -> str:
+    def _html_data(tex: str, kind: str, prefix: str, identity: str, information: str | None = None) -> str:
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:16]
-        return f"\\htmlData{{l2t-kind={kind},l2t-ref={prefix}-{digest}}}{{{tex}}}"
+        extra = ""
+        if information:
+            encoded = base64.urlsafe_b64encode(information.encode("utf-8")).decode("ascii").rstrip("=")
+            extra = f",l2t-info={encoded}"
+        return f"\\htmlData{{l2t-kind={kind},l2t-ref={prefix}-{digest}{extra}}}{{{tex}}}"
+
+    @staticmethod
+    def _declaration_text(node: DisplayNode) -> str | None:
+        type_node = node.metadata.get("declarationType")
+        value_node = node.metadata.get("declarationValue")
+        if type_node is None and value_node is None:
+            return None
+        name = node.metadata.get("declarationName") or node.macro_name
+        result = str(name)
+        if type_node is not None:
+            result += " : " + _plain_expression(type_node)
+        if value_node is not None:
+            result += " := " + _plain_expression(value_node)
+        return result
 
     @staticmethod
     def _escape_text(value: str) -> str:
@@ -219,3 +241,19 @@ class LayoutRenderer:
 
 def _format_phrase(template: str, **values: str) -> str:
     return _PHRASE_PLACEHOLDER.sub(lambda match: values.get(match.group(1), match.group(0)), template)
+
+
+def _plain_expression(node: DisplayNode) -> str:
+    """Readable captured declaration text for the native variable tooltip."""
+    if not node.children:
+        return node.macro_name
+    children = [_plain_expression(child) for child in node.children]
+    if node.kind == "application":
+        return children[0] + "(" + ", ".join(children[1:]) + ")"
+    if node.kind in {"forall", "lambda"}:
+        return f"({'∀' if node.kind == 'forall' else 'fun'} {children[0]} : {children[1]}, {children[2]})"
+    if node.kind == "projection":
+        return children[0] + "." + node.macro_name
+    if node.kind == "local-definition":
+        return children[0]
+    return node.macro_name + "(" + ", ".join(children) + ")"

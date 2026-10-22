@@ -97,7 +97,7 @@ run_cmd do
     | .ok env => pure env
     | .error error => throwError error.render
   match freezeTheoremFacts cleared query "test" `TheoremDependencyFacts.declarationDefault with
-  | .error error => unless error.path == #[.field "project"] do
+  | .error error => unless error.path == #[.key "project"] do
       throwError "missing ownership lost its diagnostic path"
   | .ok _ => throwError "explicit current query ignored removed ownership"
   match freezePage cleared "dependency-test" with

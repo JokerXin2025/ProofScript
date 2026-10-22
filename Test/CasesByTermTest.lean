@@ -1,5 +1,17 @@
 import ProofScript
 
+-- Application heads are derived from structural fn edges; they are not wire fields.
+private def structuralHeadConstant (table initial : Lean.Json) : Except String (Option String) := do
+  let mut current := initial
+  for _ in [:((← table.getObj?).size + 1)] do
+    match (← current.getObjValAs? String "kind") with
+    | "app" =>
+      let fn ← current.getObjVal? "fn"
+      current ← table.getObjVal? (← fn.getObjValAs? String "$ref")
+    | "const" => return some (← current.getObjValAs? String "name")
+    | _ => return none
+  throw "cyclic structural application"
+
 project_info "Test.CasesByTermTest" { title := "CasesByTermTest" }
 
 private def OrAlias (P Q : Prop) := P ∨ Q
@@ -91,8 +103,15 @@ run_cmd do
     unless (expr.getObjValAs? String "kind").toOption == some "app" do
       throwError "{tactic} did not record the compound proof term"
     if tactic == "cases_by" then
-      unless (expr.getObjValAs? String "headConstant").toOption == some "And.left" do
+      unless (← ofExcept (structuralHeadConstant expressions expr)) == some "And.left" do
         throwError "cases_by did not record the projection proof"
+    let display ← ofExcept (node.getObjVal? "h_display")
+    unless (display.getObjValAs? String "field").toOption == some "h" do
+      throwError "{tactic} lost its compound input display companion"
+    let views ← ofExcept (display.getObjValAs? (Array Json) "views")
+    unless views.any (fun view => (view.getObjVal? "root").toOption ==
+        some (json% { kind: "field", path: [] })) do
+      throwError "{tactic} input display is not anchored at its field root"
     let records ← ofExcept (node.getObjValAs? (Array Json) "branches")
     let branchProof (label : String) : CommandElabM (Array Json) := do
       let some record := records.find? fun j =>

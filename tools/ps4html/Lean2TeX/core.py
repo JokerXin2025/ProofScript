@@ -1,4 +1,4 @@
-"""Public Lean2TeX facade: ExprJSON -> DisplayTree -> TeX."""
+"""Public Lean2TeX facade: structural expression occurrence -> DisplayTree -> TeX."""
 
 from __future__ import annotations
 
@@ -35,14 +35,9 @@ class Expr2TeX:
     def diagnostics_dict(self) -> list[dict]:
         return [diagnostic.as_dict() for diagnostic in self.diagnostics]
 
-    def convert(
-        self,
-        node: dict,
-        fvars: dict[str, str] | None = None,
-        bvar_env: list[str] | None = None,
-    ) -> DisplayNode:
-        """Convert one ExprJSON object into a renderer-independent DisplayTree."""
-        display = self.converter.convert(node, fvars, bvar_env)
+    def convert(self, node: dict) -> DisplayNode:
+        """Convert one expression occurrence into a renderer-independent DisplayTree."""
+        display = self.converter.convert(node)
         self.diagnostics = list(self.converter.diagnostics)
         return display
 
@@ -64,22 +59,17 @@ class Expr2TeX:
         node: dict,
         *,
         parent: str = "Text",
-        fvars: dict[str, str] | None = None,
-        bvar_env: list[str] | None = None,
         style: str = "formula",
         language: str = "zh",
     ) -> str:
-        """Render ExprJSON using the requested style and language."""
-        display = self.convert(node, fvars, bvar_env)
+        """Render an expression occurrence using the requested style and language."""
+        display = self.convert(node)
         return self.render_display(display, style, parent=parent, language=language)
 
     def render_relation(self, relation: object) -> str:
         """Render a calc relation through a stable public API."""
         if not isinstance(relation, dict):
             return "" if relation is None else str(relation)
-        exported_head = relation.get("headConstant")
-        if isinstance(exported_head, str):
-            return self.registry.rel_symbol(exported_head)
         head, _ = flatten_app(relation)
         if head.get("kind") == "const":
             return self.registry.rel_symbol(str(head.get("name", "")))

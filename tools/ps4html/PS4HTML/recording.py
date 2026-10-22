@@ -3,7 +3,9 @@
 import math
 from decimal import Decimal
 
-PROOF_SCHEMA_VERSION = "0.0.0"
+from PS4HTML.project import PS4HTMLError
+
+PROOF_SCHEMA_VERSION = "0.1.0"
 UNRECORDED_RULE_ID = "ProofScript.Recording.unrecorded"
 RESERVED = {"_ruleId", "branches"}
 
@@ -24,6 +26,8 @@ def validate_schema(schema):
     if not isinstance(schema, dict):
         raise ValueError("Invalid parameter schema")
     kind = schema.get("kind")
+    if not isinstance(kind, str):
+        raise ValueError("Invalid parameter schema kind")
     if kind in {"expression", "string", "name", "syntax", "number", "boolean", "json"}:
         keys = {"kind"}
     elif kind in {"array", "optional"}:
@@ -74,9 +78,10 @@ def validate_value(value, schema, path):
     if kind == "json":
         valid = True
     elif kind == "expression":
-        valid = isinstance(value, dict) and (
-            set(value) == {"$ref"} and isinstance(value["$ref"], str) or
-            isinstance(value.get("kind"), str) and type(value.get("isProp")) is bool)
+        from PS4HTML.schema import EXPRESSION_ID, Expression
+        valid = isinstance(value, Expression) or (isinstance(value, dict) and
+            set(value) == {"$ref"} and isinstance(value["$ref"], str) and
+            EXPRESSION_ID.fullmatch(value["$ref"]) is not None)
     elif kind in {"string", "name", "syntax"}:
         valid = isinstance(value, str)
     elif kind == "number":
@@ -109,9 +114,99 @@ def validate_value(value, schema, path):
         raise ValueError(f"Recorded field {path!r} does not match {kind} schema")
 
 
-def validate_fields(step, fields):
+def display_schema(field):
+    """The ordinary ParamSchema used by the explicit Display producer."""
+    def obj(fields):
+        return {"kind": "object", "fields": [{"name": name, "schema": schema}
+                for name, schema in fields]}
+    def array(element):
+        return {"kind": "array", "element": element}
+    def optional(element):
+        return {"kind": "optional", "element": element}
+    def literal(value):
+        return {"kind": "literal", "value": value}
+    def union(options):
+        return {"kind": "union", "options": options}
+    string, number = {"kind": "string"}, {"kind": "number"}
+    binder = union([literal(value) for value in
+                    ("default", "implicit", "strictImplicit", "instImplicit")])
+    return obj([
+        ("kind", literal("expression-display-v1")), ("field", literal(field)),
+        ("views", array(obj([
+            ("root", union([
+                obj([("kind", literal("field")), ("path", array(union([string, number])))]),
+                obj([("kind", literal("auxiliary")), ("expression", {"kind": "expression"})])])),
+            ("hints", array(obj([
+                ("path", array(string)), ("isProp", optional({"kind": "boolean"})),
+                ("declaration", optional(obj([
+                    ("name", string), ("typeView", optional(number)), ("valueView", optional(number))]))),
+                ("appBinders", optional(array(optional(binder)))),
+                ("sourceRange", optional(obj([
+                    ("file", string), ("start", number), ("stop", number)])))])))])))])
+
+
+def _canonical_schema(schema):
+    """Normalize unordered object fields and union alternatives for recognition."""
+    kind = schema.get("kind")
+    if kind == "object":
+        return (kind, tuple(sorted((field["name"], _canonical_schema(field["schema"]))
+                                   for field in schema["fields"])))
+    if kind == "union":
+        return (kind, tuple(sorted((_canonical_schema(option) for option in schema["options"]),
+                                   key=repr)))
+    if kind in {"optional", "array"}:
+        return (kind, _canonical_schema(schema["element"]))
+    return (kind, schema.get("value"))
+
+
+def display_subject(schema):
+    """Recognize the full explicit Display schema, never a JSON value's marker."""
+    while schema.get("kind") == "optional":
+        schema = schema["element"]
+    if schema.get("kind") != "object":
+        return None
+    fields = {field["name"]: field["schema"] for field in schema["fields"]}
+    field = fields.get("field", {})
+    if field.get("kind") != "literal":
+        return None
+    subject = field["value"]
+    return subject if _canonical_schema(schema) == _canonical_schema(display_schema(subject)) else None
+
+
+def _validate_expression_coverage(value, schema, resolver, path):
+    kind = schema["kind"]
+    if kind == "expression":
+        resolver.require_root(path, value)
+    elif kind == "optional":
+        if value is not None:
+            _validate_expression_coverage(value, schema["element"], resolver, path)
+    elif kind == "array":
+        for index, item in enumerate(value):
+            _validate_expression_coverage(item, schema["element"], resolver, path + (index,))
+    elif kind == "object":
+        for field in schema["fields"]:
+            _validate_expression_coverage(value[field["name"]], field["schema"], resolver,
+                                          path + (field["name"],))
+    elif kind == "union":
+        # Validate against a matching arm and its manifest requirements together.
+        # A json arm remains opaque; it does not authorize any guessed roots.
+        for option in schema["options"]:
+            try:
+                validate_value(value, option, str(path))
+                _validate_expression_coverage(value, option, resolver, path)
+                return
+            except (ValueError, PS4HTMLError):
+                pass
+        raise ValueError(f"Recorded union field {path!r} does not match its contract")
+
+
+def validate_fields(step, fields, resolver=None, path=None):
     if fields is None:
         return
+    if resolver is not None:
+        path = resolver.path_of(step, path)
+        if path is None:
+            raise ValueError("Recorded field validation requires an owner path")
     for field in fields:
         name = field["name"]
         if name not in step:
@@ -119,6 +214,13 @@ def validate_fields(step, fields):
         if step[name] is None and field["nullable"]:
             continue
         validate_value(step[name], field["schema"], name)
+        if resolver is not None:
+            _validate_expression_coverage(step[name], field["schema"], resolver, path + (name,))
+    if resolver is not None:
+        for field in fields:
+            subject = display_subject(field["schema"])
+            if subject is not None and step[field["name"]] is not None:
+                resolver.register_display(step, field["name"], subject, path)
 
 
 def schema_has_path(schema, parts):

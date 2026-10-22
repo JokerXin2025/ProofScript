@@ -2,7 +2,7 @@ import Test.TheoremDependencyImportTest
 import ProofScript.Output.Protocol
 
 open Lean Elab Command ProofScript.Info ProofScript.Output
-open scoped ProofScript.Foundation
+open scoped InfoJson
 
 namespace TheoremDependencyExport
 

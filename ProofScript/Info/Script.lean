@@ -24,8 +24,21 @@ def resolveScriptTarget (target : TSyntax `ident) : CommandElabM Name := do
   let name := removeRoot target.getId.eraseMacroScopes
   let ruleId := if name.components.length == 1 then env.mainModule ++ name else name
   match scriptRegistrationInView env { moduleName := env.mainModule } ruleId with
-  | .ok _ => return ruleId
+  | .ok registration =>
+    addConstInfo target.raw registration.sourceKind
+    return ruleId
   | .error _ => throwErrorAt target m!"unknown script_info registration ID `{ruleId}`; use its full module-qualified ID for imported rules"
+
+/-- Registration IDs have the same editor identity as their source parser declaration.
+Verification mode does not require the ID or its metadata to be valid.
+-/
+def addScriptTargetInfo (target : TSyntax `ident) : CommandElabM Unit := do
+  unless (← getInfoState).enabled do return
+  let env ← getEnv
+  let name := removeRoot target.getId.eraseMacroScopes
+  let ruleId := if name.components.length == 1 then env.mainModule ++ name else name
+  if let .ok registration := scriptRegistrationInView env { moduleName := env.mainModule } ruleId then
+    addConstInfo target.raw registration.sourceKind
 
 structure HexColor where
   value : String
@@ -123,11 +136,11 @@ instance : InfoSchema StrategyScriptTemplate :=
         if value.cases.size != 1 then
           let error : Diagnostic := {
             message := "inline requires exactly one case"
-            path := #[.field StrategyScriptTemplate.infoFields.inline.name]
-            relatedPaths := #[#[.field StrategyScriptTemplate.infoFields.cases.name]] }
+            path := #[.key StrategyScriptTemplate.infoFields.inline.name]
+            relatedPaths := #[#[.key StrategyScriptTemplate.infoFields.cases.name]] }
           throw error
         if value.cases[0]!.tag != "" || value.cases[0]!.title != "" then
-          throw { message := "inline case must have empty tag and title", path := #[.field StrategyScriptTemplate.infoFields.cases.name] } }
+          throw { message := "inline case must have empty tag and title", path := #[.key StrategyScriptTemplate.infoFields.cases.name] } }
 
 inductive ScriptTemplate where
   | ordinary (value : OrdinaryScriptTemplate)
@@ -159,7 +172,7 @@ instance : InfoCodec ScriptTemplate where
     match kind with
     | "ordinary" => .ordinary <$> decodeField json "value"
     | "strategy" => .strategy <$> decodeField json "value"
-    | _ => throw { message := "unknown script template kind", path := #[.field "kind"] }
+    | _ => throw { message := "unknown script template kind", path := #[.key "kind"] }
   jsonSchema :=
     let alternatives := #[
       ("ordinary", InfoCodec.jsonSchema OrdinaryScriptTemplate),
@@ -173,6 +186,12 @@ instance : InfoCodec ScriptTemplate where
         additionalProperties: false
       }
     json% { oneOf: $alternatives }
+  annotate stx := do
+    if let some fields ← readInfoObject? stx then
+      if fields.any (·.key == StrategyScriptTemplate.infoFields.cases.name) then
+        annotateInfoFields (inferInstance : InfoSchema StrategyScriptTemplate) fields
+      else
+        annotateInfoFields (inferInstance : InfoSchema OrdinaryScriptTemplate) fields
 
 structure ScriptInfo where
   renderer : ScriptRenderer := .automatic
@@ -189,54 +208,54 @@ instance : InfoSchema ScriptInfo :=
       if value.renderer == .automatic && value.template.isEmpty then
         let error : Diagnostic := {
           message := "automatic script rendering requires a template"
-          path := #[.field ScriptInfo.infoFields.template.name]
-          relatedPaths := #[#[.field ScriptInfo.infoFields.renderer.name]] }
+          path := #[.key ScriptInfo.infoFields.template.name]
+          relatedPaths := #[#[.key ScriptInfo.infoFields.renderer.name]] }
         throw error }
 
 def scriptSpec : InfoSpec ScriptInfo := {
   kind := "script" }
 
-private def introducerTexts (value : ScriptIntroducer) : Array (FieldPath × String) := #[
-  (#[.field ScriptIntroducer.infoFields.tag.name], value.tag),
-  (#[.field ScriptIntroducer.infoFields.content.name], value.content)]
+private def introducerTexts (value : ScriptIntroducer) : Array (JsonPath × String) := #[
+  (#[.key ScriptIntroducer.infoFields.tag.name], value.tag),
+  (#[.key ScriptIntroducer.infoFields.content.name], value.content)]
 
-def ScriptTemplate.texts : ScriptTemplate → Array (FieldPath × String)
+def ScriptTemplate.texts : ScriptTemplate → Array (JsonPath × String)
   | .ordinary value => #[
-      (#[.field OrdinaryScriptTemplate.infoFields.tag.name], value.tag),
-      (#[.field OrdinaryScriptTemplate.infoFields.content.name], value.content)]
+      (#[.key OrdinaryScriptTemplate.infoFields.tag.name], value.tag),
+      (#[.key OrdinaryScriptTemplate.infoFields.content.name], value.content)]
   | .strategy value => Id.run do
-    let mut texts := #[(#[.field StrategyScriptTemplate.infoFields.tag.name], value.tag)]
+    let mut texts := #[(#[.key StrategyScriptTemplate.infoFields.tag.name], value.tag)]
     if let some intro := value.introducer then
       texts := texts ++ (introducerTexts intro).map fun (path, text) =>
-        (#[.field StrategyScriptTemplate.infoFields.introducer.name] ++ path, text)
+        (#[.key StrategyScriptTemplate.infoFields.introducer.name] ++ path, text)
     for index in [:value.cases.size] do
       let item := value.cases[index]!
-      let casePath := #[.field StrategyScriptTemplate.infoFields.cases.name, .index index]
-      texts := texts ++ #[(casePath.push (.field ScriptCase.infoFields.tag.name), item.tag),
-        (casePath.push (.field ScriptCase.infoFields.title.name), item.title)]
+      let casePath := #[.key StrategyScriptTemplate.infoFields.cases.name, .index index]
+      texts := texts ++ #[(casePath.push (.key ScriptCase.infoFields.tag.name), item.tag),
+        (casePath.push (.key ScriptCase.infoFields.title.name), item.title)]
       if let some intro := item.introducer then
         texts := texts ++ (introducerTexts intro).map fun (path, text) =>
-          (casePath ++ #[.field ScriptCase.infoFields.introducer.name] ++ path, text)
+          (casePath ++ #[.key ScriptCase.infoFields.introducer.name] ++ path, text)
     return texts
 
 def validateScriptContract (registration : ScriptTacticRegistration) (value : ScriptInfo) :
     Except Diagnostic Unit := do
   if value.renderer == .strategy && !registration.strategy then
-    throw { message := "strategy renderer requires a strategy registration", path := #[.field ScriptInfo.infoFields.renderer.name] }
+    throw { message := "strategy renderer requires a strategy registration", path := #[.key ScriptInfo.infoFields.renderer.name] }
   for index in [:value.template.size] do
     let template := value.template[index]!
     if template.isStrategy != registration.strategy then
-      throw { message := "template kind does not match the script registration", path := #[.field ScriptInfo.infoFields.template.name, .index index] }
+      throw { message := "template kind does not match the script registration", path := #[.key ScriptInfo.infoFields.template.name, .index index] }
     for (path, text) in template.texts do
       let check := match registration.recordedFields with
         | some recorded => Recording.validateTemplateText recorded text
         | none => Recording.templateSlots text *> pure ()
       check.mapError fun message => {
-          message, path := #[.field ScriptInfo.infoFields.template.name, .index index] ++ path }
+          message, path := #[.key ScriptInfo.infoFields.template.name, .index index] ++ path }
   if let some recorded := registration.recordedFields then
     for field in value.renderer.requiredFields do
       unless recorded.any (·.name == field) do
-        throw { message := s!"renderer requires recorded field `{field}`", path := #[.field ScriptInfo.infoFields.renderer.name] }
+        throw { message := s!"renderer requires recorded field `{field}`", path := #[.key ScriptInfo.infoFields.renderer.name] }
 
 /-- Callers with an actual invocation's selected registration can validate that exact contract.
 The default registry query below reconstructs module-end registration metadata; Info boundaries clip Info events only.

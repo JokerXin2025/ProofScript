@@ -4,7 +4,7 @@ namespace ProofScript
 
 open Lean Elab Command
 
-register_option proofScript.pageBuild : Bool := {
+initialize pageBuild : Lean.Option Bool ← Lean.Option.register `proofScript.pageBuild {
   defValue := false
   descr := "enable ProofScript page recording and export"
 }

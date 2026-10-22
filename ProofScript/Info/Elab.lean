@@ -6,6 +6,38 @@ open Lean Elab Command
 
 namespace ProofScript.Info
 
+/-- Read only the object syntax needed by editor annotations. Invalid metadata remains
+optional in verification builds, while cancellation and resource failures still propagate.
+-/
+def readInfoObject? (stx : TSyntax `term) : CommandElabM (Option (Array InputField)) := do
+  try
+    return some (← readObject stx)
+  catch error =>
+    if error.isRuntime then throw error
+    match error with
+    | .error .. => return none
+    | .internal .. => throw error
+
+/-- Model fields and their nested codecs contribute editor semantics independently of decoding.
+Unknown fields and literal extension values do not acquire Lean declaration identities.
+-/
+def annotateInfoFields (schema : InfoSchema Record) (fields : Array InputField) : CommandElabM Unit := do
+  unless (← getInfoState).enabled do return
+  let env ← getEnv
+  for input in fields do
+    let key := if input.ref.isOfKind ``infoKey then input.ref[0] else input.ref
+    if key.isIdent then
+      addCompletionInfo <| .fieldId key key.getId {} schema.id
+    if let some field := schema.findField? input.key then
+      if let some projection := getProjFnForField? env schema.id (.mkSimple field.name) then
+        addConstInfo key projection
+      field.codec.annotate input.value
+
+def annotateInfoObject (schema : InfoSchema Record) (stx : TSyntax `term) : CommandElabM Unit := do
+  unless (← getInfoState).enabled do return
+  if let some fields ← readInfoObject? stx then
+    annotateInfoFields schema fields
+
 private def spellingSuggestion (schema : InfoSchema Record) (key : String) : Option String :=
   let candidates := schema.fields.filter (!·.handle.isExtra) |>.map fun field =>
     (field.name, field.name.editDistance key)
@@ -78,6 +110,7 @@ def elaborateInfo [InfoSchema Record] (spec : InfoSpec Record) (target : Name �
   toJson := schema.encode
   decode := schema.decode
   jsonSchema := schema.jsonSchema
+  annotate := annotateInfoObject schema
 
 instance (priority := low) [InfoSchema Record] : InfoCodec Record :=
   schemaCodec inferInstance

@@ -2,6 +2,9 @@ import html
 import json
 from string import Template
 
+from PS4HTML.project import PS4HTMLError
+from PS4HTML.schema import SCHEMA_VERSION, validate_computation_function
+
 
 TEMPLATE = Template('''<section class="computation-component" data-computation data-renderer="$renderer" data-status="$status" data-bundle-id="$bundle_id">
   <header class="computation-header"><h2>$title</h2><p class="computation-status" data-computation-status>$status_text</p></header>
@@ -11,9 +14,15 @@ TEMPLATE = Template('''<section class="computation-component" data-computation d
 </section>''')
 
 
+def validate_computation(value):
+    """Validate provenance independently of the unchanged execution protocol."""
+    if not isinstance(value, dict) or value.get("schemaVersion") != SCHEMA_VERSION:
+        raise PS4HTMLError("Unsupported computation schema; rebuild with lake build <Library>:ps4html")
+    return validate_computation_function(value.get("function"))
+
+
 def render_computation(value):
-    if not isinstance(value, dict):
-        return '<section class="computation-component computation-error"><strong>Invalid computation component</strong></section>'
+    validate_computation(value)
     metadata = value.get("metadata") if isinstance(value.get("metadata"), dict) else {}
     execution = value.get("execution") if isinstance(value.get("execution"), dict) else {}
     status = execution.get("status")

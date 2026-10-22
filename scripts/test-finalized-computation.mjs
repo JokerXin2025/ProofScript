@@ -15,6 +15,7 @@ const snapshot = resolvedPage.includes("/.PS4HTML/inputs/")
 const page = JSON.parse(await readFile(resolve(root, pagePath), "utf8"));
 const bundle = JSON.parse(await readFile(resolve(snapshot, ".ProofScript/info/index.json"), "utf8"));
 assert.equal(bundle.schemaVersion, "5.0.0");
+assert.equal(bundle.recordingVersion, "0.1.0", "Rebuild page recording data with lake build <Library>:ps4html");
 assert.equal(bundle.complete, true);
 const computations = page.components
   .map(component => component.data?.computation?.value)
@@ -22,6 +23,9 @@ const computations = page.components
 assert.ok(computations.length > 0);
 assert.ok(computations.every(value => value.execution.status === "ready"));
 assert.ok(computations.every(value => value.schemaVersion === "0.0.0"));
+assert.ok(computations.every(value => value.function?.recordingVersion === "0.1.0" &&
+  Array.isArray(value.function.expressionRoots) && value.function.expressions),
+  "Computation provenance requires a new page build");
 
 async function verifiedResource(reference) {
   const descriptor = reference.$resource;

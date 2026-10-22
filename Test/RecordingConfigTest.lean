@@ -144,12 +144,12 @@ run_cmd do
     throwError "generated strategy recorder did not prepare its proof branch"
   let macroCall ← `(scriptTactic| config_generated_macro outer introduced caseLabel)
   let strategyCall ← `(scriptTactic| config_generated_strategy outer marker saved)
-  let ordinaryFields := goalFields ++ #[
+  let ordinaryFields := withDisplayFields <| goalFields ++ #[
     { name := "scope_label", schema := .name, nullable := false },
     { name := "evidence_before", schema := .expression },
     { name := "evidence_after", schema := .expression },
     { name := "case_label", schema := .name, nullable := false }]
-  let strategyFields := strategyGoalFields ++ #[
+  let strategyFields := withDisplayFields <| strategyGoalFields ++ #[
     { name := "scope_label", schema := .name, nullable := false },
     { name := "step_label_before", schema := .name, nullable := false },
     { name := "step_label_after", schema := .name, nullable := false },
@@ -232,6 +232,16 @@ script_elab invalidConfig (params := [target(field := "goal_after", timing := af
 /-- error: [script config] 'invalid_config': duplicate recorded parameter field `goal_before` -/
 #guard_msgs in
 script_elab invalidConfig "invalid_config" goal:ident => pure ()
+
+/-- error: [script config] 'invalid_config': duplicate recorded parameter field `goal_before_display` -/
+#guard_msgs in
+script_elab invalidConfig (params := [x(codec := name, field := "goal_before_display", timing := once)])
+  "invalid_config" x:ident => pure ()
+
+/-- error: [script config] 'invalid_config': duplicate recorded parameter field `x_before_display` -/
+#guard_msgs in
+script_elab invalidConfig (params := [y(codec := name, field := "x_before_display", timing := once)])
+  "invalid_config" x:ident y:ident => pure ()
 
 /-- error: [script config] 'invalid_config': output field for `x` must not be empty -/
 #guard_msgs in

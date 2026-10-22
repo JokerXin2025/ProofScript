@@ -87,7 +87,7 @@ class InfoBundle:
             if self.index.get("schemaVersion") != INFO_VERSION or self.index.get("complete") is not True:
                 raise ValueError("Unsupported or incomplete Info bundle; rebuild the cache with Lean")
             if self.index.get("recordingVersion") != PROOF_SCHEMA_VERSION or self.index.get("contractVersion") != "1":
-                raise ValueError("Unsupported recording/contract version; rebuild the cache with Lean")
+                raise ValueError("Unsupported recording/contract version; rebuild with lake build <Library>:ps4html")
             schema = self.read("info/schema/bundle.schema.json")
             # Fail explicitly for old theorem caches, even when their bundled schema is permissive.
             for artifact in self.index.get("artifacts", []):
@@ -119,12 +119,23 @@ class InfoBundle:
             self._snapshot_records = {}
             for entry in self.index["snapshots"]:
                 document = self.read(entry["path"])
+                if not isinstance(document, dict) or not isinstance(document.get("payload"), dict):
+                    raise ValueError("Invalid persisted snapshot document")
+                payload = document.get("payload", {})
+                if payload.get("schemaVersion") != SNAPSHOT_VERSION or payload.get("recordingVersion") != PROOF_SCHEMA_VERSION or payload.get("contractVersion") != "1":
+                    raise ValueError("Unsupported persisted snapshot version; rebuild with lake build <Library>:ps4html")
+                for contract in payload.get("contracts", []):
+                    if not isinstance(contract, dict) or not isinstance(contract.get("value"), dict):
+                        raise ValueError("Invalid invocation contract document")
+                    value = contract.get("value", {})
+                    if value.get("contractVersion") != "1" or value.get("recordingVersion") != PROOF_SCHEMA_VERSION:
+                        raise ValueError("Unsupported invocation contract version; rebuild with lake build <Library>:ps4html")
                 Draft202012Validator(self.read("info/schema/snapshot.schema.json")).validate(document)
                 payload = document["payload"]
                 if document.get("schemaVersion") != INFO_VERSION or digest(payload) != entry["id"] or document["id"] != entry["id"]:
                     raise ValueError("Snapshot identity/version mismatch")
                 if payload.get("schemaVersion") != SNAPSHOT_VERSION or payload.get("recordingVersion") != PROOF_SCHEMA_VERSION or payload.get("contractVersion") != "1":
-                    raise ValueError("Unsupported persisted snapshot version")
+                    raise ValueError("Unsupported persisted snapshot version; rebuild with lake build <Library>:ps4html")
                 query = payload["query"]
                 name_key(query["module"])
                 boundary = query.get("boundary")
@@ -147,7 +158,7 @@ class InfoBundle:
                 for contract in payload["contracts"]:
                     value = contract["value"]
                     if value["contractVersion"] != "1" or value["recordingVersion"] != PROOF_SCHEMA_VERSION or digest(value) != contract["id"]:
-                        raise ValueError("Unsupported or corrupt invocation contract")
+                        raise ValueError("Unsupported or corrupt invocation contract; rebuild with lake build <Library>:ps4html")
                     if contract["id"] in contracts:
                         raise ValueError("Duplicate invocation contract")
                     contracts[contract["id"]] = value
@@ -255,6 +266,10 @@ class InfoBundle:
                 raise ValueError("Invalid page component envelope")
             if {"theorem", "lemma"} & data.keys():
                 self.theorem_component(component, artifact["module"])
+            elif "computation" in data:
+                from PS4HTML.Rules.computation import validate_computation
+                envelope = data["computation"]
+                validate_computation(envelope.get("value") if isinstance(envelope, dict) else None)
         if document["components"]:
             first_snapshot = self.snapshots[document["components"][0]["snapshotId"]][0]
             if first_snapshot["query"] != page_snapshot["query"]:
@@ -377,10 +392,10 @@ class InfoBundle:
             rules[path] = rule
         if validate:
             document = self.read(self.relative(artifact["path"]))
-            if document.get("schemaVersion") != PROOF_SCHEMA_VERSION or document.get("module") != artifact["module"]:
-                raise ValueError("Proof version/module differs from artifact")
-            from PS4HTML.schema import ExpressionResolver
-            ExpressionResolver(document.get("expressions", {})).resolve(document.get("proof", []))
+            from PS4HTML.schema import validate_document
+            resolver = validate_document(document)
+            if document.get("module") != artifact["module"]:
+                raise ValueError("Proof module differs from artifact")
             seen = set()
 
             def visit(steps, parent):
@@ -389,12 +404,13 @@ class InfoBundle:
                     rule = rules.get(path)
                     if rule is None or rule["ruleId"] != step["_ruleId"]:
                         raise ValueError(f"Missing/mismatched contract at {path}")
-                    validate_record(rule, step)
+                    validate_record(rule, step, resolver=resolver, path=path)
                     seen.add(path)
-                    for branch_index, branch in enumerate(step.get("branches", [])):
-                        visit(branch["proof"], path + ("branches", branch_index, "proof"))
+                    if rule["strategy"]:
+                        for branch_index, branch in enumerate(step.get("branches", [])):
+                            visit(branch["proof"], path + ("branches", branch_index, "proof"))
                     embedded = step.get("proof")
-                    if isinstance(embedded, list) and any(isinstance(child, dict) and "_ruleId" in child for child in embedded):
+                    if rule["fields"].get("renderer") == "embed" and isinstance(embedded, list):
                         visit(embedded, path + ("proof",))
 
             if "proof" in document:

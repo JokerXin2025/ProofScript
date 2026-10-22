@@ -1,9 +1,9 @@
-import ProofScript.Foundation.Name
+import ProofScript.Utils.Json
 
 namespace ProofScript.Output
 
 open Lean
-open scoped Foundation
+open scoped InfoJson
 
 /-- Read-only proof facts projected into named proof artifacts, independent of editable `TheoremInfo`. -/
 structure TheoremExport where
@@ -53,19 +53,5 @@ instance : FromJson TheoremExport where
       : TheoremExport }
     value.validate
     return value
-
-/-- Schema for the fixed theorem fields, also embedded in the completed-bundle artifact schema. -/
-def theoremExportSchema : Json := json% {
-  type: "object",
-  properties: {
-    declaration: $(Foundation.qualifiedNameSchema),
-    projectId: { type: "string", minLength: 1 },
-    proofDependencies: {
-      type: "array", items: $(Foundation.qualifiedNameSchema), uniqueItems: true
-    }
-  },
-  required: ["declaration", "projectId", "proofDependencies"],
-  additionalProperties: false
-}
 
 end ProofScript.Output

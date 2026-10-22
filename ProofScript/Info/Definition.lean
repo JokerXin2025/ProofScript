@@ -143,7 +143,7 @@ structure DefinitionDisplay where
   deriving Inhabited
 
 private def definitionConstraint (name message : String) (related : Array String := #[]) : Diagnostic :=
-  { message, path := #[.field name], relatedPaths := related.map fun name => #[.field name] }
+  { message, path := #[.key name], relatedPaths := related.map fun name => #[.key name] }
 
 private def calcStyle (symbol : String) : DefinitionStyle :=
   let suffix := symbol.toList.reverse.takeWhile Char.isAlpha
@@ -173,25 +173,25 @@ def DefinitionInfo.display (value : DefinitionInfo) : Except Diagnostic Definiti
 private def validateStyle (display : DefinitionDisplay) (style : DefinitionStyle) : Except Diagnostic Unit := do
   let references := argumentReferences style.template
   let args := references.arguments ++ references.binders.map (·.1)
-  let related := #[#[.field DefinitionStyle.infoFields.template.name]]
+  let related := #[#[.key DefinitionStyle.infoFields.template.name]]
   if references.dynamic != display.dynamic_arity then
-    throw { message := "dynamic placeholder #* must agree with dynamic_arity", path := #[.field DefinitionStyle.infoFields.template.name] }
+    throw { message := "dynamic placeholder #* must agree with dynamic_arity", path := #[.key DefinitionStyle.infoFields.template.name] }
   let sorted := args.toList.eraseDups.toArray.qsort (· < ·)
   if !display.dynamic_arity && (sorted.mapIdx fun index value => index == value).any (!·) then
-    throw { message := "non-contiguous argument placeholders", path := #[.field DefinitionStyle.infoFields.template.name] }
+    throw { message := "non-contiguous argument placeholders", path := #[.key DefinitionStyle.infoFields.template.name] }
   for (index, depth) in references.binders do
     let binder := style.binders.find? (·.argument == index)
     if binder.isNone || depth > (binder.map (·.count) |>.getD 0) + 1 then
-      throw { message := "@ selector needs a matching binder count", path := #[.field DefinitionStyle.infoFields.binders.name], relatedPaths := related }
+      throw { message := "@ selector needs a matching binder count", path := #[.key DefinitionStyle.infoFields.binders.name], relatedPaths := related }
   if let .indices selected := display.arguments then
     if args.any (· >= selected.size) then
-      throw { message := "template references a missing selected argument", path := #[.field DefinitionStyle.infoFields.template.name] }
+      throw { message := "template references a missing selected argument", path := #[.key DefinitionStyle.infoFields.template.name] }
     if style.binders.any (·.argument >= selected.size) then
-      throw { message := "binder selector references a missing selected argument", path := #[.field DefinitionStyle.infoFields.binders.name], relatedPaths := related }
+      throw { message := "binder selector references a missing selected argument", path := #[.key DefinitionStyle.infoFields.binders.name], relatedPaths := related }
     if style.isolated_arguments.any (· >= selected.size) then
-      throw { message := "isolated_arguments references a missing selected argument", path := #[.field DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
+      throw { message := "isolated_arguments references a missing selected argument", path := #[.key DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
   if !display.dynamic_arity && style.isolated_arguments.any (!args.contains ·) then
-    throw { message := "isolated_arguments must reference a template argument", path := #[.field DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
+    throw { message := "isolated_arguments must reference a template argument", path := #[.key DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
 
 def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := do
   if value.alias.isSome && value.unwrap.isSome then
@@ -206,9 +206,9 @@ def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := 
   for index in [:display.styles.size] do
     (validateStyle display display.styles[index]!).mapError fun error =>
       { error with
-        path := #[.field DefinitionInfo.infoFields.styles.name, .index index] ++ error.path
-        relatedPaths := #[#[.field DefinitionInfo.infoFields.arguments.name],
-          #[.field DefinitionInfo.infoFields.dynamic_arity.name], #[.field DefinitionInfo.infoFields.styles.name]] }
+        path := #[.key DefinitionInfo.infoFields.styles.name, .index index] ++ error.path
+        relatedPaths := #[#[.key DefinitionInfo.infoFields.arguments.name],
+          #[.key DefinitionInfo.infoFields.dynamic_arity.name], #[.key DefinitionInfo.infoFields.styles.name]] }
 
 instance : InfoSchema DefinitionInfo :=
   (inferInstance : InfoSchema DefinitionInfo).withOverrides! {
@@ -242,7 +242,7 @@ def resolveDefinitionChain (env : Environment) (query : Query) (declaration : Na
       let names := (chain.map (·.1.toString)).push current.toString
       let error : Diagnostic := {
         message := "alias cycle: " ++ String.intercalate " → " names.toList
-        path := #[.field DefinitionInfo.infoFields.alias.name] }
+        path := #[.key DefinitionInfo.infoFields.alias.name] }
       throw (fail error)
     unless env.contains current do throw <| fail { message := "unknown declaration in alias closure" }
     let info ← (resolveConfiguredInfo definitionSpec env query current).mapError fail

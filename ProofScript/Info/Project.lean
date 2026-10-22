@@ -43,7 +43,7 @@ def activeProject (env : Environment) (query : Query) : Except Diagnostic (Optio
   let unit ← resolveContext env query activeProjectBinding
   let value ← unit.value.mapError fun error => {
     error with message := "ambiguous active project; select one with `project_info \"P\" { ... }`"
-               path := #[.field "project"] }
+               path := #[.key "project"] }
   value.mapM fun value => (fromJson? value).mapError fun message => { message }
 
 /-- Project IDs are nonempty string literals, matched by their full text. -/
@@ -71,7 +71,7 @@ def resolveProjectTarget (stx : TSyntax `str) (allowNew := false) : CommandElabM
       let name : String ← decodeJson value
       if name.isEmpty then throw { message := "project names must not be empty" }
       return name
-    jsonSchema := json% { type: "string", minLength: 1 } }
+    jsonSchema := InfoJson.nonemptyStringSchema }
   optionalInputCodec
 
 def updateProjectInfo (target : Option (TSyntax `str)) (fields : Array InputField)

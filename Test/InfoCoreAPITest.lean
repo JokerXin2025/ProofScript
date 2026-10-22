@@ -57,12 +57,12 @@ run_cmd do
     cases := #[{ name := "a", tag := "", title := "" }, { name := "b", tag := "", title := "" }] }
   match InfoCodec.decode (α := Array StrategyScriptTemplate) (toJson #[invalid]) with
   | .error error =>
-    unless error.path == #[.index 0, .field "inline"] &&
-        error.relatedPaths == #[#[.field "cases"]] do
+    unless error.path == #[.index 0, .key "inline"] &&
+        error.relatedPaths == #[#[.key "cases"]] do
       throwError "structured decoding lost the array index or related fields"
   | .ok _ => throwError "structured decoding bypassed the nested schema override"
 
-open scoped ProofScript.Foundation in
+open scoped InfoJson in
 run_cmd do
   let spec : InfoSpec Document := { kind := "document" }
   let source : ProofScript.Foundation.SourceLocation := ⟨"target-test", 0, 0⟩

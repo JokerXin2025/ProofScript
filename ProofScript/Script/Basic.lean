@@ -7,7 +7,7 @@ import ProofScript.Script.Recording
 import Batteries.Tactic.Init
 import ProofScript.Page.Component.Core
 import ProofScript.Page.Component.Latex
-import ProofScript.Build.Mode
+import ProofScript.Core.BuildMode
 
 open Lean Meta Parser Elab Tactic
 open ProofScript
@@ -81,7 +81,9 @@ script_elab «have» (intro := [h])
   let type ← inferType expression
   let goal ← getMainGoal
   let rest ← goal.assert h.getId type expression
-  let (_, rest) ← rest.intro1P
+  let (fvarId, rest) ← rest.intro1P
+  rest.withContext do
+    Elab.Term.addLocalVarInfo h (mkFVar fvarId)
   replaceMainGoal [rest]
 
 script_elab «exact»
@@ -252,7 +254,6 @@ script_elab «obtain_exist'» (intro := [h₁, h₂, h₃], clear := [h])
 
 script_elab «funext»
 "funext" arg:ident => withMainContext do
-  let xName := arg.getId
   let target ← getMainGoalExpr'
   unless target.isAppOfArity ``Eq 3 do
     throwError "`funext` can only be used on function equality goals"
@@ -262,7 +263,7 @@ script_elab «funext»
   | .forallE _ domain _ _, .forallE _ domain' _ _ =>
     unless ← isDefEq domain domain' do
       throwError "`funext` requires both sides of the equality to have the same function domain"
-    evalTactic <| ← `(tactic| funext $(mkIdent xName))
+    evalTactic <| ← `(tactic| funext $arg:ident)
   | _, _ => throwError "`funext` can only be used on function equality goals"
 
 script_elab «provide»
@@ -326,7 +327,9 @@ script_elab «claim» (intro := [h], strategy := true, continuation := 1,
   let proofMVar ← mkFreshExprMVar type
   proofMVar.mvarId!.setTag `proof
   let restMVar ← goal.assert h.getId type proofMVar
-  let (_, restMVar') ← restMVar.intro1P
+  let (fvarId, restMVar') ← restMVar.intro1P
+  restMVar'.withContext do
+    Elab.Term.addLocalVarInfo h (mkFVar fvarId)
   replaceMainGoal [proofMVar.mvarId!, restMVar']
 
 open Term (addLocalVarInfo) in
@@ -487,15 +490,15 @@ script_elab «cases_by» (clear := [h], strategy := true)
       replaceMainGoal [leftGoal.mvarId, rightGoal.mvarId]
   | _ =>
     throwError "unexpected error occurred during executing `cases_by`"
-script_recorder «cases_by» (fields := ProofScript.Recording.strategyGoalFields ++ #[
+script_recorder «cases_by» (fields := ProofScript.Recording.withDisplayFields <| ProofScript.Recording.strategyGoalFields ++ #[
   { name := "h", schema := .expression },
   { name := "subject", schema := .expression, nullable := false }])
 "cases_by" h:term "_strategy_cases" strategyCases:str =>
   recording_strategy (strategyCases.getString.splitOn "\n") do
     capture_params #[
-      ProofScript.Recording.goalParam "goal_before",
-      ProofScript.Recording.param (.category `term) "h" h,
-      { name := "subject", onFailure := .required,
+      ProofScript.Recording.goalParamWithDisplay "goal_before",
+      ProofScript.Recording.paramWithDisplay (.category `term) "h" h,
+      { name := "subject", onFailure := .required, display := true,
         collectReferences := false, capture := ProofScript.Recording.expressionType h.raw }
     ]
     execute_recorded
@@ -548,7 +551,9 @@ script_elab «contra» (intro := [h], strategy := true)
     | .forallE _ _ body _ => body.isConstOf ``False
     | _                   => false
   if isArrowToFalse then
-    let (_, newMVarId) ← goal.intro h.getId
+    let (fvarId, newMVarId) ← goal.intro h.getId
+    newMVarId.withContext do
+      Elab.Term.addLocalVarInfo h (mkFVar fvarId)
     newMVarId.setTag `proof
     replaceMainGoal [newMVarId]
   else
@@ -557,16 +562,16 @@ script_elab «contra» (intro := [h], strategy := true)
     newMVarId.setTag `proof
     replaceMainGoal [newMVarId]
 
-script_recorder «contra» (fields := ProofScript.Recording.strategyGoalFields ++ #[
+script_recorder «contra» (fields := ProofScript.Recording.withDisplayFields <| ProofScript.Recording.strategyGoalFields ++ #[
   { name := "h", schema := .expression },
   { name := "hypothesis", schema := .expression, nullable := false }])
 "contra" h:ident "_strategy_cases" strategyCases:str =>
   recording_strategy (strategyCases.getString.splitOn "\n") do
-    capture_params #[ProofScript.Recording.goalParam "goal_before"]
+    capture_params #[ProofScript.Recording.goalParamWithDisplay "goal_before"]
     execute_recorded
     capture_params #[
-      ProofScript.Recording.param (.category `ident) "h" h,
-      { name := "hypothesis", onFailure := .required,
+      ProofScript.Recording.paramWithDisplay (.category `ident) "h" h,
+      { name := "hypothesis", onFailure := .required, display := true,
         collectReferences := false, capture := ProofScript.Recording.expressionType h.raw }
     ]
 
@@ -654,15 +659,16 @@ script_elab «svg» (clear := [code])
 /-! LaTeX (Compiled to SVG) -/
 
 script_elab «latex»
-"latex" _metadata:componentMeta _code:str => fun _ => pure ()
+"latex" _metadata:componentMeta _code:str =>
+  addComponentMetadataInfo _metadata.raw
 
-script_recorder «latex» (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder «latex» (fields := ProofScript.Recording.withDisplayFields <| ProofScript.Recording.goalFields ++ #[
   { name := "metadata", schema := .json, nullable := false },
   { name := "language", schema := .string, nullable := false },
   { name := "source", schema := .string, nullable := false },
   { name := "svg", schema := .json, nullable := false }])
 "latex" metadata:componentMeta code:str => recording_step do
-  capture_params #[ProofScript.Recording.goalParam "goal_before"]
+  capture_params #[ProofScript.Recording.goalParamWithDisplay "goal_before"]
   let metadata ←
     match parseComponentMetadata metadata.raw with
     | .ok value => pure value
@@ -675,7 +681,7 @@ script_recorder «latex» (fields := ProofScript.Recording.goalFields ++ #[
   record_value "source" code.getString
   record_value "svg" svg
   execute_recorded
-  capture_params #[ProofScript.Recording.goalParam "goal_after"]
+  capture_params #[ProofScript.Recording.goalParamWithDisplay "goal_after"]
 
 /-! Informal Proof -/
 
@@ -777,13 +783,13 @@ syntax (name := recordedCalcProof) "_recorded_calc_proof%" num term : term
 /-- Recording elaborator for `_calc`: record the initial term and every chain step.
     `init` is the left side of the first relation; `chain` contains
     `{relation, rhs, proof}` entries, with proofs containing `?_` recorded as holes. -/
-script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder «renderCalc» (fields := ProofScript.Recording.withDisplayFields <| ProofScript.Recording.goalFields ++ #[
   { name := "init", schema := .expression, nullable := false },
   { name := "chain", nullable := false, schema := .array (.object [
       ("relation", .expression), ("rhs", .expression),
       ("proof", .union [.expression, .object [("kind", .literal "hole")]])]) }])
 "calc" steps:calcSteps => recording_step do
-  capture_params #[ProofScript.Recording.goalParam "goal_before"]
+  capture_params #[ProofScript.Recording.goalParamWithDisplay "goal_before"]
   let chain ← liftMacroM <| parseCalcSteps steps
   let views ← Elab.Term.mkCalcStepViews steps
   let wrapped ← views.mapIdxM fun index view => do
@@ -793,14 +799,14 @@ script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
   let rest ← (wrapped.extract 1 wrapped.size).mapM fun view =>
     `(Lean.calcStep| $(view.term) := $(view.proof))
   let recordedSteps : TSyntax ``calcSteps := ⟨steps.raw.setArg 0 first.raw |>.setArg 1 (mkNullNode rest)⟩
-  let captureInit : TacticM ProofScript.Recording.RecordedValue := do
+  let captureInit : ProofScript.Recording.CaptureM ProofScript.Recording.RecordedData := do
     let proofs := (calcProofsExt.getState (← getEnv)).getD #[]
     let some (_, type, _) := proofs.find? (fun entry => entry.1 == 0)
       | throwError "calc: missing first elaborated proof"
     let some (_, lhs, _) := decomposeCalcRelation (← instantiateMVars type)
       | throwError "calc: cannot extract the initial relation"
     ProofScript.Recording.snapshotExpression lhs
-  let captureChain : TacticM ProofScript.Recording.RecordedValue := do
+  let captureChain : ProofScript.Recording.CaptureM ProofScript.Recording.RecordedData := do
     let proofs := (calcProofsExt.getState (← getEnv)).getD #[]
     let mut values := #[]
     for i in [:chain.size] do
@@ -810,7 +816,7 @@ script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
       let some (rel, _, rhs) := decomposeCalcRelation (← instantiateMVars type)
         | throwErrorAt relTerm "calc: cannot extract a binary relation from the step"
       let proof ← if containsSyntheticHole prf.raw then
-          pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar (json% "hole"))])
+          pure (ProofScript.Recording.RecordedData.object [("kind", .plain (json% "hole"))])
         else ProofScript.Recording.snapshotExpression proof
       values := values.push (.object [
         ("relation", ← ProofScript.Recording.snapshotExpression rel),
@@ -820,10 +826,10 @@ script_recorder «renderCalc» (fields := ProofScript.Recording.goalFields ++ #[
     -- Execute the wrapped call so native elaboration supplies the recorded proofs.
     withScriptMode <| evalTactic (← `(tactic| script_calc $recordedSteps:calcSteps))
     capture_params #[
-      { name := "init", onFailure := .required, capture := captureInit },
-      { name := "chain", onFailure := .required, capture := captureChain }
+      { name := "init", onFailure := .required, display := true, capture := captureInit },
+      { name := "chain", onFailure := .required, display := true, capture := captureChain }
     ]
-  capture_params #[ProofScript.Recording.goalParam "goal_after"]
+  capture_params #[ProofScript.Recording.goalParamWithDisplay "goal_after"]
 
 /-! ## Inference Chains -/
 
@@ -967,13 +973,13 @@ private def parseInferSteps (steps : Syntax)
     chain := chain.push (R, prf)
   return (P, chain)
 
-script_recorder «infer» (fields := ProofScript.Recording.goalFields ++ #[
+script_recorder «infer» (fields := ProofScript.Recording.withDisplayFields <| ProofScript.Recording.goalFields ++ #[
   { name := "init", schema := .expression, nullable := false },
   { name := "chain", nullable := false, schema := .array (.object [
       ("rhs", .expression), ("proof", .union [.expression, .object [("kind", .literal "hole")]])]) }])
 "infer" steps:inferSteps => recording_step do
   let (init, chain) ← liftMacroM <| parseInferSteps steps
-  let captureChain : TacticM ProofScript.Recording.RecordedValue := do
+  let captureChain : ProofScript.Recording.CaptureM ProofScript.Recording.RecordedData := do
     let mut values := #[]
     for i in [:chain.size] do
       let (rhs, prf) := chain[i]!
@@ -981,17 +987,17 @@ script_recorder «infer» (fields := ProofScript.Recording.goalFields ++ #[
       let proof ←
         -- Later tactic proofs need a preceding result that does not exist at this phase.
         if containsSyntheticHole prf.raw || (i > 0 && inferIsTacticProof prf.raw) then
-          pure (ProofScript.Recording.RecordedValue.object [("kind", .scalar (json% "hole"))])
+          pure (ProofScript.Recording.RecordedData.object [("kind", .plain (json% "hole"))])
         else
           ProofScript.Recording.snapshotExpression (← elabTerm prf (some rhsExpr))
       values := values.push (.object [
         ("rhs", ← ProofScript.Recording.snapshotExpression rhsExpr), ("proof", proof)])
     return .array values
   capture_params #[
-    ProofScript.Recording.goalParam "goal_before",
-    { name := "init", onFailure := .required,
+    ProofScript.Recording.goalParamWithDisplay "goal_before",
+    { name := "init", onFailure := .required, display := true,
       capture := ProofScript.Recording.expression init.raw },
-    { name := "chain", onFailure := .required, capture := captureChain }
+    { name := "chain", onFailure := .required, display := true, capture := captureChain }
   ]
   execute_recorded
-  capture_params #[ProofScript.Recording.goalParam "goal_after"]
+  capture_params #[ProofScript.Recording.goalParamWithDisplay "goal_after"]

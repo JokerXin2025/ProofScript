@@ -23,11 +23,11 @@ inductive UnitKey where
   | binding (key : String)
   deriving Inhabited, Repr, BEq
 
-def UnitKey.path : UnitKey → FieldPath
-  | .field name | .presence name => #[.field name]
-  | .keyed name key => #[.field name, .field key]
-  | .extra key => #[.field "extra", .field key]
-  | .binding key => #[.field "context", .field key]
+def UnitKey.path : UnitKey → JsonPath
+  | .field name | .presence name => #[.key name]
+  | .keyed name key => #[.key name, .key key]
+  | .extra key => #[.key "extra", .key key]
+  | .binding key => #[.key "context", .key key]
 
 structure Candidate where
   /-- none is a tombstone/missing value; JSON null remains an ordinary value. -/
@@ -220,7 +220,7 @@ def PartialView.attach (view : PartialView) (error : Diagnostic) : Diagnostic :=
   let paths := if error.relatedPaths.isEmpty && error.related.isEmpty then #[]
     else error.relatedPaths.push error.path
   let relevant := view.units.filter fun unit => paths.isEmpty || paths.any fun path =>
-    path.toList.isPrefixOf unit.key.path.toList || unit.key.path.toList.isPrefixOf path.toList
+    path.isPrefixOf unit.key.path || unit.key.path.isPrefixOf path
   let mut related := error.related
   for unit in relevant do
     for candidate in unit.candidates do

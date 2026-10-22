@@ -70,6 +70,14 @@ partial def ParamSchema.toJson : ParamSchema → Lean.Json
 
 instance : Lean.ToJson ParamSchema := ⟨ParamSchema.toJson⟩
 
+/-- Whether a declared value contains typed expression leaves. Open JSON is opaque. -/
+partial def ParamSchema.hasExpressions : ParamSchema → Bool
+  | .expression => true
+  | .array element | .optional element => element.hasExpressions
+  | .object fields => fields.any (fun (_, schema) => schema.hasExpressions)
+  | .union options => options.any ParamSchema.hasExpressions
+  | _ => false
+
 /-- Persist only the output contract; invocation closures never enter the environment. -/
 structure OutputField where
   name : String

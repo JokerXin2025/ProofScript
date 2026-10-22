@@ -60,7 +60,7 @@ structure Snapshot where
   provenance : Array Json := #[]
   deriving Inhabited
 
-open scoped Foundation in
+open scoped InfoJson in
 def Snapshot.payload (snapshot : Snapshot) :=
   let contracts := snapshot.contracts.map fun contract => json% {
     id: $(contract.id),

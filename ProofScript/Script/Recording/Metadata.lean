@@ -34,11 +34,20 @@ def validateOutputFields (parameters : List (String × CaptureTiming)) : Except 
 derive_eval_expr_instance_using_meta_eval ParamSchema
 derive_eval_expr_instance_using_meta_eval OutputField
 
+/-- Evaluate the complete field declaration, including schema-driven helpers;
+    the generic Array interpreter only reduces constructor-visible arrays. -/
+private structure OutputFieldsValue where
+  fields : Array OutputField
+
+derive_eval_expr_instance_using_meta_eval OutputFieldsValue
+
 def evalSchema (schema : TSyntax `term) : CommandElabM ParamSchema :=
   liftTermElabM <| Elab.ConfigEval.evalExprWithElab schema
 
-def evalOutputFields (fields : TSyntax `term) : CommandElabM (Array OutputField) :=
-  liftTermElabM <| Elab.ConfigEval.evalExprWithElab fields
+def evalOutputFields (fields : TSyntax `term) : CommandElabM (Array OutputField) := do
+  let wrapped ← `(term| OutputFieldsValue.mk $fields)
+  let result : OutputFieldsValue ← liftTermElabM <| Elab.ConfigEval.evalExprWithElab wrapped
+  return result.fields
 
 def emittedFields (name : String) (schema : ParamSchema) (timing : CaptureTiming)
     (failure : FailurePolicy) : Array OutputField :=

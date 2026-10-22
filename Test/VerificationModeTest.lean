@@ -35,6 +35,18 @@ script_recorder verifyStep "verify_step" => do
 @theorem noRecorder : True := script
   verify_step
 
+-- Standalone metadata must skip field decoding and target resolution as well.
+-- These fields contain wrong types, duplicate assignments and unknown names.
+project_info "" { title := 123, title := missingMetadataField }
+project_info { title := missingMetadataField }
+theorem_info missingMetadataTheorem { name := 123, project := "Unconfigured" }
+theorem_info missingMetadataTheoremWithoutFields
+theorem_info byForm { name := "Skipped standalone metadata" }
+var_info "" { default := missingMetadataField, names := 123 }
+phrase_info "" { template := missingMetadataField }
+def_info missingMetadataDefinition { unwrap := missingMetadataField }
+script_info missingMetadataRule { renderer := missingMetadataField, display := 123 }
+
 -- These deliberately invalid page payloads must not start resource work or consume metadata.
 @text "*Unclosed page formatting"
 @latex (title := "Skipped LaTeX") "\\thisCommandMustNotBeCompiled"
@@ -94,8 +106,12 @@ run_cmd do
     if ← liftIO path.pathExists then throwError "verification exported a proof file"
   unless (Output.moduleArtifacts env env.mainModule).isEmpty &&
       (getPageState env).components.isEmpty && !(getPageState env).exported &&
-      (Info.moduleEvents env env.mainModule).isEmpty && (← getTheoremRefs).isEmpty do
+      (Info.moduleEvents env env.mainModule).isEmpty &&
+      Info.currentBoundary env == .before 0 && (← getTheoremRefs).isEmpty do
     throwError "verification produced page, metadata, artifact or citation state"
+  match Info.activeProject env { moduleName := env.mainModule } with
+  | .ok none => pure ()
+  | _ => throwError "verification metadata commands changed the active project"
   let documentation ← liftIO <| findDocString? env `VerificationMode.byForm
   unless documentation.any (·.trimAscii.toString ==
       "Page metadata is not needed to verify this native theorem.") do
