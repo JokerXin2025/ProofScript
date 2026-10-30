@@ -4,6 +4,8 @@ import os
 import shutil
 import fcntl
 import tempfile
+import html
+import sys
 from contextlib import contextmanager
 from decimal import Decimal
 from pathlib import Path
@@ -16,16 +18,39 @@ from PS4HTML.assets import publish_assets
 from PS4HTML.i18n import DEFAULT_LANGUAGE
 
 
+def _progress_stream():
+    """Return the controlling terminal when Lake captures this process's stdout.
+
+    A Lake ``proc`` captures stdout/stderr until the job finishes.  Progress
+    written to the controlling terminal therefore remains visible while the
+    facet is running, while normal stdout is still retained for diagnostics.
+    """
+    try:
+        return open("/dev/tty", "w", buffering=1, encoding="utf-8")
+    except (OSError, UnicodeError):
+        return sys.stdout
+
+
+def _progress(message):
+    stream = _progress_stream()
+    try:
+        print(message, file=stream, flush=True)
+    finally:
+        if stream is not sys.stdout:
+            stream.close()
+
+
 def make():
     root = find_project_root(Path.cwd())
     print("Using cached ProofScript output; skipping Lean compilation.", flush=True)
     with _project_lock(root):
         snapshot_root = root / ".PS4HTML" / "inputs"
-        snapshots = sorted(snapshot_root.glob("*/*/.ProofScript/pages")) if snapshot_root.exists() else []
+        snapshots = (sorted(snapshot_root.glob("*/*/.ProofScript/pages")) +
+                     sorted(snapshot_root.glob("*/.modules/*/.ProofScript/pages"))) if snapshot_root.exists() else []
         if snapshots:
             for pages in snapshots:
-                package, library = pages.parents[2].name, pages.parents[1].name
-                _publish_render(root, root / ".PS4HTML" / "build" / package / library,
+                target = pages.parent.parent.relative_to(snapshot_root)
+                _publish_render(root, root / ".PS4HTML" / "build" / target,
                                 export_root=pages.parent)
         else:
             _publish_render(root, root / ".PS4HTML" / "build" / "cached-project")
@@ -34,27 +59,38 @@ def make():
 
 
 def build_library(package: str, library: str, modules_and_sources: list[str], *, build_dir: Path):
+    return _build_target(package, library, modules_and_sources, build_dir=build_dir)
+
+
+def build_module(package: str, module: str, source: str, *, build_dir: Path):
+    return _build_target(package, module, [module, source], build_dir=build_dir, kind="module")
+
+
+def _build_target(package: str, name: str, modules_and_sources: list[str], *, build_dir: Path,
+                  kind: str = "library"):
     """Build and export in one isolated Lake workspace, then publish atomically."""
     root = find_project_root(Path.cwd()).resolve()
-    if not all(_safe_module_name(name) for name in (package, library)):
-        raise PS4HTMLError("Invalid package or library name from Lake")
+    if not all(_safe_module_name(value) for value in (package, name)):
+        raise PS4HTMLError("Invalid package or target name from Lake")
     if len(modules_and_sources) % 2:
         raise PS4HTMLError("Expected module/source pairs from Lake")
     sources = dict(zip(modules_and_sources[::2], modules_and_sources[1::2]))
     modules = set(sources)
     if any(not _safe_module_name(name) for name in modules):
         raise PS4HTMLError("Invalid module list from Lake")
-    for name, source_name in sources.items():
+    for module_name, source_name in sources.items():
         if not Path(source_name).is_file():
-            raise PS4HTMLError(f"Missing Lean source for {name}: {source_name}")
+            raise PS4HTMLError(f"Missing Lean source for {module_name}: {source_name}")
     build_dir = (root / build_dir).absolute()
-    expected_build = root / ".lake" / "ps4html" / package / library
-    page_parents = (root / ".lake" / "ps4html", expected_build.parent, expected_build)
+    target = Path(".modules") / name if kind == "module" else Path(name)
+    expected_build = root / ".lake" / "ps4html" / package / target
+    page_parents = (root / ".lake", root / ".lake" / "ps4html",
+                    root / ".lake" / "ps4html" / package, expected_build.parent, expected_build)
     if (build_dir != expected_build or any(path.is_symlink() for path in page_parents)
             or any(Path(source).resolve().is_relative_to(build_dir.resolve()) for source in sources.values())):
         raise PS4HTMLError(f"Expected a dedicated page build directory: {expected_build}; got {build_dir}")
     lake = _lake_command()
-    output = root / ".PS4HTML" / "build" / package / library
+    output = root / ".PS4HTML" / "build" / package / target
     with _project_lock(root):
         stage_root = root / ".PS4HTML" / "staging"
         stage_root.mkdir(parents=True, exist_ok=True)
@@ -63,41 +99,69 @@ def build_library(package: str, library: str, modules_and_sources: list[str], *,
             stage = Path(temporary) / "release"
             stage.mkdir()
             export_root = stage / ".ProofScript"
-            session_path.write_text(json.dumps({
+            session_value = {
                 "schemaVersion": 1,
                 "package": package,
-                "library": library,
                 "buildRoot": str(build_dir),
                 "exportRoot": str(export_root),
-            }), encoding="utf-8")
+            }
+            session_value[kind] = name
+            if kind == "module":
+                session_value["targetKind"] = kind
+            session_path.write_text(json.dumps(session_value), encoding="utf-8")
             environment = os.environ.copy()
             environment["PROOF_SCRIPT_OUTPUT_ROOT"] = str(export_root)
             environment["PS4HTML_BUILD_SESSION"] = str(session_path)
             environment["PROOF_SCRIPT_BUILD_MANIFEST"] = str(session_path)
             # The Wasm bundler also needs C IR and setup files from cached support packages.
             environment["LAKE_RESTORE_ARTIFACTS"] = "true"
-            print(f"[PS4HTML] Cleaning page build output: {build_dir}", flush=True)
+            _progress(f"[PS4HTML] Cleaning page build output: {build_dir}")
             if build_dir.exists():
                 shutil.rmtree(build_dir)
             build_dir.mkdir(parents=True)
-            print(f"[PS4HTML] Building and exporting {package}/{library} with Lake...", flush=True)
+            _progress(f"[PS4HTML] Building and exporting {package}/{name} with Lake...")
             # The facet records source packages and runs the exporter before
             # leaving its isolated workspace and import paths.
-            _run_lake([*lake, "--no-cache", "build", f"@{package}/{library}:ps4htmlInputs"], root, environment)
+            lake_target = f"+{name}" if kind == "module" else name
+            _run_lake([*lake, "--no-cache", "build", f"@{package}/{lake_target}:ps4htmlInputs"], root, environment)
             session = json.loads(session_path.read_text(encoding="utf-8"))
             if set(session.get("owners", [])) != modules:
-                raise PS4HTMLError("Page build session does not match the requested library modules")
+                raise PS4HTMLError("Page build session does not match the requested modules")
             index = json.loads((export_root / "info/index.json").read_text())
             original_pages = {artifact["path"]: json.loads(
                 (export_root / artifact["path"].removeprefix(".ProofScript/")).read_text(), parse_float=Decimal)
                 for artifact in index["artifacts"] if artifact["kind"] == "page"}
+            if kind == "module":
+                _select_computations(export_root, original_pages.values())
             _build_computations(root, export_root, build_manifest=session_path)
             _seal_resources(export_root, original_pages=original_pages)
             rendered = stage / "site"
             render_site(root, rendered, modules, export_root)
-            _publish_release(root, package, library, stage)
+            _publish_release(root, package, target, stage)
             _write_project_index(root)
+            _report_output(output)
     return output
+
+
+def _select_computations(export_root, pages):
+    """Imports may emit pending computations; only build entries used by the selected page."""
+    pending = export_root / "computations" / "pending"
+    selected = set()
+    for page in pages:
+        for component in page.get("components", []):
+            execution = component.get("data", {}).get("computation", {}).get("value", {}).get("execution", {})
+            if execution.get("backend") != "wasm" or execution.get("status") != "pending":
+                continue
+            manifest = execution.get("manifest")
+            if not isinstance(manifest, str) or not manifest.startswith(".ProofScript/computations/pending/"):
+                raise PS4HTMLError("Invalid pending computation manifest in selected page")
+            path = export_root / manifest.removeprefix(".ProofScript/")
+            if not path.resolve().is_relative_to(pending.resolve()) or not path.is_file():
+                raise PS4HTMLError(f"Missing or invalid pending computation manifest: {manifest}")
+            selected.add(path.resolve())
+    for path in pending.rglob("*.json"):
+        if path.resolve() not in selected:
+            path.unlink()
 
 
 def _lake_command():
@@ -119,10 +183,10 @@ def _lake_command():
     return command
 
 
-def _publish_release(root, package, library, stage):
+def _publish_release(root, package, target, stage):
     """One atomic pointer selects matching input and HTML trees; failed staging is never visible."""
     import hashlib
-    releases = root / ".PS4HTML" / "releases" / package / library
+    releases = root / ".PS4HTML" / "releases" / package / target
     releases.mkdir(parents=True, exist_ok=True)
     identity = hashlib.sha256()
     for path in sorted(stage.rglob("*")):
@@ -141,8 +205,8 @@ def _publish_release(root, package, library, stage):
     next_pointer.symlink_to(release.name, target_is_directory=True)
     # Public aliases remain stable across releases and resolve through the one current pointer.
     for alias, target in (
-        (root / ".PS4HTML" / "inputs" / package / library / ".ProofScript", current / ".ProofScript"),
-        (root / ".PS4HTML" / "build" / package / library, current / "site"),
+        (root / ".PS4HTML" / "inputs" / package / target / ".ProofScript", current / ".ProofScript"),
+        (root / ".PS4HTML" / "build" / package / target, current / "site"),
     ):
         alias.parent.mkdir(parents=True, exist_ok=True)
         if alias.is_symlink():
@@ -249,23 +313,41 @@ def _publish_render(root, output, export_root=None):
     with tempfile.TemporaryDirectory(dir=staging) as temporary:
         stage = Path(temporary)
         rendered = stage / "site"
-        if export_root is not None and output.parent.parent == root / ".PS4HTML" / "build":
+        relative = output.relative_to(root / ".PS4HTML" / "build")
+        release_target = (len(relative.parts) == 2 or
+                          len(relative.parts) == 3 and relative.parts[1] == ".modules")
+        if export_root is not None and release_target:
             cached = stage / ".ProofScript"
             shutil.copytree(export_root, cached)
             render_site(root, rendered, export_root=cached)
-            _publish_release(root, output.parent.name, output.name, stage)
+            _publish_release(root, relative.parts[0], Path(*relative.parts[1:]), stage)
+            _write_project_index(root)
+            _report_output(output)
         else:
             render_site(root, rendered, export_root=export_root)
             _replace_tree(rendered, output)
+            _report_output(output)
+
+
+def _report_output(output):
+    """Report the stable public path, rather than the temporary staging tree."""
+    print(f"\n\033[32m\033[1m✓ Output has been saved to \033[4m{output}\033[0m\n")
 
 
 def _write_project_index(root):
     index = root / ".PS4HTML" / "build" / "index.html"
     index.parent.mkdir(parents=True, exist_ok=True)
-    sites = sorted(index.parent.glob("*/*/index.html")) + sorted(index.parent.glob("cached-project/index.html"))
-    links = "".join(f'<li><a href="{quote_url_path(path.relative_to(index.parent).as_posix())}">{path.parent.name}</a></li>' for path in sites)
+    sites = (sorted(index.parent.glob("*/*/index.html")) +
+             sorted(index.parent.glob("*/.modules/*/index.html")) +
+             sorted(index.parent.glob("cached-project/index.html")))
+    links = []
+    for path in sites:
+        relative = path.relative_to(index.parent)
+        label = (f"{relative.parts[0]}/+{path.parent.name}" if len(relative.parts) == 4
+                 else "/".join(relative.parts[:-1]))
+        links.append(f'<li><a href="{quote_url_path(relative.as_posix())}">{html.escape(label)}</a></li>')
     next_index = index.with_name("index.html.next")
-    next_index.write_text(f'<!doctype html><meta charset="utf-8"><title>PS4HTML</title><ul>{links}</ul>', encoding="utf-8")
+    next_index.write_text(f'<!doctype html><meta charset="utf-8"><title>PS4HTML</title><ul>{"".join(links)}</ul>', encoding="utf-8")
     next_index.replace(index)
 
 
@@ -277,7 +359,7 @@ def render_site(root, build_root, modules=None, export_root=None):
     theorem_graph = TheoremGraph.from_bundle(bundle, all_pages)
     pages = [page for page in all_pages if modules is None or page.module in modules]
     if not pages:
-        raise PS4HTMLError("No ProofScript pages found for this library")
+        raise PS4HTMLError("No ProofScript pages found for the selected modules; close a page with #page end and rebuild")
     project_info = load_project_info(export_root or root / ".ProofScript", modules, bundle=bundle)
     language = DEFAULT_LANGUAGE
     _publish_runtime_assets(build_root)
@@ -332,7 +414,6 @@ def render_site(root, build_root, modules=None, export_root=None):
         }, ensure_ascii = False, indent = 2),
         encoding = "utf-8",
     )
-    print(f"\n\033[32m\033[1m✓ Output has been saved to \033[4m{build_root}\033[0m\n")
     return build_root
 
 
@@ -389,7 +470,7 @@ def _run_lake(command, project_root, environment=None):
     try:
         for line in process.stdout:
             output.append(line)
-            print(line, end = "", flush = True)
+            _progress(line.rstrip("\n"))
     except KeyboardInterrupt:
         process.terminate()
         process.wait()

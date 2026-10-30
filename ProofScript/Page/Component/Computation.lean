@@ -1,4 +1,4 @@
-import ProofScript.Page.Component.Core
+import ProofScript.Page.Component.Command
 import Lean.Data.Json
 import ProofScript.Output.Path
 import ProofScript.Page.Model
@@ -47,7 +47,7 @@ structure PendingEntry where
   wrapper : String
   module : String
   functionType : EntryType
-  source : Foundation.SourceLocation
+  source : SourceLocation
 deriving Inhabited, ToJson
 
 def pendingEntryPath (moduleName declaration : String) : FilePath :=
@@ -74,12 +74,12 @@ namespace ProofScript
 /-- Frozen provenance for the Lean declaration backing an interactive computation.
     Complete JSON export goes through `encode`, which exports its independent expression graph. -/
 structure ComputationFunction where
-  recording : Recording.RecordedValue
+  recording : RecordedValue
 deriving Inhabited
 
 /-- Encode frozen provenance without consulting the declaration again. -/
 def ComputationFunction.encode (function : ComputationFunction) : Except String Json :=
-  Recording.encodeComputationFunction function.recording
+  encodeComputationFunction function.recording
 
 structure ComputationExecution where
   backend : String := "wasm"
@@ -123,24 +123,24 @@ private structure FunctionShape where
 private def functionShape (stx : Syntax) (info : ConstantInfo) : CommandElabM FunctionShape :=
   liftTermElabM do
     unless info.levelParams.isEmpty do
-      throwErrorAt stx "@computation does not yet support universe-polymorphic entry functions"
+      throwErrorAt stx "#page computation does not yet support universe-polymorphic entry functions"
     let type ← Meta.whnf info.type
     let .forallE _ input result binderInfo := type
-      | throwErrorAt stx "@computation requires a function with exactly one explicit argument"
+      | throwErrorAt stx "#page computation requires a function with exactly one explicit argument"
     unless binderInfo == .default do
-      throwErrorAt stx "@computation requires an explicit input argument"
+      throwErrorAt stx "#page computation requires an explicit input argument"
     if result.hasLooseBVars then
-      throwErrorAt stx "@computation does not support dependent output types"
+      throwErrorAt stx "#page computation does not support dependent output types"
     let result ← Meta.whnf result
     match result with
     | .forallE .. =>
-        throwErrorAt stx "@computation requires a function with exactly one explicit argument"
+        throwErrorAt stx "#page computation requires a function with exactly one explicit argument"
     | _ => pure ()
     let (output, errorMode) ←
       match result with
       | .app (.app (.const ``Except _) errorType) output =>
           unless ← Meta.isDefEq errorType (mkConst ``String ) do
-            throwErrorAt stx "@computation requires Except String as its error type"
+            throwErrorAt stx "#page computation requires Except String as its error type"
           pure (output, "except")
       | output => pure (output, "pure")
     discard <| Meta.synthInstance (← Meta.mkAppM ``FromJson #[input])
@@ -191,7 +191,7 @@ private def addWrapper (declaration : Name) (shape : FunctionShape)
 private def parseJsonAt (stx : Syntax) (source : String) : CommandElabM Json :=
   match Json.parse source with
   | .ok value => pure value
-  | .error message => throwErrorAt stx s!"invalid @computation payload JSON: {message}"
+  | .error message => throwErrorAt stx s!"invalid #page computation payload JSON: {message}"
 
 private def resolveDeclaration (stx : Syntax) (name : Name) : CommandElabM Name := do
   let env ← getEnv
@@ -218,12 +218,11 @@ private def addComputationComponent (metadataStx : Syntax)
   let implementation ← match info with
     | .defnInfo value => pure value.value
     | .opaqueInfo value => pure value.value
-    | _ => throwErrorAt functionStx s!"@computation requires a definition with an implementation; '{declaration}' is not executable"
+    | _ => throwErrorAt functionStx s!"#page computation requires a definition with an implementation; '{declaration}' is not executable"
   let type ← liftTermElabM do
     return toString (← Meta.ppExpr info.type)
-  let captured ← liftTermElabM do
-    let action := Recording.CaptureM.run <|
-      Recording.captureComputationFunction declaration type implementation (some functionStx.raw)
+  let recorded ← liftTermElabM do
+    let action := recordComputationFunction declaration type implementation (some functionStx.raw)
     (action { elaborator := .anonymous }).run' { goals := [] }
   let payload ← parseJsonAt payloadStx.raw payloadStx.getString
   let shape ← functionShape functionStx.raw info
@@ -248,7 +247,7 @@ private def addComputationComponent (metadataStx : Syntax)
   let value : ComputationComponent := {
     metadata
     renderer := rendererStx.getString
-    function := { recording := captured }
+    function := { recording := recorded }
     execution := {
       bundleId
       entry := declaration.toString
@@ -268,70 +267,84 @@ behind a named renderer avoids treating Lean compiler internals as a stable web 
 -/
 syntax computationFieldValue := componentMeta <|> str <|> ident
 syntax computationField := ident " := " computationFieldValue
-syntax (name := computationCmd) "@computation" "{" sepBy1(computationField, ", ") "}" : command
 
-elab_rules : command
-  | `(command| @computation { $[$fields:computationField],* }) => do
-      for field in fields do
-        if let `(computationField| $key:ident := $value:computationFieldValue) := field then
-          match key.getId with
-          | `metadata =>
-              Elab.addConstInfo key.raw ``ComputationComponent.metadata
-              if let `(computationFieldValue| $metadata:componentMeta) := value then
-                addComponentMetadataInfo metadata.raw
-          | `renderer => Elab.addConstInfo key.raw ``ComputationComponent.renderer
-          | `function => Elab.addConstInfo key.raw ``ComputationComponent.function
-          | `payload => Elab.addConstInfo key.raw ``ComputationComponent.payload
-          | _ => pure ()
-      unless ← recordModuleBuildMode do
-        -- Skipped page payloads remain unchecked, while existing function names
-        -- still participate in editor navigation and reference highlighting.
-        for field in fields do
-          match field with
-          | `(computationField| $key:ident := $value:computationFieldValue) =>
-              if key.getId == `function then
-                if let `(computationFieldValue| $functionStx:ident) := value then
-                  try
-                    let declaration ← resolveDeclaration functionStx.raw functionStx.getId
-                    Elab.addConstInfo functionStx.raw declaration
-                  catch error =>
-                    if error.isInterrupt || error.isMaxHeartbeat || error.isMaxRecDepth then
-                      throw error
-          | _ => pure ()
-        return
-      let mut metadata : Option Syntax := none
-      let mut renderer : Option (TSyntax `str) := none
-      let mut function : Option (TSyntax `ident) := none
-      let mut payload : Option (TSyntax `str) := none
-      let mut assigned : List String := []
-      for field in fields do
-        match field with
-        | `(computationField| $key:ident := $value:computationFieldValue) =>
-            let name := key.getId.toString
-            unless ["metadata", "renderer", "function", "payload"].contains name do
-              throwErrorAt key m!"unknown @computation field `{name}`"
-            if assigned.contains name then
-              throwErrorAt key m!"duplicate @computation field `{name}`"
-            assigned := name :: assigned
-            if name == "metadata" then
-              match value with
-              | `(computationFieldValue| $item:componentMeta) => metadata := some item.raw
-              | _ => throwErrorAt value "invalid value for @computation field `metadata`"
-            else if name == "function" then
-              match value with
-              | `(computationFieldValue| $item:ident) => function := some item
-              | _ => throwErrorAt value "invalid value for @computation field `function`"
-            else
-              match value with
-              | `(computationFieldValue| $item:str) =>
-                  if name == "renderer" then renderer := some item else payload := some item
-              | _ => throwErrorAt value m!"invalid value for @computation field `{name}`"
-        | _ => throwErrorAt field "invalid @computation field"
-      let some metadataStx := metadata | throwError "@computation requires metadata"
-      let some rendererStx := renderer | throwError "@computation requires renderer"
-      let some functionStx := function | throwError "@computation requires function"
-      let some payloadStx := payload | throwError "@computation requires payload"
-      addComputationComponent metadataStx rendererStx functionStx payloadStx
+private def annotateComputationFields (fields : Array (TSyntax ``computationField))
+    : CommandElabM Unit := do
+  for field in fields do
+    match field with
+    | `(computationField| $key:ident := $value:computationFieldValue) =>
+        match key.getId with
+        | `metadata =>
+            Elab.addConstInfo key.raw ``ComputationComponent.metadata
+            if let `(computationFieldValue| $metadata:componentMeta) := value then
+              addComponentMetadataInfo metadata.raw
+        | `renderer => Elab.addConstInfo key.raw ``ComputationComponent.renderer
+        | `function => Elab.addConstInfo key.raw ``ComputationComponent.function
+        | `payload => Elab.addConstInfo key.raw ``ComputationComponent.payload
+        | _ => pure ()
+    | _ => pure ()
+
+private def annotateComputationFunction (fields : Array (TSyntax ``computationField))
+    : CommandElabM Unit := do
+  -- Skipped page payloads remain unchecked, while existing function names
+  -- still participate in editor navigation and reference highlighting.
+  for field in fields do
+    match field with
+    | `(computationField| $key:ident := $value:computationFieldValue) =>
+        if key.getId == `function then
+          if let `(computationFieldValue| $functionStx:ident) := value then
+            try
+              let declaration ← resolveDeclaration functionStx.raw functionStx.getId
+              Elab.addConstInfo functionStx.raw declaration
+            catch error =>
+              if error.isInterrupt || error.isMaxHeartbeat || error.isMaxRecDepth then
+                throw error
+    | _ => pure ()
+
+private def parseComputationFields (fields : Array (TSyntax ``computationField)) :
+    CommandElabM (Syntax × TSyntax `str × TSyntax `ident × TSyntax `str) := do
+  let mut metadata : Option Syntax := none
+  let mut renderer : Option (TSyntax `str) := none
+  let mut function : Option (TSyntax `ident) := none
+  let mut payload : Option (TSyntax `str) := none
+  let mut assigned : List String := []
+  for field in fields do
+    match field with
+    | `(computationField| $key:ident := $value:computationFieldValue) =>
+        let name := key.getId.toString
+        unless ["metadata", "renderer", "function", "payload"].contains name do
+          throwErrorAt key m!"unknown #page computation field `{name}`"
+        if assigned.contains name then
+          throwErrorAt key m!"duplicate #page computation field `{name}`"
+        assigned := name :: assigned
+        if name == "metadata" then
+          match value with
+          | `(computationFieldValue| $item:componentMeta) => metadata := some item.raw
+          | _ => throwErrorAt value "invalid value for #page computation field `metadata`"
+        else if name == "function" then
+          match value with
+          | `(computationFieldValue| $item:ident) => function := some item
+          | _ => throwErrorAt value "invalid value for #page computation field `function`"
+        else
+          match value with
+          | `(computationFieldValue| $item:str) =>
+              if name == "renderer" then renderer := some item else payload := some item
+          | _ => throwErrorAt value m!"invalid value for #page computation field `{name}`"
+    | _ => throwErrorAt field "invalid #page computation field"
+  let some metadataStx := metadata | throwError "#page computation requires metadata"
+  let some rendererStx := renderer | throwError "#page computation requires renderer"
+  let some functionStx := function | throwError "#page computation requires function"
+  let some payloadStx := payload | throwError "#page computation requires payload"
+  return (metadataStx, rendererStx, functionStx, payloadStx)
+
+page_component "computation" "{" fields:computationField,* "}" => do
+  annotateComputationFields fields
+  unless ← pageBuildEnabled do
+    annotateComputationFunction fields
+    return
+  let (metadataStx, rendererStx, functionStx, payloadStx) ← parseComputationFields fields
+  when_page_build
+    addComputationComponent metadataStx rendererStx functionStx payloadStx
 
 
 end ProofScript

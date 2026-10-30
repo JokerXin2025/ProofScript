@@ -210,6 +210,9 @@ class PageRenderer:
             ):
                 links = []
                 for other_key in graph.ordered(keys):
+                    other_record = graph.nodes[other_key].record
+                    if css_class == "outgoing" and other_record is not None and other_record.declaration_kind == "lemma":
+                        continue
                     destination = graph.destinations.get(other_key)
                     declaration = html.escape(name_text(list(other_key[1])), quote=True)
                     label = html.escape(graph.title(other_key))
@@ -346,12 +349,21 @@ class PageRenderer:
             elif isinstance(proof_document.get("code"), str) and state != ERROR:
                 code = proof_document["code"]
                 highlighted_code, _applied = highlight_code(code, "lean4", theme="light")
-                return _render_code_only_declaration(
-                    declaration_kind, name,
-                    _theorem_anchor(declaration),
-                    highlighted_code,
-                    code.count("\n") + (1 if code else 0), identity
-                )
+                from PS4HTML.statement import render_statement
+                artifact = self.bundle.artifact(proof_path)
+                config = self.bundle.configuration(snapshot_id=artifact["snapshotId"])
+                panels = []
+                for language in ("zh", "en"):
+                    engine = ProofEngine([], language=language, expression_resolver=expression_resolver,
+                                         lean2tex_config=config)
+                    statement = render_statement(proof_document["statement"], engine)
+                    panels.append(_render_code_only_declaration(
+                        declaration_kind, name, _theorem_anchor(declaration) + ("-en" if language == "en" else ""),
+                        highlighted_code, code.count("\n") + (1 if code else 0), identity,
+                        statement, language, self.default_language))
+                    self.diagnostics.extend({"theorem": name, "proof": record.path, "language": language,
+                                             **diagnostic} for diagnostic in engine.diagnostics)
+                return "\n".join(panels)
             else:
                 state = ERROR
         else:
@@ -398,6 +410,7 @@ class PageRenderer:
                 language = language,
                 default_language = self.default_language,
                 theorem_id = identity,
+                statement = proof_document["statement"],
             ))
             self.diagnostics.extend({
                 "theorem": name,
@@ -416,9 +429,11 @@ class PageRenderer:
         return f'<section class="unsupported-component" data-component="{html.escape(tag, quote = True)}" data-component-value="{preserved}"><strong>{html.escape(str(title))}</strong><span>Component rendering is not supported yet.</span></section>'
 
 
-def _render_code_only_declaration(kind, name, anchor, code, lines, theorem_id):
-    return f'''<section class="theorem-proof theorem-code-only" id="{html.escape(anchor, quote=True)}" data-theorem-id="{html.escape(theorem_id, quote=True)}">
+def _render_code_only_declaration(kind, name, anchor, code, lines, theorem_id, statement, language="zh", default_language="zh"):
+    hidden = "" if language == default_language else " hidden"
+    return f'''<section class="theorem-proof theorem-code-only" id="{html.escape(anchor, quote=True)}" data-theorem-id="{html.escape(theorem_id, quote=True)}" data-language-panel="{language}"{hidden}>
   <h2><span>{html.escape(name)}</span></h2>
+  {statement}
   <div class="proof-source-card">
     <div class="code-header"><span>{html.escape(kind.title())}</span><span>{lines} 行</span></div>
     <pre class="page-code code-highlighted"><code>{code}</code></pre>

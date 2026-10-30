@@ -1,7 +1,6 @@
 import ProofScript.Output.Manifest
-import ProofScript.Script.Recording.DisplaySchema
 
-namespace ProofScript.Output
+namespace ProofScript
 
 open Lean
 
@@ -37,36 +36,36 @@ def printedName (_env : Environment) (text : String) : Except String Name := do
 private def add (dependencies : Array RenderDependency) (dependency : RenderDependency) : Array RenderDependency :=
   if dependencies.contains dependency then dependencies else dependencies.push dependency
 
-private def dereference (table value : Json) : Json :=
-  match value.getObjValAs? String "$ref" with
-  | .ok id => (table.getObjVal? id).toOption.getD value
-  | .error _ => value
-
-private def variableTypeKey (table type : Json) : String :=
-  let type := dereference table type
-  match (type.getObjValAs? String "kind").toOption with
-  | some "const" => (type.getObjValAs? String "name").toOption.getD ""
-  | some "sort" =>
-    if ((type.getObjVal? "level").toOption.bind fun level =>
-      (level.getObjValAs? String "kind").toOption) == some "level.zero" then "Prop" else "Type"
-  | some "forall" => "Function"
-  | _ => ""
-
-/-- Walk structural constructor fields and explicit local display projections.
-    Arbitrary metadata is opaque, even if it contains `$ref` or `kind`. Recording
-    and citation suppression cannot hide rendering use. -/
+/-- Follow structural edges and effective naming-type annotations from an
+    explicit expression root. Ordinary JSON and unrelated metadata are not
+    searched for declarations. Citation suppression cannot hide rendering use. -/
 private partial def expressionDependencies (env : Environment) (table root : Json) :
     Except String (Array RenderDependency) := do
   return (← visit root #[] #[]).2
 where
+  -- Metadata belongs to an occurrence, even when its structural node is shared.
+  -- Peel wrappers before deduplicating that node, retaining the outermost value.
+  occurrence (value : Json) (reference : Option String := none)
+      (type : Option Json := none) : Except String (Option String × Json × Option Json) := do
+    if let .ok id := value.getObjValAs? String "$ref" then
+      return ← occurrence (← table.getObjVal? id) (some id) type
+    if (value.getObjValAs? String "kind").toOption == some "mdata" then
+      let data ← value.getObjVal? "data"
+      let type := type.orElse fun _ => (data.getObjVal? "ProofScript.type").toOption
+      return ← occurrence (← value.getObjVal? "expr") none type
+    return (reference, value, type)
   visit (value : Json) (seen : Array String) (dependencies : Array RenderDependency) :
       Except String (Array String × Array RenderDependency) := do
-    if let .ok id := value.getObjValAs? String "$ref" then
-      if seen.contains id then return (seen, dependencies)
-      let node ← table.getObjVal? id
-      return ← visit node (seen.push id) dependencies
+    let (reference, value, type) ← occurrence value
     let mut seen := seen
     let mut dependencies := dependencies
+    if let some (.str descriptor) := type then
+      if descriptor.startsWith "decl:" then
+        let name ← printedName env (descriptor.drop 5).toString
+        dependencies := add dependencies { kind := "definition", target := name }
+    if let some id := reference then
+      if seen.contains id then return (seen, dependencies)
+      seen := seen.push id
     let kind := (value.getObjValAs? String "kind").toOption.getD ""
     if kind == "const" then
       let name ← printedName env (← value.getObjValAs? String "name")
@@ -74,23 +73,6 @@ where
       if name == `Exists then dependencies := add dependencies { kind := "phrase", target := `exists }
     if kind == "forall" then
       dependencies := add dependencies { kind := "phrase", target := `forall }
-    if #["fvar", "lam", "forall", "let"].contains kind then
-      let rawName := (value.getObjValAs? String "name").toOption.getD ""
-      -- Named variables reserve their spelling; only generated names consult var_info.
-      let anonymous := rawName.isEmpty || rawName == "[anonymous]" ||
-        rawName.startsWith "_uniq." || (rawName.splitOn "._hyg.").length > 1 ||
-        (rawName.splitOn "._@.").length > 1
-      -- Match the backend: fvars reserve "_", while let bindings reserve any nonempty name except "_".
-      let generated := if kind == "let" then rawName.isEmpty || rawName == "_"
-        else anonymous || (kind != "fvar" && rawName == "_")
-      if generated then
-        let type := dereference table ((value.getObjVal? "type").toOption.getD (json% null))
-        let key := if kind == "fvar" then
-            if (value.getObjValAs? Bool "isProp").toOption == some true then "Prop"
-            else if (type.getObjValAs? Bool "isProp").toOption == some true then "Proof"
-            else let key := variableTypeKey table type; if key.isEmpty then "Expr" else key
-          else variableTypeKey table type
-        if !key.isEmpty then dependencies := add dependencies { kind := "variable", target := Name.mkSimple key }
     let fields : Array String := match kind with
       | "app" => #["fn", "arg"]
       | "lam" | "forall" => #["type", "body"]
@@ -115,136 +97,10 @@ def validateStepBindings (proof : Array Json) (bindings : Array StepBinding)
     if seen.contains path then throw "recording contains duplicate invocation positions"
     seen := seen.push path
     let step ← JsonPath.get? path document
-    let ruleId ← step.getObjValAs? String "_ruleId"
+    let ruleId ← step.getObjValAs? String "$ruleId"
     let matching := bindings.filter (·.path == path)
     unless matching.size == 1 && matching[0]!.contract.ruleId.toString == ruleId do
       throw s!"missing or mismatched invocation contract at {(toJson path).compress}"
-
-private def eraseMatching? (predicate : α → Bool) : List α → Option (List α)
-  | [] => none
-  | value :: rest =>
-    if predicate value then some rest else (value :: ·) <$> eraseMatching? predicate rest
-
-private def unorderedEquivalent (equivalent : α → α → Bool) : List α → List α → Bool
-  | [], right => right.isEmpty
-  | value :: rest, right => match eraseMatching? (equivalent value) right with
-    | some remaining => unorderedEquivalent equivalent rest remaining
-    | none => false
-
-/-- Object fields and union alternatives have no semantic ordering. Matching
-    consumes each item once, so repeated fields/options cannot forge coverage. -/
-private partial def equivalentSchema : Recording.ParamSchema → Recording.ParamSchema → Bool
-  | .object left, .object right => unorderedEquivalent
-      (fun (name, schema) (otherName, otherSchema) =>
-        name == otherName && equivalentSchema schema otherSchema) left right
-  | .union left, .union right => unorderedEquivalent equivalentSchema left right
-  | .array left, .array right | .optional left, .optional right => equivalentSchema left right
-  | left, right => left == right
-
-/-- Recognition uses the complete declared contract, never the shape of open JSON. -/
-private partial def displaySubject : Recording.ParamSchema → Option String
-  | .optional schema => displaySubject schema
-  | schema@(.object fields) => do
-    let .literal "expression-display-v1" ← fields.lookup "kind" | none
-    let .literal field ← fields.lookup "field" | none
-    if equivalentSchema schema (Recording.displaySchema field) then some field else none
-  | _ => none
-
-private def displayPath (value : Json) : Except String JsonPath := do
-  (← value.getArr?).mapM fun part => match part with
-    | .str field => pure (.key field)
-    | _ => return .index (← fromJson? part)
-
-/-- A local rendering projection supplies only explicitly frozen hints to the
-    dependency walk. It never changes the structural table or reinterprets user
-    JSON; auxiliary declarations remain owned by their declared display view. -/
-private def displayViewRoot (subject : Json) (views : Array Json) (index : Nat) :
-    Except String (Json × Array Json) := do
-  let some view := views[index]? | throw "expression display view is out of bounds"
-  let root ← view.getObjVal? "root"
-  let expression ← match ← root.getObjValAs? String "kind" with
-    | "field" => JsonPath.get? (← displayPath (← root.getObjVal? "path")) subject
-    | "auxiliary" => root.getObjVal? "expression"
-    | _ => throw "invalid expression display root"
-  return (expression, ← view.getObjValAs? (Array Json) "hints")
-
-/-- Classification needs only the auxiliary type's head and its root hint.
-    Its complete structure is traversed independently via its registered root. -/
-private def displayTypeSummary (table subject : Json) (views : Array Json) (index : Nat) :
-    Except String Json := do
-  let (expression, hints) ← displayViewRoot subject views index
-  let node ← table.getObjVal? (← expression.getObjValAs? String "$ref")
-  let kind ← node.getObjValAs? String "kind"
-  let fields := match kind with
-    | "const" => ["kind", "name"]
-    | "sort" => ["kind", "level"]
-    | "forall" => ["kind"]
-    | _ => []
-  let mut summary := Json.mkObj (← fields.mapM fun field => do
-    return (field, ← node.getObjVal? field))
-  if let some hint := hints.find? (fun hint =>
-      (hint.getObjValAs? (Array String) "path").toOption == some #[]) then
-    if let .ok (.bool proposition) := hint.getObjVal? "isProp" then
-      summary := summary.setObjVal! "isProp" (.bool proposition)
-  return summary
-
-private partial def displayProjection (table subject : Json) (views : Array Json)
-    (index : Nat) : Except String Json := do
-  let (expression, hints) ← displayViewRoot subject views index
-  visit expression #[] hints
-where
-  visit (expression : Json) (path : Array String) (hints : Array Json) : Except String Json := do
-    let relevant := hints.any fun hint => match hint.getObjValAs? (Array String) "path" with
-      | .ok hintPath => path.size ≤ hintPath.size && hintPath.extract 0 path.size == path
-      | .error _ => false
-    unless relevant do return expression
-    let id ← expression.getObjValAs? String "$ref"
-    let node ← table.getObjVal? id
-    let kind ← node.getObjValAs? String "kind"
-    let edges : Array String := match kind with
-      | "app" => #["fn", "arg"]
-      | "lam" | "forall" => #["type", "body"]
-      | "let" => #["type", "value", "body"]
-      | "proj" => #["expr"]
-      | _ => #[]
-    let mut node := node
-    for edge in edges do
-      node := node.setObjVal! edge (← visit (← node.getObjVal? edge) (path.push edge) hints)
-    let some hint := hints.find? (fun hint =>
-        (hint.getObjValAs? (Array String) "path").toOption == some path)
-      | return node
-    if let .ok (.bool proposition) := hint.getObjVal? "isProp" then
-      node := node.setObjVal! "isProp" (.bool proposition)
-    if kind == "fvar" || kind == "mvar" then
-      if let .ok declaration := hint.getObjVal? "declaration" then
-        if let .ok name := declaration.getObjValAs? String "name" then
-          node := node.setObjVal! "name" (toJson name)
-        if let .ok target := declaration.getObjValAs? Nat "typeView" then
-          node := node.setObjVal! "type" (← displayTypeSummary table subject views target)
-    return node
-
-private def displayProjections (table document : Json) (bindings : Array StepBinding)
-    (roots : Array JsonPath) : Except String (Array (JsonPath × Json)) := do
-  let mut result := #[]
-  for binding in bindings do
-    let step ← JsonPath.get? binding.path document
-    for output in binding.contract.fields.getD #[] do
-      let some subjectName := displaySubject output.schema | continue
-      let display ← step.getObjVal? output.name
-      if display == Json.null then continue
-      let subject ← step.getObjVal? subjectName
-      let views ← display.getObjValAs? (Array Json) "views"
-      for index in [:views.size] do
-        let root ← views[index]!.getObjVal? "root"
-        let path ← match ← root.getObjValAs? String "kind" with
-          | "field" => pure (binding.path ++ #[.key subjectName] ++
-              (← displayPath (← root.getObjVal? "path")))
-          | "auxiliary" => pure (binding.path ++ #[.key output.name, .key "views", .index index,
-              .key "root", .key "expression"])
-          | _ => throw "invalid expression display root"
-        unless roots.contains path do throw "expression display refers to an unregistered root"
-        result := result.push (path, ← displayProjection table subject views index)
-  return result
 
 /-- Only the encoder's explicit expression roots may enter expression traversal.
     Contract-bound theorem steps independently contribute theorem rendering use;
@@ -253,11 +109,8 @@ def recordedDependencies (env : Environment) (table document : Json)
     (bindings : Array StepBinding) (expressionRoots : Array JsonPath) :
     Except String (Array RenderDependency) := do
   let mut dependencies := #[]
-  let projections ← displayProjections table document bindings expressionRoots
   for path in expressionRoots do
-    let expression ← match projections.find? (·.1 == path) with
-      | some (_, expression) => pure expression
-      | none => JsonPath.get? path document
+    let expression ← JsonPath.get? path document
     for dependency in ← expressionDependencies env table expression do
       dependencies := add dependencies dependency
   for binding in bindings do
@@ -267,4 +120,4 @@ def recordedDependencies (env : Environment) (table document : Json)
       dependencies := add dependencies { kind := "theorem", target := name }
   return dependencies
 
-end ProofScript.Output
+end ProofScript

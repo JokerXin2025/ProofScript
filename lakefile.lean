@@ -12,64 +12,14 @@ require mathlib from git
 @[default_target]
 lean_lib ProofScript
 
+lean_lib Test where
+  roots := #[`Test.RecorderVersions, `Test.RecorderVersionFixture,
+    `Test.RecorderVersionExtension, `Test.RecorderVersionImport,
+    `Test.PageTheoremMathlib]
+
 lean_exe proofscriptExport where
   root := `ProofScript.Output.Main
   supportInterpreter := true
-
-@[default_target]
-lean_lib Test where
-  roots := #[
-    `Test.VerificationModeTest,
-    `Test.BasicRestrictionsTest,
-    `Test.InfoCoreAPITest,
-    `Test.InfoSchemaTest,
-    `Test.TheoremDependencyContractTest
-  ]
-
-/-- Tests that require recording and page effects; build with `TestPage:pageTests`. -/
-lean_lib TestPage where
-  roots := #[
-    `Test.CasesByTermTest,
-    `Test.CiteTest,
-    `Test.ClaimContextTest,
-    `Test.ClaimExistTest,
-    `Test.UnpackTermTest,
-    `Test.ObtainExistTest,
-    `Test.CalcTest,
-    `Test.NativeTacticIsolationTest,
-    `Test.EmbedIDEInfoTest,
-    `Test.NestedStrategyTest,
-    `Test.CustomComponentTest,
-    `Test.ComputationComponentTest,
-    `Test.ExprJSONFieldsTest,
-    `Test.InferRecordingTest,
-    `Test.LatexComponentsTest,
-    `Test.PaperExtensionTest,
-    `Test.ReferencesOptionTest,
-    `Test.RecordingReferencesTest,
-    `Test.RecordingSessionTest,
-    `Test.RecorderSelectionTest,
-    `Test.RecordingNormalizeTest,
-    `Test.RecordingConfigTest,
-    `Test.RecordingComplexRules,
-    `Test.RecordingComplexTest,
-    `Test.RecordingRegistrationTest,
-    `Test.RecordingAPIRules,
-    `Test.RecordingAPITest,
-    `Test.RecorderDSLTest,
-    `Test.TacticRewriteTest,
-    `Test.InfoAPITest,
-    `Test.MetadataScopeTest,
-    `Test.MetadataScopeImportTest,
-    `Test.RendererDependencyScopeTest,
-    `Test.TheoremDependencyProbeSupport,
-    `Test.TheoremDependencyProbeTest,
-    `Test.TheoremDependencyFactsTest,
-    `Test.TheoremDependencyModuleTest,
-    `Test.TheoremDependencyConflict,
-    `Test.TheoremDependencyImportTest,
-    `Test.TheoremDependencyExportTest
-  ]
 
 namespace ProofScriptPageBuild
 
@@ -131,6 +81,29 @@ def pageOptions (ws : Workspace) (sources : NameSet) (original : NameMap LeanOpt
 def buildRoot (ws : Workspace) (lib : LeanLib) : FilePath :=
   ws.root.dir / ".lake" / "ps4html" / lib.pkg.baseName.toString / lib.name.toString
 
+def moduleBuildRoot (ws : Workspace) (mod : Lake.Module) : FilePath :=
+  ws.root.dir / ".lake" / "ps4html" / mod.pkg.baseName.toString / ".modules" / mod.name.toString
+
+inductive PageTarget where
+  | library (lib : LeanLib)
+  | module (mod : Lake.Module)
+
+def PageTarget.pkg : PageTarget → Package
+  | .library lib => lib.pkg
+  | .module mod => mod.pkg
+
+def PageTarget.name : PageTarget → Name
+  | .library lib => lib.name
+  | .module mod => mod.name
+
+def PageTarget.kind : PageTarget → String
+  | .library _ => "library"
+  | .module _ => "module"
+
+def PageTarget.buildRoot (ws : Workspace) : PageTarget → FilePath
+  | .library lib => ProofScriptPageBuild.buildRoot ws lib
+  | .module mod => moduleBuildRoot ws mod
+
 private def checkedJson [FromJson α] (value : Json) (field : String) : IO α :=
   match value.getObjValAs? α field with
   | .ok result => pure result
@@ -143,7 +116,7 @@ structure Session where
   exportRoot : FilePath
 
 /-- The Python coordinator owns the project lock and cleans this session's Lean directory. -/
-def readSession (ws : Workspace) (lib : LeanLib) : IO Session := do
+def readSession (ws : Workspace) (selection : PageTarget) : IO Session := do
   let some session ← IO.getEnv "PS4HTML_BUILD_SESSION"
     | throw <| IO.userError "ps4htmlInputs requires a PS4HTML build session; use the ps4html facet"
   let file := FilePath.mk session |>.normalize
@@ -152,13 +125,17 @@ def readSession (ws : Workspace) (lib : LeanLib) : IO Session := do
     | .error message => throw <| IO.userError s!"invalid PS4HTML session JSON: {message}"
   unless (← checkedJson (α := Nat) value "schemaVersion") == 1 do
     throw <| IO.userError "unsupported PS4HTML build session version"
-  unless (← checkedJson (α := String) value "package") == lib.pkg.baseName.toString &&
-      (← checkedJson (α := String) value "library") == lib.name.toString do
-    throw <| IO.userError "PS4HTML build session does not match the requested library"
+  let targetKind ← match value.getObjVal? "targetKind" with
+    | .error _ => pure "library"
+    | .ok _ => checkedJson (α := String) value "targetKind"
+  unless targetKind == selection.kind &&
+      (← checkedJson (α := String) value "package") == selection.pkg.baseName.toString &&
+      (← checkedJson (α := String) value selection.kind) == selection.name.toString do
+    throw <| IO.userError s!"PS4HTML build session does not match the requested {selection.kind}"
   let sessionBuild := FilePath.mk (← checkedJson value "buildRoot") |>.normalize
   let exportRoot := FilePath.mk (← checkedJson value "exportRoot") |>.normalize
-  unless sessionBuild.isAbsolute && sessionBuild == (buildRoot ws lib).normalize do
-    throw <| IO.userError "PS4HTML session must use the library's dedicated page build directory"
+  unless sessionBuild.isAbsolute && sessionBuild == (selection.buildRoot ws).normalize do
+    throw <| IO.userError s!"PS4HTML session must use the {selection.kind}'s dedicated page build directory"
   let staging := (ws.root.dir / ".PS4HTML" / "staging").normalize.toString ++ "/"
   unless file.isAbsolute && file.toString.startsWith staging &&
       exportRoot == file.parent.getD ws.root.dir / "release" / ".ProofScript" do
@@ -171,7 +148,7 @@ def readSession (ws : Workspace) (lib : LeanLib) : IO Session := do
   let supportNames : Array String ← match value.getObjVal? "supportPackages" with
     | .error _ => pure #[]
     | .ok _ => checkedJson value "supportPackages"
-  let required := sourcePackages ws lib.pkg
+  let required := sourcePackages ws selection.pkg
   for name in supportNames do
     let some pkg := ws.packages.find? (·.baseName.toString == name)
       | throw <| IO.userError s!"unknown PS4HTML support package: {name}"
@@ -183,6 +160,22 @@ def mappedLibrary (ws : Workspace) (original : LeanLib) : FetchM LeanLib := do
   let some pkg := ws.findPackageByKey? original.pkg.keyName | error "page build package not found"
   let some lib := pkg.findLeanLib? original.name | error "page build library not found"
   return lib
+
+def mappedModule (ws : Workspace) (original : Lake.Module) : FetchM Lake.Module := do
+  let lib ← mappedLibrary ws original.lib
+  let some mod := lib.findModule? original.name | error "page build module not found"
+  return mod
+
+def PageTarget.inputs (ws : Workspace) : PageTarget → FetchM (Array Lake.Module × Job Unit)
+  | .library original => do
+    let lib ← mappedLibrary ws original
+    let job ← lib.leanArts.fetch
+    let owners ← (← lib.modules.fetch).await
+    return (owners, job)
+  | .module original => do
+    let mod ← mappedModule ws original
+    let job ← mod.leanArts.fetch
+    return (#[mod], job.mix (Job.pure ()))
 
 def moduleClosure (mods : Array Lake.Module) : FetchM (Array Lake.Module) := do
   let mut seen : ModuleSet := ∅
@@ -207,96 +200,50 @@ def sessionManifest (session : Session) (ws : Workspace) (sources : NameSet)
       source: $(mod.leanFile.toString), olean: $(mod.oleanFile.toString),
       c: $(mod.cFile.toString), setup: $(mod.setupFile.toString) }))
 
-/-- Preserve package resolution when starting a fresh build store in another Lake process. -/
-def forwardedLakeOptions (cwd : FilePath) : List String → Array String
-  | "-K" :: value :: rest => #["-K", value] ++ forwardedLakeOptions cwd rest
-  | "--packages" :: value :: rest =>
-    #["--packages", (cwd / value).toString] ++ forwardedLakeOptions cwd rest
-  | arg :: rest =>
-    let forwarded := if arg.startsWith "-K" then #[arg]
-      else if arg.startsWith "--packages=" then
-        #["--packages", (cwd / (arg.drop "--packages=".length).toString).toString]
-      else #[]
-    forwarded ++ forwardedLakeOptions cwd rest
-  | [] => #[]
-
-end ProofScriptPageBuild
-
-/-- Compile and export a fresh page session without touching ordinary verification products. -/
-library_facet ps4htmlInputs (original) : Unit := do
+/-- Both scopes compile in the same isolated page environment, exporting only their owners. -/
+def buildInputs (selection : PageTarget) : FetchM (Job Unit) := do
   let ws ← getWorkspace
-  let session ← ProofScriptPageBuild.readSession ws original
-  let sources := ProofScriptPageBuild.sourcePackages ws original.pkg
-  let workspace := ProofScriptPageBuild.remapWorkspace ws sources session.buildRoot
-  let options := ProofScriptPageBuild.pageOptions ws sources (← getLeanOptOverrides)
+  let session ← readSession ws selection
+  let sources := sourcePackages ws selection.pkg
+  let workspace := remapWorkspace ws sources session.buildRoot
+  let options := pageOptions ws sources (← getLeanOptOverrides)
   withTheReader BuildContext (fun context => { context with
       opaqueWs := workspace, leanOptOverrides := options }) do
-    let lib ← ProofScriptPageBuild.mappedLibrary workspace original
+    let (owners, inputJob) ← selection.inputs workspace
     let some exporter ← findLeanExe? `proofscriptExport | error "ProofScript Info exporter not found"
-    let libraryJob ← lib.leanArts.fetch
     let exporterJob ← exporter.fetch
-    let owners ← (← lib.modules.fetch).await
-    let modules ← ProofScriptPageBuild.moduleClosure owners
-    (libraryJob.mix exporterJob).mapM fun _ => do
+    let modules ← moduleClosure owners
+    (inputJob.mix exporterJob).mapM fun _ => do
       proc {
         cmd := exporter.file.toString
         args := #[session.exportRoot.toString] ++ owners.map (·.name.toString)
         cwd := workspace.root.dir
         env := (← getAugmentedEnv).push ("PROOF_SCRIPT_OUTPUT_ROOT", some session.exportRoot.toString)
       }
-      IO.FS.writeFile session.file
-        (ProofScriptPageBuild.sessionManifest session workspace sources owners modules).pretty
+      IO.FS.writeFile session.file (sessionManifest session workspace sources owners modules).pretty
 
-/-- Internal recording-test build; the public facet supplies a fresh process and build store. -/
-library_facet pageTestInputs (original) : Unit := do
-  unless (← IO.getEnv "PS4HTML_PAGE_TEST_TARGET") ==
-      some s!"{original.pkg.baseName}/{original.name}" do
-    error "pageTestInputs requires the pageTests coordinator; use the pageTests facet"
-  let ws ← getWorkspace
-  let directory := ws.root.dir / ".lake" / "ps4html-tests" /
-    original.pkg.baseName.toString / original.name.toString
-  if ← directory.pathExists then IO.FS.removeDirAll directory
-  let sources := ProofScriptPageBuild.sourcePackages ws original.pkg
-  let workspace := ProofScriptPageBuild.remapWorkspace ws sources directory
-  let options := ProofScriptPageBuild.pageOptions ws sources (← getLeanOptOverrides)
-  withTheReader BuildContext (fun context => { context with
-      opaqueWs := workspace, leanOptOverrides := options }) do
-    let lib ← ProofScriptPageBuild.mappedLibrary workspace original
-    lib.leanArts.fetch
-
-/-- Recording tests always use a fresh Lake build store, including in multi-target builds. -/
-library_facet pageTests (lib) : Unit := do
-  let ws ← getWorkspace
-  let options := ProofScriptPageBuild.forwardedLakeOptions (← IO.currentDir)
-    (ws.lakeArgs?.getD #[]).toList
-  Job.async do
-    proc {
-      cmd := (← getLake).toString
-      args := #["--file", ws.root.configFile.toString] ++ options ++
-        #["--no-cache", "build", s!"@{lib.pkg.baseName}/{lib.name}:pageTestInputs"]
-      cwd := ws.root.dir
-      env := (← getAugmentedEnv).push
-        ("PS4HTML_PAGE_TEST_TARGET", some s!"{lib.pkg.baseName}/{lib.name}")
-    }
-
-/-- Build the complete HTML site for the requested Lean library. -/
-library_facet ps4html (lib) : FilePath := do
-  let mods ← (← lib.modules.fetch).await
+/-- Hand off publication to Python without first building the ordinary Lean artifacts. -/
+def buildSite (selection : PageTarget) : FetchM (Job FilePath) := do
+  let mods ← match selection with
+    | .library lib => (← lib.modules.fetch).await
+    | .module mod => pure #[mod]
   let root ← getRootPackage
-  let pkg := lib.pkg
   Job.async do
-    let names := mods.map (·.name.toString)
-    let sources := mods.map (·.leanFile.toString)
-    let output := root.dir / ".PS4HTML" / "build" / pkg.baseName.toString / lib.name.toString / "index.html"
+    let relative := match selection with
+      | .library _ => FilePath.mk selection.name.toString
+      | .module _ => FilePath.mk ".modules" / selection.name.toString
+    let output := root.dir / ".PS4HTML" / "build" / selection.pkg.baseName.toString / relative / "index.html"
     let python := (← IO.getEnv "PS4HTML_PYTHON").getD "python3"
     let backend := (← getWorkspace).packages.findSome? fun p =>
       if p.baseName == `ProofScript then some (p.dir / "tools" / "ps4html") else none
     let some backend := backend | error "ProofScript package not found in Lake workspace"
+    let sourceArgs := match selection with
+      | .library _ => mods.flatMap fun mod => #[mod.name.toString, mod.leanFile.toString]
+      | .module mod => #[mod.leanFile.toString]
     proc {
       cmd := python
-      args := #["-m", "PS4HTML", "_build-library", pkg.baseName.toString, lib.name.toString,
-        "--build-dir", (ProofScriptPageBuild.buildRoot (← getWorkspace) lib).toString] ++
-        (names.zip sources).flatMap fun (name, source) => #[name, source]
+      args := #["-m", "PS4HTML", s!"_build-{selection.kind}", selection.pkg.baseName.toString, selection.name.toString,
+        "--build-dir", (selection.buildRoot (← getWorkspace)).toString] ++ sourceArgs
       cwd := root.dir
       env := (← getAugmentedEnv).push ("PYTHONPATH", some backend.toString)
         |>.push ("LAKE", some (← getLake).toString)
@@ -305,3 +252,21 @@ library_facet ps4html (lib) : FilePath := do
         |>.push ("PS4HTML_LAKE_CWD", some (← IO.currentDir).toString)
     }
     return output
+
+end ProofScriptPageBuild
+
+/-- Compile and export a fresh page session without touching ordinary verification products. -/
+library_facet ps4htmlInputs (original) : Unit := do
+  ProofScriptPageBuild.buildInputs (.library original)
+
+/-- Compile one module and its imports; the export bundle owns only the requested module. -/
+module_facet ps4htmlInputs (original) : Unit := do
+  ProofScriptPageBuild.buildInputs (.module original)
+
+/-- Build the complete HTML site for the requested Lean library. -/
+library_facet ps4html (lib) : FilePath := do
+  ProofScriptPageBuild.buildSite (.library lib)
+
+/-- Build an isolated HTML preview; use `+Module:ps4html` to select a module explicitly. -/
+module_facet ps4html (mod) : FilePath := do
+  ProofScriptPageBuild.buildSite (.module mod)

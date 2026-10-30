@@ -1,6 +1,6 @@
 import ProofScript.Info.Value
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean Elab Command Parser.Term
 
@@ -74,4 +74,4 @@ partial def parseExtraValue (stx : TSyntax `term) : CommandElabM ExtraValue := d
       | _ => throwErrorAt stx "invalid numeric literal"
     throwErrorAt stx "expected a JSON literal (string, number, boolean, null, array or object)"
 
-end ProofScript.Info
+end ProofScript

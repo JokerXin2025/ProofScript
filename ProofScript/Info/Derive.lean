@@ -1,6 +1,6 @@
 import ProofScript.Info.Elab
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean Elab Command Meta Parser.Term
 
@@ -74,4 +74,4 @@ initialize registerDerivingHandler ``InfoSchema fun names => do
   for name in names do deriveSchema name
   return true
 
-end ProofScript.Info
+end ProofScript

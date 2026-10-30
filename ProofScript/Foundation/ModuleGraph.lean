@@ -1,6 +1,6 @@
 import Lean
 
-namespace ProofScript.Foundation
+namespace ProofScript
 
 open Lean
 
@@ -59,4 +59,4 @@ def ModuleGraph.order (graph : ModuleGraph) (root : Name) : Except String (Array
       pending := (imports.toList.map (·, false)) ++ ((current, true) :: pending)
   return result
 
-end ProofScript.Foundation
+end ProofScript

@@ -1,22 +1,26 @@
-"""Convert structural expressions and occurrence-specific Display hints."""
+"""Convert native expressions and occurrence metadata into semantic display trees."""
 
 from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .expr import flatten_app
+from .expr import flatten_app, unwrap_mdata
 from .macros import MacroRegistry
-from .model import DisplayNode, RenderDiagnostic
-from .variable import VariableAllocator
+from .model import DisplayNode, RenderDiagnostic, RenderLimitError
+from .variable import VariableAllocator, is_anonymous_name, math_name
 
 
 @dataclass(frozen=True)
 class _Binding:
     name: str
     bind_id: str
+    generated: bool
 
 
 class SemanticConverter:
+    MAX_EXPANDED_NODES = 16_384
+    MAX_DEPTH = 256
+
     def __init__(self, registry: MacroRegistry, allocator: VariableAllocator):
         self.registry = registry
         self.allocator = allocator
@@ -27,31 +31,54 @@ class SemanticConverter:
     def convert(self, expr: dict) -> DisplayNode:
         self.diagnostics.clear()
         self._binding_counter = 0
+        self._expanded_nodes = 0
+        self._depth = 0
         self._tree_counter += 1
         self._tree_scope = f"e{self._tree_counter}"
-        return self._convert(expr, (), [])
+        with self.allocator.transaction():
+            return self._convert(expr, (), [])
 
     def _convert(self, expr: object, path: tuple[int, ...], bindings: list[_Binding]) -> DisplayNode:
-        node = self._convert_node(expr, path, bindings)
-        if isinstance(expr, dict):
-            node.metadata.setdefault("originalExprKind", expr.get("kind"))
-            if isinstance(_is_prop(expr), bool):
-                node.metadata.setdefault("isProp", _is_prop(expr))
-            if _source_range(expr) is not None:
-                node.metadata.setdefault("sourceRange", _source_range(expr))
-        return node
+        self._visit()
+        if self._depth >= self.MAX_DEPTH:
+            raise RenderLimitError(f"Expression conversion exceeds depth limit {self.MAX_DEPTH}")
+        self._depth += 1
+        try:
+            structural, _ = unwrap_mdata(expr, visit=self._visit)
+            node = self._convert_node(structural, path, bindings, expr)
+            if isinstance(structural, dict):
+                node.metadata.setdefault("originalExprKind", structural.get("kind"))
+                # An unwrap may reuse its argument's display node, but these
+                # facts belong only to the occurrence currently being converted.
+                source = _source_range(expr)
+                if source is None:
+                    node.metadata.pop("sourceRange", None)
+                else:
+                    node.metadata["sourceRange"] = source
+            return node
+        finally:
+            self._depth -= 1
 
-    def _convert_node(self, expr: object, path: tuple[int, ...], bindings: list[_Binding]) -> DisplayNode:
+    def _visit(self) -> None:
+        # A small shared DAG may denote an exponentially larger display tree.
+        # Bound expanded work rather than just the number of wire-table nodes.
+        self._expanded_nodes += 1
+        if self._expanded_nodes > self.MAX_EXPANDED_NODES:
+            raise RenderLimitError(
+                f"Expression conversion exceeds {self.MAX_EXPANDED_NODES} expanded nodes; "
+                "the expression requires excessive display expansion")
+
+    def _convert_node(self, expr: object, path: tuple[int, ...], bindings: list[_Binding], occurrence: object) -> DisplayNode:
         if not isinstance(expr, dict):
             self._diagnose("L2T010", "expression occurrence is not an object", path)
             return DisplayNode("invalid", "unknown", metadata={"originalExprKind": type(expr).__name__})
         kind = expr.get("kind")
         if kind == "app":
-            return self._convert_app(expr, path, bindings)
+            return self._convert_app(occurrence, path, bindings)
         if kind == "const":
             name = str(expr.get("name", ""))
             if self.registry.get(name) is None and name not in self.registry.aliases:
-                self._diagnose("L2T001", "missing macro configuration", path, name, expr)
+                self._diagnose("L2T001", "missing macro configuration", path, name, occurrence)
             return DisplayNode(name, "const", metadata={"leanName": name, "originalExprKind": kind})
         if kind == "lit":
             literal = expr.get("lit", {})
@@ -59,18 +86,19 @@ class SemanticConverter:
             literal_kind = literal.get("kind") if isinstance(literal, dict) else None
             return DisplayNode(str(value), "literal", metadata={"value": value, "literalKind": literal_kind, "originalExprKind": kind})
         if kind == "fvar":
-            return self._convert_fvar(expr, path, bindings)
+            return self._convert_fvar(expr, occurrence)
         if kind == "bvar":
             index = expr.get("index", -1)
             if isinstance(index, int) and 0 <= index < len(bindings):
                 binding = bindings[index]
-                return DisplayNode(binding.name, "bvar", metadata={"bindRef": binding.bind_id, "index": index})
-            self._diagnose("L2T003", f"unbound bvar index {index}", path, expr=expr)
+                return DisplayNode(binding.name, "bvar", generated=binding.generated,
+                                   metadata={"bindRef": binding.bind_id, "index": index})
+            self._diagnose("L2T003", f"unbound bvar index {index}", path, expr=occurrence)
             return DisplayNode(f"bvar {index}", "unknown", metadata={"originalExprKind": kind})
         if kind in ("forall", "lam"):
-            return self._convert_binder(expr, path, bindings)
+            return self._convert_binder(expr, path, bindings, occurrence)
         if kind == "let":
-            return self._convert_let(expr, path, bindings)
+            return self._convert_let(expr, path, bindings, occurrence)
         if kind == "proj":
             child = self._convert(expr.get("expr"), path + (0,), bindings)
             field = f"{expr.get('typeName', '?')}.{expr.get('index', '?')}"
@@ -80,18 +108,18 @@ class SemanticConverter:
             name = "Prop" if isinstance(level, dict) and level.get("kind") == "level.zero" else "Type"
             return DisplayNode(name, "sort", metadata={"level": level})
         if kind == "mvar":
-            declaration = _declaration(expr)
-            return DisplayNode(str(declaration.get("name") or expr.get("id") or "?"), "metavariable", metadata={"id": expr.get("id"), "declaration": declaration})
-        self._diagnose("L2T010", f"unknown expression kind {kind!r}", path, expr=expr)
+            return DisplayNode("?", "metavariable", metadata={"id": expr["id"]})
+        self._diagnose("L2T010", f"unknown expression kind {kind!r}", path, expr=occurrence)
         return DisplayNode(str(kind or "missing"), "unknown", metadata={"originalExprKind": kind})
 
     def _convert_app(self, expr: dict, path, bindings) -> DisplayNode:
         try:
-            head, args = flatten_app(expr)
+            head, args = flatten_app(expr, visit=self._visit)
         except (AttributeError, KeyError):
             self._diagnose("L2T010", "malformed application", path)
             return DisplayNode("malformed app", "unknown")
-        head_name = head.get("name") if head.get("kind") == "const" else None
+        structural_head, _ = unwrap_mdata(head)
+        head_name = structural_head.get("name") if structural_head.get("kind") == "const" else None
         if isinstance(head_name, str):
             name = head_name
             canonical_name = self.registry.resolve_alias(name)
@@ -103,16 +131,9 @@ class SemanticConverter:
             name = canonical_name
             macro = self.registry.get(name)
             if macro is not None:
-                if macro.dynamic_arity:
-                    selected, unknown = self._explicit_indices(expr, args)
-                elif macro.arguments == "explicit":
-                    selected, unknown = self._explicit_indices(expr, args)
-                else:
-                    selected = list(macro.arguments)
-                    unknown = []
-                if unknown:
-                    self._diagnose("L2T011", "unknown application binder information; preserving all arguments", path, name, expr)
-                    return self._application_fallback(head, args, path, bindings, name)
+                selected = list(macro.arguments)
+                if not macro.auto_arity:
+                    selected = list(range(len(args)))
                 if any(index >= len(args) for index in selected):
                     self._diagnose("L2T002", f"macro argument index out of range for {len(args)} arguments", path, name, expr)
                     converted_head = self._convert(head, path + (0,), bindings)
@@ -138,154 +159,80 @@ class SemanticConverter:
         children = [converted_head] + [self._convert(arg, path + (i + 1,), bindings) for i, arg in enumerate(args)]
         return DisplayNode("application", "application", children, metadata={"headConst": name, "rawArgumentCount": len(args)})
 
-    @staticmethod
-    def _explicit_indices(expr: dict, args: list[dict]) -> tuple[list[int], list[int]]:
-        descriptors = _hint(expr).get("appBinders")
-        if not isinstance(descriptors, list) or len(descriptors) != len(args):
-            return [], list(range(len(args)))
-        explicit = [index for index, item in enumerate(descriptors) if item == "default"]
-        unknown = [index for index, item in enumerate(descriptors) if item not in {"default", "implicit", "strictImplicit", "instImplicit"}]
-        return explicit, unknown
-
-    def _convert_fvar(self, expr, path, bindings) -> DisplayNode:
-        declaration = _declaration(expr)
-        type_node = declaration.get("type")
-        type_display = self._convert(type_node, path, bindings) if type_node is not None else None
-        information = {"declarationName": declaration.get("name"), "declarationType": type_display}
-        if declaration.get("value") is not None:
-            value_display = self._convert(declaration["value"], path, bindings)
-            return DisplayNode("local definition", "local-definition", [value_display], metadata={
-                **information, "fvarId": str(expr.get("id")), "declarationValue": value_display})
-        fvar_id = str(expr.get("id") or f"missing@{'.'.join(map(str, path))}")
-        type_name = self.allocator.type_to_name(type_node)
-        if _is_prop(expr) is True:
-            type_name = "Prop"
-            classification = "proposition"
-        elif _is_prop(type_node) is True:
-            type_name = "Proof"
-            classification = "proof"
-        elif type_name == "Type":
-            classification = "type"
-        elif _is_prop(expr) is False:
-            classification = "data"
-        elif type_name == "Prop":
-            classification = "proposition"
-        else:
-            classification = "unknown"
-        if not type_name:
-            type_name = "Expr"
-            classification = "unknown"
-        raw_name = str(declaration.get("name") or "")
-        display_name = _math_name(raw_name) if raw_name and not is_anonymous_name(raw_name) else None
-        name = self.allocator.allocate_fvar(fvar_id, type_name,
-            display_name=display_name, classification=classification)
-        return DisplayNode(name, "fvar", metadata={
-            **information,
-            "leanName": declaration.get("name"), "fvarId": fvar_id, "typeName": type_name,
-            "isProp": _is_prop(expr), "classification": classification, "type": type_node,
+    def _convert_fvar(self, expr, occurrence) -> DisplayNode:
+        fvar_id = expr["id"]
+        _, data = unwrap_mdata(occurrence)
+        raw_name = data.get("ProofScript.userName")
+        generated = is_anonymous_name(raw_name)
+        name = self.allocator.allocate(data.get("ProofScript.type"), fvar_id=fvar_id) if generated else math_name(raw_name)
+        return DisplayNode(name, "fvar", generated=generated, metadata={
+            "leanName": raw_name, "fvarId": fvar_id,
         })
 
-    def _convert_binder(self, expr, path, bindings) -> DisplayNode:
-        type_node = expr.get("type")
-        raw_name = str(expr.get("name", ""))
-        generated = is_anonymous_name(raw_name) or raw_name == "_"
-        name = self.allocator.allocate_var(self.allocator.type_to_name(type_node)) if generated else self.allocator.reserve(_math_name(raw_name))
+    def _new_binding(self, expr, occurrence) -> tuple[_Binding, DisplayNode]:
+        raw_name = expr.get("name", "")
+        _, data = unwrap_mdata(occurrence)
+        generated = is_anonymous_name(raw_name)
+        name = self.allocator.allocate(data.get("ProofScript.type")) if generated else math_name(raw_name)
         bind_id = f"{self._tree_scope}:b{self._binding_counter}"
         self._binding_counter += 1
-        binding = _Binding(name, bind_id)
-        binder = DisplayNode(name, "binder", metadata={
-            "bindId": bind_id, "leanName": raw_name, "typeName": self.allocator.type_to_name(type_node),
+        binding = _Binding(name, bind_id, generated)
+        binder = DisplayNode(name, "binder", generated=generated, metadata={
+            "bindId": bind_id, "leanName": raw_name,
             "binderInfo": expr.get("binderInfo"),
-            "classification": "proof" if _is_prop(type_node) is True else "data" if _is_prop(type_node) is False else "unknown",
         })
-        type_display = self._convert(type_node, path + (0,), bindings)
+        return binding, binder
+
+    def _convert_binder(self, expr, path, bindings, occurrence) -> DisplayNode:
+        binding, binder = self._new_binding(expr, occurrence)
+        type_display = self._convert(expr.get("type"), path + (0,), bindings)
         body = self._convert(expr.get("body"), path + (1,), [binding] + bindings)
-        self.allocator.release_var(name)
         kind = "forall" if expr.get("kind") == "forall" else "lambda"
         return DisplayNode(kind, kind, [binder, type_display, body], metadata={
-            "isArrow": kind == "forall" and not _uses_outer_bvar(expr.get("body")),
+            "isArrow": kind == "forall" and not _uses_outer_bvar(expr.get("body"), visit=self._visit),
             "binderInfo": expr.get("binderInfo"),
         })
 
-    def _convert_let(self, expr, path, bindings) -> DisplayNode:
-        raw_name = str(expr.get("name", ""))
-        name = self.allocator.reserve(raw_name) if raw_name and raw_name != "_" else self.allocator.allocate_var(self.allocator.type_to_name(expr.get("type")))
-        bind_id = f"{self._tree_scope}:b{self._binding_counter}"
-        self._binding_counter += 1
-        binder = DisplayNode(name, "binder", metadata={"bindId": bind_id, "leanName": raw_name})
+    def _convert_let(self, expr, path, bindings, occurrence) -> DisplayNode:
+        binding, binder = self._new_binding(expr, occurrence)
         value = self._convert(expr.get("value"), path + (0,), bindings)
-        body = self._convert(expr.get("body"), path + (1,), [_Binding(name, bind_id)] + bindings)
-        self.allocator.release_var(name)
+        body = self._convert(expr.get("body"), path + (1,), [binding] + bindings)
         return DisplayNode("let", "let", [binder, value, body])
 
     def _diagnose(self, code, message, path, constant=None, expr=None) -> None:
         self.diagnostics.append(RenderDiagnostic("warning", code, message, constant, path, _source_range(expr)))
 
 
-def _uses_outer_bvar(expr: object, depth: int = 0) -> bool:
+def _uses_outer_bvar(expr: object, depth: int = 0, *, visit=None) -> bool:
     """Whether expr references the binder immediately outside it."""
-    if not isinstance(expr, dict):
-        return False
-    kind = expr.get("kind")
-    if kind == "bvar":
-        return expr.get("index") == depth
-    extra = 1 if kind in ("forall", "lam", "let") else 0
-    for key in ("fn", "arg", "type", "body", "value", "expr"):
-        value = expr.get(key)
-        if key == "type" or key == "value":
-            child_depth = depth
-        elif key == "body" and extra:
-            child_depth = depth + 1
-        else:
-            child_depth = depth
-        if isinstance(value, dict) and _uses_outer_bvar(value, child_depth):
-            return True
+    # A macro can omit a deeply nested source argument from its display tree.
+    # Inspecting that source still consumes work, without Python recursion.
+    pending = [(expr, depth)]
+    while pending:
+        current, depth = pending.pop()
+        if visit is not None:
+            visit()
+        current, _ = unwrap_mdata(current, visit=visit)
+        if not isinstance(current, dict):
+            continue
+        kind = current.get("kind")
+        if kind == "bvar":
+            if current.get("index") == depth:
+                return True
+            continue
+        extra = 1 if kind in ("forall", "lam", "let") else 0
+        for key in ("expr", "value", "body", "type", "arg", "fn"):
+            value = current.get(key)
+            if isinstance(value, dict):
+                pending.append((value, depth + extra if key == "body" else depth))
     return False
 
 
-def _hint(expr: object) -> dict:
-    """Only the resolver's explicit occurrence context supplies annotations."""
-    value = getattr(expr, "hint", None)
-    return value if isinstance(value, dict) else {}
-
-
-def _is_prop(expr: object) -> bool | None:
-    value = _hint(expr).get("isProp")
-    return value if isinstance(value, bool) else None
-
-
-def _declaration(expr: object) -> dict:
-    value = getattr(expr, "declaration", None)
-    return value if isinstance(value, dict) else {}
-
-
 def _source_range(expr: object) -> dict | None:
-    if not isinstance(expr, dict):
-        return None
-    value = _hint(expr).get("sourceRange")
-    if not isinstance(value, dict):
-        return None
-    if not isinstance(value.get("file"), str) or not all(isinstance(value.get(key), int) for key in ("start", "stop")):
-        return None
-    return {"file": value["file"], "start": value["start"], "stop": value["stop"]}
-
-
-def is_anonymous_name(name: str) -> bool:
-    return (
-        not name
-        or "._hyg." in name
-        or "._@." in name
-        or name.startswith("_uniq.")
-        or name == "[anonymous]"
-    )
-
-
-def _math_name(name: str) -> str:
-    """Convert common Lean identifier subscripts to TeX subscripts."""
-    subscripts = str.maketrans("₀₁₂₃₄₅₆₇₈₉", "0123456789")
-    suffix = len(name)
-    while suffix > 0 and name[suffix - 1] in "₀₁₂₃₄₅₆₇₈₉":
-        suffix -= 1
-    if suffix < len(name):
-        return name[:suffix] + "_" + name[suffix:].translate(subscripts)
-    return name
+    _, data = unwrap_mdata(expr)
+    file = data.get("ProofScript.sourceFile")
+    start = data.get("ProofScript.sourceStart")
+    stop = data.get("ProofScript.sourceStop")
+    if isinstance(file, str) and file and type(start) is int and type(stop) is int and 0 <= start <= stop:
+        return {"file": file, "start": start, "stop": stop}
+    return None

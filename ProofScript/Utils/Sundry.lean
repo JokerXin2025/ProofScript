@@ -7,6 +7,7 @@
 import Lean
 
 
+/-- Render a natural number as a Roman numeral. Zero renders as `""`. -/
 partial def Nat.toRoman (n : Nat) : String :=
   if n >= 1000 then "M" ++ toRoman (n - 1000)
   else if n >= 900 then "CM" ++ toRoman (n - 900)
@@ -23,6 +24,8 @@ partial def Nat.toRoman (n : Nat) : String :=
   else if n >= 1 then "I" ++ toRoman (n - 1)
   else ""
 
+/-- Compute the Levenshtein distance between two strings using single-character
+insertions, deletions, and substitutions. -/
 def String.editDistance (left right : String) : Nat := Id.run do
   let letters := right.toList.toArray
   let mut previous := List.range (letters.size + 1) |>.toArray

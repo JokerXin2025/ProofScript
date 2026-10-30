@@ -1,6 +1,6 @@
 import ProofScript.Info.Value
 
-namespace ProofScript.Info
+namespace ProofScript
 
 /-- Literal ${name} references. Rendering and language fallback remain consumer responsibilities. -/
 def namedPlaceholders (template : String) : Array String := Id.run do
@@ -21,7 +21,7 @@ structure ArgumentReferences where
   arguments : Array Nat := #[]
   /-- (selected argument index, @ depth); @@0 selects the body after one binder. -/
   binders : Array (Nat × Nat) := #[]
-  dynamic : Bool := false
+  wildcard : Bool := false
   deriving Inhabited
 
 private def naturalAt (chars : Array Char) (start : Nat) : Nat × Nat := Id.run do
@@ -32,14 +32,14 @@ private def naturalAt (chars : Array Char) (start : Nat) : Nat × Nat := Id.run 
     index := index + 1
   return (value, index)
 
-/-- Matches the existing #N, #* and @...N selector grammar without interpreting TeX. -/
+/-- Matches the #N and @...N selector grammar without interpreting TeX. -/
 def argumentReferences (template : String) : ArgumentReferences := Id.run do
   let chars := template.toList.toArray
   let mut result : ArgumentReferences := {}
   let mut index := 0
   while index < chars.size do
     if chars[index]! == '#' && index + 1 < chars.size then
-      if chars[index + 1]! == '*' then result := { result with dynamic := true }
+      if chars[index + 1]! == '*' then result := { result with wildcard := true }
       let (value, stop) := naturalAt chars (index + 1)
       if stop > index + 1 then
         result := { result with arguments := result.arguments.push value }
@@ -55,4 +55,4 @@ def argumentReferences (template : String) : ArgumentReferences := Id.run do
     else index := index + 1
   return result
 
-end ProofScript.Info
+end ProofScript

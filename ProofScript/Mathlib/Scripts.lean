@@ -5,22 +5,18 @@ open Lean Parser Mathlib Tactic
 
 /-! # Mathlib Native Tactics -/
 
-open Lean Elab.Command Mathlib.Linter in
-run_cmd do
-  let registrations := ProofScript.scriptTacticRegistrations (← getEnv)
-  let metadataNames := ["remark", "svg", "latex", "cite"]
-  let kinds := registrations.filter (fun r => metadataNames.contains r.name) |>.flatMap fun r =>
-    r.executionKind :: r.recordingKind.toList
-  elabCommand (← `(command| initialize do
-    UnusedTactic.allowedRef.modify (·.insertMany $(Lean.quote kinds))))
+/- Compound Mathlib argument parsers do not expose a stable `RecordValue`
+   representation. Their presentations do not consume those arguments, so the
+   wrappers below use handwritten recorders that retain the common goal
+   snapshots while executing the original tactic unchanged. -/
 
 script_macro «continuity»
 "continuity" => `(tactic| continuity)
 
-script_macro «exact_mod_cast»
+script_macro «exact_mod_cast» (clear := [proof])
 "exact_mod_cast" proof:term => `(tactic| exact_mod_cast $proof:term)
 
-script_macro «field»
+script_macro «field» (clear := [args])
 "field" args:(simpArgs)? => `(tactic| field $[$args:simpArgs]?)
 
 script_macro «gcongr»
@@ -31,6 +27,11 @@ script_macro «gcongr»
       let patterns : Array (Lean.TSyntax `rintroPat) :=
         withNames.raw.getArgs[1]!.getArgs.map (fun stx => ⟨stx⟩)
       `(tactic| gcongr $[$template]? with $patterns*)
+
+script_recorder «gcongr» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
 
 declare_syntax_cat scriptITautoArgs
 syntax "*" : scriptITautoArgs
@@ -47,6 +48,11 @@ script_macro «itauto»
         | _ => Lean.Macro.throwUnsupported
   | none => `(tactic| itauto)
 
+script_recorder «itauto» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
+
 script_macro «itauto!»
 "itauto!" args:(scriptITautoArgs)? =>
   match args with
@@ -58,11 +64,26 @@ script_macro «itauto!»
         | _ => Lean.Macro.throwUnsupported
   | none => `(tactic| itauto!)
 
+script_recorder «itauto!» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
+
 script_macro «linarith»
 "linarith" args:linarithArgsRest => `(tactic| linarith $args:linarithArgsRest)
 
+script_recorder «linarith» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
+
 script_macro «linarith!»
 "linarith!" args:linarithArgsRest => `(tactic| linarith! $args:linarithArgsRest)
+
+script_recorder «linarith!» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
 
 script_macro «measurability»
 "measurability" => `(tactic| measurability)
@@ -70,8 +91,18 @@ script_macro «measurability»
 script_macro «nlinarith»
 "nlinarith" args:linarithArgsRest => `(tactic| nlinarith $args:linarithArgsRest)
 
+script_recorder «nlinarith» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
+
 script_macro «nlinarith!»
 "nlinarith!" args:linarithArgsRest => `(tactic| nlinarith! $args:linarithArgsRest)
+
+script_recorder «nlinarith!» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
 
 script_macro «norm_cast»
 "norm_cast" loc:(location)? => `(tactic| norm_cast $[$loc:location]?)
@@ -82,6 +113,11 @@ script_macro «norm_num»
   match onlyFlag with
   | none => `(tactic| norm_num $cfg:optConfig $[$args:simpArgs]? $[$loc:location]?)
   | some _ => `(tactic| norm_num $cfg:optConfig only $[$args:simpArgs]? $[$loc:location]?)
+
+script_recorder «norm_num» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
 
 script_macro «positivity»
 "positivity" => `(tactic| positivity)
@@ -99,6 +135,11 @@ script_macro «push_cast»
       let parts := base.raw.getArgs
       let withLemmas := parts.set! 4 args.raw
       pure (Lean.Syntax.node base.raw.getHeadInfo base.raw.getKind withLemmas)
+
+script_recorder «push_cast» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
 
 script_macro «qify»
 "qify" args:(simpArgs)? loc:(location)? =>
@@ -147,6 +188,11 @@ script_macro «wlog»
   | some _, some name =>
       `(tactic| wlog $h:ident : $proposition:term generalizing $xs* with $name:ident)
 
+script_recorder «wlog» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
+
 script_macro «wlog!»
 "wlog!" cfg:optConfig h:ident ":" proposition:term
     vars:(scriptWlogGeneralizing)? hypothesis:(scriptWlogWith)? =>
@@ -160,6 +206,11 @@ script_macro «wlog!»
   | none, some name => `(tactic| wlog! $cfg:optConfig $h:ident : $proposition:term with $name:ident)
   | some _, some name =>
       `(tactic| wlog! $cfg:optConfig $h:ident : $proposition:term generalizing $xs* with $name:ident)
+
+script_recorder «wlog!» => do
+  record_goal "$goal_before"
+  execute
+  record_goal "$goal_after"
 
 script_macro «zify»
 "zify" args:(simpArgs)? loc:(location)? =>

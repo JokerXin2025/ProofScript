@@ -2,7 +2,7 @@ import ProofScript.Info.Derive
 import ProofScript.Info.Target
 import ProofScript.Info.Template
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
@@ -40,4 +40,4 @@ def resolvePhraseInfo (env : Environment) (query : Query) (target : Name) :
     Except Diagnostic (ResolvedInfo PhraseInfo) :=
   resolveConfiguredInfo phraseSpec env query target
 
-end ProofScript.Info
+end ProofScript

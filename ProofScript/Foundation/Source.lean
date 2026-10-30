@@ -1,6 +1,6 @@
 import Lean
 
-namespace ProofScript.Foundation
+namespace ProofScript
 
 open Lean
 
@@ -15,4 +15,4 @@ def SourceLocation.ofSyntax (file : String) (stx : Syntax) : SourceLocation :=
   let start := stx.getPos?.getD 0
   { file, start := start.byteIdx, stop := (stx.getTailPos?.getD start).byteIdx }
 
-end ProofScript.Foundation
+end ProofScript

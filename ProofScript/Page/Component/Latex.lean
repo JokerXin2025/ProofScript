@@ -1,5 +1,5 @@
 
-import ProofScript.Page.Component.Core
+import ProofScript.Page.Component.Command
 import ProofScript.Output.Path
 
 open Lean Elab Command
@@ -71,6 +71,7 @@ private def addLatexComponent (metadataStx : Syntax)
   let value : LatexComponent := { metadata, source := codeStx.getString, svg }
   addPageComponent codeStx.raw "latex" (toJson value) labels
 
-elab "@""latex" metadata:componentMeta code:str : command => do
+page_component "latex" metadata:componentMeta code:str => do
   addComponentMetadataInfo metadata.raw
-  whenPageBuild <| addLatexComponent metadata.raw code
+  when_page_build
+    addLatexComponent metadata.raw code

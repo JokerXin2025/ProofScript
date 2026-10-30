@@ -1,62 +1,51 @@
-import ProofScript.Info.TheoremProject
+import ProofScript.Info.Theorem
+import ProofScript.Core.References
 import Lean.Meta.Tactic.AuxLemma
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
 inductive RecordedDeclarationKind where
-  | theorem | lemma
-  deriving Inhabited, Repr, BEq
+| «theorem»
+| «lemma»
+deriving Inhabited, Repr, BEq, ToJson, FromJson
 
-def RecordedDeclarationKind.toString : RecordedDeclarationKind → String
-  | .theorem => "theorem"
-  | .lemma => "lemma"
+instance : ToString RecordedDeclarationKind where toString
+| .theorem => "theorem"
+| .lemma => "lemma"
 
-/-- Semantic proof facts, independent of recording steps, citations and presentation metadata. -/
+/-- Semantic proof facts and collected references, independent of recording steps and presentation. -/
 structure DeclarationFacts where
   declaration : Name
   ownerModule : Name
-  sequence : Nat
   declarationKind : RecordedDeclarationKind
-  defaultProject : Option String
-  /-- Final proof constants with compiler helpers expanded, but user declarations left intact. -/
-  proofConstants : Array Name
+  /-- Committed automatic dependencies and manual citations; page consumption cannot clear them. -/
+  proofRefs : Array RefInfo
   deriving Inhabited, Repr, BEq
 
 private inductive DeclarationEntry where
   | user (facts : DeclarationFacts)
   | auxiliary (declaration : Name) (constants : Array Name)
-  | check (declaration target : Name)
   deriving Inhabited
 
 private structure DeclarationState where
   declarations : NameMap DeclarationFacts := {}
   auxiliaries : NameMap (Array Name) := {}
-  checks : NameMap Name := {}
   deriving Inhabited
 
 private def DeclarationState.add (state : DeclarationState) : DeclarationEntry → DeclarationState
   | .user facts => { state with declarations := state.declarations.insert facts.declaration facts }
   | .auxiliary name constants => { state with auxiliaries := state.auxiliaries.insert name constants }
-  | .check name target => { state with checks := state.checks.insert name target }
 
 private initialize declarationExt : SimplePersistentEnvExtension DeclarationEntry DeclarationState ←
   registerSimplePersistentEnvExtension {
-    name := `ProofScript.Info.declarationFacts
+    name := `ProofScript.declarationFacts
     addEntryFn := DeclarationState.add
     addImportedFn := fun modules => modules.foldl (fun state entries => entries.foldl DeclarationState.add state) {} }
 
 def declarationFacts? (env : Environment) (name : Name) : Option DeclarationFacts :=
   (declarationExt.getState env).declarations.find? name
-
-def internalTheoremTarget? (env : Environment) (name : Name) : Option Name :=
-  (declarationExt.getState env).checks.find? name
-
-def moduleDeclarationFacts (env : Environment) (owner : Name) : Array DeclarationFacts :=
-  let entries := if owner == env.mainModule then (declarationExt.getEntries env).reverse.toArray
-    else (env.getModuleIdx? owner).map (declarationExt.getModuleEntries env) |>.getD #[]
-  entries.filterMap fun entry => match entry with | .user facts => some facts | _ => none
 
 private def usedConstants (env : Environment) (name : Name) : Except Diagnostic (Array Name) := do
   let some info := env.find? name | throw { message := s!"missing proof declaration `{name}`" }
@@ -64,7 +53,7 @@ private def usedConstants (env : Environment) (name : Name) : Except Diagnostic 
     | throw { message := s!"cannot read completed proof `{name}`" }
   return value.getUsedConstants
 
-private structure CaptureState where
+private structure DeclarationCaptureState where
   active : NameSet := {}
   expanded : NameMap (Array Name) := {}
   deriving Inhabited
@@ -74,10 +63,9 @@ private def canonicalNames (names : Array Name) : Array Name :=
 
 /-- Only compiler provenance permits expansion. Existing user definitions and theorems are boundaries. -/
 private partial def expandConstant (before env : Environment) (registry : DeclarationState)
-    (cached : NameSet) (root name : Name) : StateT CaptureState (Except Diagnostic) (Array Name) := do
+    (cached : NameSet) (root name : Name) : StateT DeclarationCaptureState (Except Diagnostic) (Array Name) := do
   if name == root then return #[]
   if registry.declarations.contains name then return #[name]
-  if let some target := registry.checks.find? name then return #[target]
   if let some constants := registry.auxiliaries.find? name then return constants
   if let some constants := (← get).expanded.find? name then return constants
   let some info := env.find? name | throw { message := s!"unknown proof constant `{name}`" }
@@ -95,43 +83,50 @@ private partial def expandConstant (before env : Environment) (registry : Declar
     expanded := state.expanded.insert name normalized }
   return normalized
 
-/-- Construct a complete successful declaration transaction without installing a partial registry.
-`before` is the environment before elaborating the theorem. An optional legacy check preserves
-the exact mapping for callers still registering an opaque proof declaration. -/
-def registerDeclarationFacts (before env : Environment) (declaration : Name)
-    (kind : RecordedDeclarationKind) (defaultProject : Option String)
-    (source : Foundation.SourceLocation) (check : Option Name := none) : Except Diagnostic Environment :=
-  (do
-    let constants ← usedConstants env declaration
-    match check with
-    | some check =>
-      unless (env.find? check).any (·.isTheorem) do
-        throw { message := "missing internal theorem check" }
-    | none =>
-      unless (env.find? declaration).any (·.isTheorem) do
-        throw { message := "proof declaration is not a theorem" }
+/-- Collect and register a completed proof's references in one transaction.
+`before` is the environment before elaborating the proof source. `declaration` is
+the public theorem; an explicit `proofSource` may be its already checked helper `def`,
+registered immediately before the native theorem command. Return automatic references
+for the page staging area; manual citations are supplied from the proof's staged refs. -/
+def registerDeclarationFacts (before : Environment) (declaration : Name)
+    (kind : RecordedDeclarationKind) (source : SourceLocation)
+    (citations : List RefInfo := []) (proofSource : Option Name := none) : MetaM (Array RefInfo) := do
+  let env ← getEnv
+  let captured : Except Diagnostic (Array Name × DeclarationCaptureState) := (do
+    unless (env.find? (proofSource.getD declaration)).any (fun info => match info with
+        | .thmInfo _ => true
+        | .defnInfo _ => proofSource.isSome
+        | _ => false) do
+      throw { message := "proof source is not a completed theorem or helper definition" }
+    let constants ← usedConstants env (proofSource.getD declaration)
     let registry := declarationExt.getState env
-    if registry.declarations.contains declaration || check.any registry.checks.contains then
+    if registry.declarations.contains declaration then
       throw { message := "declaration facts are already registered" }
     let cached := (Meta.auxLemmasExt.getState env).lemmas.foldl
       (fun names _ entry => names.insert entry.1) ({} : NameSet)
-    let action : StateT CaptureState (Except Diagnostic) (Array Name) := do
+    let action : StateT DeclarationCaptureState (Except Diagnostic) (Array Name) := do
       let mut result := #[]
       for name in constants do
         result := result ++ (← expandConstant before env registry cached declaration name)
       return canonicalNames result
-    let (proofConstants, capture) ← action.run {}
-    let sequence := infoEventExt.getState env
-    let facts : DeclarationFacts := {
-      declaration, ownerModule := env.mainModule, sequence,
-      declarationKind := kind, defaultProject, proofConstants }
-    -- Initialize at declaration time, so a later title-only update cannot pick a new active project.
-    let env ← commitInfo theoremSpec env declaration #[] source
-      (some #[TheoremInfo.infoFields.project.assignment defaultProject source])
-    let env := capture.expanded.foldl (fun env name constants =>
-      declarationExt.addEntry env (.auxiliary name constants)) env
-    let env := check.map (fun check => declarationExt.addEntry env (.check check declaration)) |>.getD env
-    return declarationExt.addEntry env (.user facts) : Except Diagnostic Environment).mapError fun error =>
+    action.run {} : Except Diagnostic (Array Name × DeclarationCaptureState)).mapError fun error =>
       { error with kind := some theoremSpec.kind, target := some declaration.toString, source := some source }
+  let (constants, capture) ← match captured with
+    | .ok result => pure result
+    | .error error => throwError error.render
+  let dependencies ← if dependencyCollection.get (← getOptions) then
+      RefInfo.collectConstantRefs constants true
+    else pure #[]
+  let facts : DeclarationFacts := {
+    declaration, ownerModule := env.mainModule, declarationKind := kind,
+    proofRefs := (dependencies.foldl RefInfo.mergeRef citations).toArray }
+  -- Register the declaration's owner without freezing presentation configuration.
+  let env ← match commitInfo theoremSpec env declaration #[] source with
+    | .ok env => pure env
+    | .error error => throwError error.render
+  let env := capture.expanded.foldl (fun env name constants =>
+    declarationExt.addEntry env (.auxiliary name constants)) env
+  setEnv <| declarationExt.addEntry env (.user facts)
+  return dependencies
 
-end ProofScript.Info
+end ProofScript

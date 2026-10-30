@@ -8,7 +8,7 @@ from contextvars import ContextVar
 from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
 from PS4HTML.i18n import normalize_language, tr
-from PS4HTML.recording import UNRECORDED_RULE_ID, proof_steps
+from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, UNRECORDED_RULE_ID, proof_steps
 from PS4HTML.schema import Expression
 
 _CURRENT_LANGUAGE = ContextVar("ps4html_language", default="zh")
@@ -66,11 +66,12 @@ def render_annotation(sort, icon, content):
         content = content
     )
 
-def render_proof(proof_state, title, content, file_name, lines_count, code, anchor = "", language="zh", default_language="zh", theorem_id=""):
+def render_proof(proof_state, title, content, file_name, lines_count, code, anchor = "", language="zh", default_language="zh", theorem_id="", statement=""):
     return TEMPLATE_PROOF.substitute(
         proof_state = proof_state,
         title = html.escape(title),
         content = indent(content, "        "),
+        statement = statement,
         file_name = html.escape(str(file_name)),
         lines_count = lines_count,
         code = code,
@@ -329,7 +330,7 @@ class ProofEngine:
         html_blocks = []
         try:
             for index, step in enumerate(steps):
-                rule_id = step.get("_ruleId")
+                rule_id = step.get(RULE_ID_FIELD)
                 self._structural_step = self._structural_parent + (index,)
                 rule = self.step_rules.get(self._structural_step) if self.step_rules is not None else self.rules.get(rule_id)
                 self.current_rule = rule
@@ -352,7 +353,7 @@ class ProofEngine:
         return "\n".join(html_blocks)
 
     def render_branch(self, steps, branch_index, path):
-        return self.render(steps, path, binding_parent=self._structural_step + ("branches", branch_index, "proof"))
+        return self.render(steps, path, binding_parent=self._structural_step + (BRANCHES_FIELD, branch_index, "proof"))
 
     def render_embedded(self, steps, path):
         return self.render(steps, path, binding_parent=self._structural_step + ("proof",))
@@ -366,11 +367,13 @@ class ProofEngine:
     def validate(steps):
         proof_steps(steps)
 
-    def make(self, title, file_name, lines_count, code, anchor = "", state = None, language=None, default_language="zh", theorem_id=""):
+    def make(self, title, file_name, lines_count, code, anchor = "", state = None, language=None, default_language="zh", theorem_id="", statement=None):
         previous_language = self.language
         if language is not None:
             self.language = normalize_language(language)
         try:
+            from PS4HTML.statement import render_statement
+            statement_html = render_statement(statement, self) if statement is not None else ""
             content = self.render(self.data)
         finally:
             self.language = previous_language
@@ -394,4 +397,5 @@ class ProofEngine:
             language = normalize_language(language or previous_language),
             default_language = normalize_language(default_language),
             theorem_id = theorem_id,
+            statement = statement_html,
         )

@@ -1,4 +1,4 @@
-"""Project-scoped direct theorem edges, derived exclusively from validated proof facts."""
+"""Direct edges from the validated projection of automatic references in each source project."""
 from __future__ import annotations
 
 from dataclasses import dataclass

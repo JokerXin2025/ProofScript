@@ -1,4 +1,4 @@
-import ProofScript.Script.Recording.Parser
+import Lean.Parser.Syntax
 import Lean.EnvExtension
 
 namespace ProofScript
@@ -6,27 +6,65 @@ namespace ProofScript
 open Lean
 
 /-- Reserved recording identity for a script invocation whose data could not be exported. -/
-def unrecordedRuleId : Name := `ProofScript.Recording.unrecorded
+def unrecordedRuleId : Name := `ProofScript.unrecorded
+
+inductive ScriptKind where
+  | tactic | strategy | metadata
+  deriving Inhabited, Repr, BEq
+
+instance : ToJson ScriptKind where
+  toJson
+    | .tactic => "tactic"
+    | .strategy => "strategy"
+    | .metadata => "metadata"
+
+structure ScriptRecordingConfig where
+  /-- How the declaration participates in script execution and recording. -/
+  kind : ScriptKind := .tactic
+  /-- The named goal which continues the parent recording, when present. -/
+  continuation : Option Lean.Name := none
+  /-- Parameters introduced by the tactic and therefore unavailable before it runs. -/
+  intro : Array Lean.Name := #[]
+  /-- Parameters that are only available before the tactic runs. -/
+  clear : Array Lean.Name := #[]
+  deriving Inhabited, Repr, BEq
+
+def ScriptRecordingConfig.isStrategy (config : ScriptRecordingConfig) : Bool :=
+  config.kind == .strategy
+
+def ScriptRecordingConfig.isMetadata (config : ScriptRecordingConfig) : Bool :=
+  config.kind == .metadata
 
 structure ScriptTacticRegistration where
   ruleId : Lean.Name
   name : String
   sourceKind : Lean.Name
   executionKind : Lean.Name
-  recordingKind : Option Lean.Name
+  /-- Recorder generated from the declaration's automatic parameter recorder. -/
+  automaticRecordingKind : Option Lean.Name
+  /-- Body corresponding to the automatic recorder entry. -/
+  automaticRecordingBody : Option Lean.Name := none
+  /-- Per-registration execution-only recorder for unsupported automatic parameters. -/
+  fallbackRecordingKind : Option Lean.Name := none
+  /-- Body corresponding to the fallback recorder entry. -/
+  fallbackRecordingBody : Option Lean.Name := none
+  /-- Most recently declared handwritten recorder, if any. -/
+  explicitRecordingKind : Option Lean.Name := none
+  /-- Callable body of the latest handwritten recorder. -/
+  explicitRecordingBody : Option Lean.Name := none
+  /-- The handwritten recorder that the current explicit recorder supersedes. -/
+  explicitRecordingParent : Option Lean.Name := none
   autoRecordingError : Option String := none
-  strategy : Bool
-  /-- Proof goals precede the optional continuation at this index. -/
-  continuation : Option Nat := none
-  parameters : Array (String × Recording.ParamParserSignature) := #[]
-  recordedFields : Option (Array Recording.OutputField) := none
-  deriving Inhabited, Repr
+  config : ScriptRecordingConfig := {}
+  /-- The original declaration arguments, the sole source for recorder bindings. -/
+  arguments : Array (TSyntax ``Lean.Parser.Command.macroArg) := #[]
+  deriving Inhabited, Repr, BEq
 
 /-- The Environment is the source of truth. Editor re-elaboration rolls back the
     Environment, whereas process-wide IO refs survive the rollback. -/
 inductive ScriptRegistrationEntry where
   | register (registration : ScriptTacticRegistration)
-  | setRecorder (ruleId recordingKind : Name) (fields : Option (Array Recording.OutputField))
+  | setRecorder (ruleId recorderKind recorderBody : Name) (parentKind : Option Name)
   deriving Inhabited
 
 initialize scriptRegistrationExt : SimplePersistentEnvExtension ScriptRegistrationEntry
@@ -42,18 +80,23 @@ def scriptRegistrationsFromEntries (entries : Array ScriptRegistrationEntry) : L
     match entry with
     | .register registration =>
         registrations := registrations.filter (·.ruleId != registration.ruleId) ++ [registration]
-    | .setRecorder ruleId recordingKind fields =>
+    | .setRecorder ruleId recorderKind recorderBody parentKind =>
         registrations := registrations.map fun registration =>
           if registration.ruleId == ruleId then
             { registration with
-              recordingKind := some recordingKind
-              autoRecordingError := none
-              recordedFields := fields }
+              explicitRecordingKind := some recorderKind
+              explicitRecordingBody := some recorderBody
+              explicitRecordingParent := parentKind }
           else registration
   return registrations
 
 def scriptTacticRegistrations (env : Environment) : List ScriptTacticRegistration :=
   scriptRegistrationsFromEntries (scriptRegistrationExt.getState env)
+
+def ScriptTacticRegistration.recordingKind (registration : ScriptTacticRegistration) : Option Name :=
+  match registration.explicitRecordingKind with
+  | some kind => some kind
+  | none => registration.automaticRecordingKind.or registration.fallbackRecordingKind
 
 /-- Explicit module closure supplied by the caller; the exporter environment is not the view. -/
 def scriptRegistrationsInModules (env : Environment) (modules : Array Name) : List ScriptTacticRegistration :=
@@ -65,11 +108,6 @@ def scriptRegistrationForRecorder (env : Environment) (ruleId : Name) :
     Except String ScriptTacticRegistration := do
   let some registration := (scriptTacticRegistrations env).find? (·.ruleId == ruleId)
     | throw s!"[script recorder] unknown registration `{ruleId}`"
-  if (scriptRegistrationExt.getState env).any (fun entry =>
-      match entry with
-      | .setRecorder id _ _ => id == ruleId
-      | .register _ => false) then
-    throw s!"[script recorder] `{ruleId}` already has a handwritten recorder"
   return registration
 
 end ProofScript

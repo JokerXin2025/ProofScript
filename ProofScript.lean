@@ -1,5 +1,6 @@
 import ProofScript.Info.Commands
-import ProofScript.Builtin
+import ProofScript.Builtin.Script
+import ProofScript.Builtin.Config
 import ProofScript.Mathlib.Info
 import ProofScript.Page.Command
 import ProofScript.Page.Component.ProofText

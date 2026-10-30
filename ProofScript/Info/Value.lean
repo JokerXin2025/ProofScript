@@ -1,7 +1,7 @@
 import ProofScript.Utils.JsonPath
 import ProofScript.Foundation.Source
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
@@ -33,13 +33,13 @@ instance : FromJson ExtraFields := ⟨ExtraFields.fromJson⟩
 structure RelatedSource where
   owner : Name
   sequence : Nat
-  source : Foundation.SourceLocation
+  source : SourceLocation
   deriving Inhabited, Repr, BEq, ToJson
 
 structure Diagnostic where
   message : String
   path : JsonPath := #[]
-  source : Option Foundation.SourceLocation := none
+  source : Option SourceLocation := none
   kind : Option String := none
   target : Option String := none
   relatedPaths : Array JsonPath := #[]
@@ -63,4 +63,4 @@ def Diagnostic.render (error : Diagnostic) : String :=
 
 instance : ToString Diagnostic := ⟨Diagnostic.render⟩
 
-end ProofScript.Info
+end ProofScript

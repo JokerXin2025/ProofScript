@@ -1,0 +1,47 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://proofscript.local/schema/recording-function-0.4.0.json",
+  "title": "ProofScript computation function recording 0.4.0",
+  "$comment": "This is the function provenance object inside a computation component. It shares native expression encoding with proof documents; the computation execution envelope and proofscript-json-v1 ABI are unchanged. This schema validates shape only; the decoder additionally checks reference ownership, structural postorder and exact root targets. Metadata values are opaque scalars. Old recording versions require lake build <Library>:ps4html.",
+  "type": "object",
+  "required": [
+    "recordingVersion",
+    "declaration",
+    "type",
+    "expression",
+    "implementation",
+    "expressions",
+    "expressionRoots"
+  ],
+  "properties": {
+    "recordingVersion": {
+      "const": "0.4.0"
+    },
+    "declaration": {
+      "type": "string"
+    },
+    "type": {
+      "type": "string"
+    },
+    "expression": {
+      "$ref": "recording-proof-0.4.0.json#/$defs/exprRef"
+    },
+    "implementation": {
+      "$ref": "recording-proof-0.4.0.json#/$defs/exprRef"
+    },
+    "expressions": {
+      "$ref": "recording-proof-0.4.0.json#/$defs/expressions"
+    },
+    "expressionRoots": {
+      "const": [
+        [
+          "expression"
+        ],
+        [
+          "implementation"
+        ]
+      ]
+    }
+  },
+  "additionalProperties": false
+}

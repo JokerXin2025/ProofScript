@@ -23,7 +23,7 @@ private def roundConstants : Array UInt32 := #[
   0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2
 ]
 
-/-- SHA-256 of the UTF-8 compact JSON representation -/
+/-- SHA-256 of the UTF-8 compact JSON representation. -/
 def Lean.Json.sha256 (value : Json) : String := Id.run do
   let mut bytes := value.compress.toUTF8.data
   let bitLength := bytes.size * 8

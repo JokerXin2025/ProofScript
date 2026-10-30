@@ -2,7 +2,7 @@ import ProofScript.Info.Derive
 import ProofScript.Info.Target
 import ProofScript.Info.Template
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
@@ -37,36 +37,8 @@ deriving Inhabited, Repr, BEq
 
 instance : InfoCodec StyleAssociativity := enumCodec #[("left", .left), ("right", .right), ("none", .none)]
 
-inductive DefinitionArguments where
-| explicit
-| indices (values : Array Nat)
-deriving Inhabited, Repr, BEq
-
 private def uniqueIndices (values : Array Nat) : Except String Unit :=
   if values.toList.eraseDups.length == values.size then .ok () else .error "duplicate argument index"
-
-instance : InfoCodec DefinitionArguments where
-  parse stx := do
-    match stx with
-    | `(term| explicit) => return .explicit
-    | _ =>
-        let values ← InfoCodec.parse stx
-        if let .error message := uniqueIndices values then throwErrorAt stx message
-        return .indices values
-  toJson
-  | .explicit => json% "explicit"
-  | .indices values => toJson values
-  decode value := do
-    if value == (json% "explicit") then return .explicit
-    let values ← InfoCodec.decode value
-    (uniqueIndices values).mapError fun message => { message }
-    return .indices values
-  jsonSchema := json% {
-    anyOf: [
-      { const: "explicit" },
-      $((InfoCodec.jsonSchema (Array Nat)).setObjVal! "uniqueItems" (json% true))
-    ]
-  }
 
 structure BinderSelector where
   argument : Nat
@@ -103,7 +75,6 @@ structure DefinitionStyle where
   fixity : StyleFixity := .custom
   precedence : Nat := 100
   associativity : StyleAssociativity := .none
-  separator : String := ", "
   binders : Array BinderSelector := #[]
   isolated_arguments : Array Nat := #[]
   deriving Inhabited, InfoSchema
@@ -119,15 +90,18 @@ instance : InfoSchema DefinitionStyle :=
       DefinitionStyle.infoFields.isolated_arguments.withValidation uniqueIndices] }
 
 instance (priority := high) : InfoCodec (Option DefinitionKind) := optionalInputCodec
-instance (priority := high) : InfoCodec (Option DefinitionArguments) := optionalInputCodec
 instance (priority := high) : InfoCodec (Option (Array DefinitionStyle)) := optionalInputCodec
 
 /-- Conditional defaults remain absent until consumption; explicit [] differs from omitted styles. -/
 structure DefinitionInfo where
+  /-- Variable-name prefix for this type; an empty string requests automatic naming. -/
+  var_name : String := ""
   kind : Option DefinitionKind := none
-  arguments : Option DefinitionArguments := none
-  dynamic_arity : Bool := false
+  auto_arity : Bool := true
   styles : Option (Array DefinitionStyle) := none
+  /-- Theorem parameter text template: #self, #type and explicit type arguments #N.
+      Formula fragments use dollar delimiters. -/
+  parameter_template : Option String := none
   calc_symbol : Option String := none
   unwrap : Option Nat := none
   alias : Option DeclarationRef := none
@@ -137,63 +111,48 @@ structure DefinitionInfo where
 /-- The ordinary rendering mode after calc shorthand and conditional defaults are resolved. -/
 structure DefinitionDisplay where
   kind : DefinitionKind
-  arguments : DefinitionArguments
-  dynamic_arity : Bool
+  auto_arity : Bool
   styles : Array DefinitionStyle
   deriving Inhabited
 
 private def definitionConstraint (name message : String) (related : Array String := #[]) : Diagnostic :=
   { message, path := #[.key name], relatedPaths := related.map fun name => #[.key name] }
 
-private def calcStyle (symbol : String) : DefinitionStyle :=
-  let suffix := symbol.toList.reverse.takeWhile Char.isAlpha
-  let control := !suffix.isEmpty && (symbol.toList.reverse.drop suffix.length).head? == some '\\'
-  { template := s!"#0{symbol}{if control then " " else ""}#1", fixity := .infix, precedence := 50 }
-
 def DefinitionInfo.display (value : DefinitionInfo) : Except Diagnostic DefinitionDisplay := do
   let kind := value.kind.getD (if value.calc_symbol.isSome then .relation else .const)
-  let arguments := value.arguments.getD (if value.calc_symbol.isSome then .explicit else .indices #[])
   let styles ← match value.styles, value.calc_symbol with
     | some styles, _ => pure styles
-    | none, some symbol =>
-      let related := #[DefinitionInfo.infoFields.calc_symbol.name, DefinitionInfo.infoFields.styles.name]
+    | none, some _ =>
       if kind != .relation then
-        throw <| definitionConstraint DefinitionInfo.infoFields.kind.name "generated calc style requires relation kind" related
-      if value.dynamic_arity || (match arguments with | .indices values => values.size != 2 | .explicit => false) then
-        throw <| definitionConstraint DefinitionInfo.infoFields.arguments.name
-          "generated calc style requires two selected arguments and fixed arity"
-          (related.push DefinitionInfo.infoFields.dynamic_arity.name)
-      pure #[calcStyle symbol]
-    | none, none =>
-      throw <| definitionConstraint DefinitionInfo.infoFields.styles.name
-        "missing styles or calc_symbol" #[DefinitionInfo.infoFields.calc_symbol.name]
-  if styles.isEmpty then throw <| definitionConstraint DefinitionInfo.infoFields.styles.name "at least one style is required"
-  return { kind, arguments, styles, dynamic_arity := value.dynamic_arity }
+        throw <| definitionConstraint DefinitionInfo.infoFields.kind.name "calc_symbol requires relation kind"
+          #[DefinitionInfo.infoFields.calc_symbol.name]
+      pure #[]
+    | none, none => pure #[]
+  return { kind, auto_arity := value.auto_arity, styles }
 
 private def validateStyle (display : DefinitionDisplay) (style : DefinitionStyle) : Except Diagnostic Unit := do
   let references := argumentReferences style.template
   let args := references.arguments ++ references.binders.map (·.1)
   let related := #[#[.key DefinitionStyle.infoFields.template.name]]
-  if references.dynamic != display.dynamic_arity then
-    throw { message := "dynamic placeholder #* must agree with dynamic_arity", path := #[.key DefinitionStyle.infoFields.template.name] }
+  if references.wildcard then
+    throw { message := "dynamic placeholder #* is no longer supported", path := #[.key DefinitionStyle.infoFields.template.name] }
   let sorted := args.toList.eraseDups.toArray.qsort (· < ·)
-  if !display.dynamic_arity && (sorted.mapIdx fun index value => index == value).any (!·) then
+  if display.auto_arity && (sorted.mapIdx fun index value => index == value).any (!·) then
     throw { message := "non-contiguous argument placeholders", path := #[.key DefinitionStyle.infoFields.template.name] }
   for (index, depth) in references.binders do
     let binder := style.binders.find? (·.argument == index)
     if binder.isNone || depth > (binder.map (·.count) |>.getD 0) + 1 then
       throw { message := "@ selector needs a matching binder count", path := #[.key DefinitionStyle.infoFields.binders.name], relatedPaths := related }
-  if let .indices selected := display.arguments then
-    if args.any (· >= selected.size) then
-      throw { message := "template references a missing selected argument", path := #[.key DefinitionStyle.infoFields.template.name] }
-    if style.binders.any (·.argument >= selected.size) then
-      throw { message := "binder selector references a missing selected argument", path := #[.key DefinitionStyle.infoFields.binders.name], relatedPaths := related }
-    if style.isolated_arguments.any (· >= selected.size) then
-      throw { message := "isolated_arguments references a missing selected argument", path := #[.key DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
-  if !display.dynamic_arity && style.isolated_arguments.any (!args.contains ·) then
+  if display.auto_arity && style.isolated_arguments.any (!args.contains ·) then
     throw { message := "isolated_arguments must reference a template argument", path := #[.key DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
 
 def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := do
+  if let some template := value.parameter_template then
+    if template.isEmpty then
+      throw <| definitionConstraint "parameter_template" "parameter template must not be empty"
+    let refs := argumentReferences template
+    if refs.wildcard || !refs.binders.isEmpty then
+      throw <| definitionConstraint "parameter_template" "parameter templates support #self, #type and #N only"
   if value.alias.isSome && value.unwrap.isSome then
     throw <| definitionConstraint DefinitionInfo.infoFields.alias.name "alias and unwrap are mutually exclusive"
       #[DefinitionInfo.infoFields.unwrap.name]
@@ -201,14 +160,14 @@ def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := 
   if value.alias.isSome || value.unwrap.isSome then return
   let display ← value.display
   let references := display.styles.map fun style => argumentReferences style.template
-  if references.all (!·.binders.isEmpty) then
+  if !references.isEmpty && references.all (!·.binders.isEmpty) then
     throw <| definitionConstraint DefinitionInfo.infoFields.styles.name "a style without @ selectors is required"
   for index in [:display.styles.size] do
     (validateStyle display display.styles[index]!).mapError fun error =>
       { error with
         path := #[.key DefinitionInfo.infoFields.styles.name, .index index] ++ error.path
-        relatedPaths := #[#[.key DefinitionInfo.infoFields.arguments.name],
-          #[.key DefinitionInfo.infoFields.dynamic_arity.name], #[.key DefinitionInfo.infoFields.styles.name]] }
+        relatedPaths := #[#[.key DefinitionInfo.infoFields.auto_arity.name],
+          #[.key DefinitionInfo.infoFields.styles.name]] }
 
 instance : InfoSchema DefinitionInfo :=
   (inferInstance : InfoSchema DefinitionInfo).withOverrides! {
@@ -224,9 +183,9 @@ private def aliasSources (info : ResolvedInfo DefinitionInfo) : Array RelatedSou
   info.provenance.filter (·.1 == .field DefinitionInfo.infoFields.alias.name)
     |>.flatMap fun (_, origins) => origins.map (·.related)
 
-/-- Validate the entire static alias closure in the same module/boundary, retaining every edge's source.
-Actual applications, explicit argument descriptors and selected lambda shapes are checked by the backend.
--/
+/-- Validate the static alias closure in the same module view, retaining every
+    edge's source. Snapshots resolve explicit argument selection from declaration
+    binders; the backend checks application arity and selected lambda shapes. -/
 def resolveDefinitionChain (env : Environment) (query : Query) (declaration : Name) :
     Except Diagnostic (Array (Name × ResolvedInfo DefinitionInfo)) := do
   let events ← queryEvents env query
@@ -260,4 +219,4 @@ def resolveDefinitionInfo (env : Environment) (query : Query) (declaration : Nam
   let some (_, info) := chain[0]? | throw { message := "empty definition closure" }
   return info
 
-end ProofScript.Info
+end ProofScript

@@ -7,7 +7,7 @@
 import Lean
 
 
-/-- Ensure the parent directory of `path` exists, creating missing ancestors
-recursively. It does nothing if `path` has no parent. -/
+/-- Ensure the parent directory of the path exists, creating missing ancestors
+recursively. It does nothing if the path has no parent. -/
 def System.FilePath.ensureParentDir (path : System.FilePath) : IO Unit := do
   if let some parent := path.parent then IO.FS.createDirAll parent

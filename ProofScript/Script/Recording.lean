@@ -1,7 +1,9 @@
+import ProofScript.Script.Recording.Data
+import ProofScript.Script.Recording.Expression
 import ProofScript.Script.Recording.Encoding
+import ProofScript.Script.Recording.Parameter
+import ProofScript.Script.Recording.RecordEngine
+import ProofScript.Script.Recording.Runtime
+import ProofScript.Script.Recording.Strategy
 import ProofScript.Script.Recording.Recorder
-import ProofScript.Script.Recording.Builtins
-import ProofScript.Script.Recording.Complex
-
-/-! Public recording API: recorder DSLs, values, codecs, capture groups, isolation and commit.
-Declaration-time parser normalization and metadata evaluation live in separate modules. -/
+import ProofScript.Script.Recording.Params

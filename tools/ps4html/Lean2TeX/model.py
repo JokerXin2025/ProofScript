@@ -6,6 +6,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 
+class RenderLimitError(ValueError):
+    """The requested expression would exceed bounded rendering work or output."""
+
+
 @dataclass
 class DisplayNode:
     """A renderer-oriented tree independent from the recorded expression graph."""
@@ -14,6 +18,7 @@ class DisplayNode:
     kind: str = ""
     children: list["DisplayNode"] = field(default_factory=list)
     metadata: dict[str, Any] = field(default_factory=dict)
+    generated: bool = False
 
 
 @dataclass(frozen=True)
@@ -44,7 +49,6 @@ class MacroStyle:
     fixity: str = "custom"
     precedence: int = 100
     associativity: str = "none"
-    separator: str = ", "
     binders: dict[int, int] = field(default_factory=dict)
     isolated_arguments: frozenset[int] = frozenset()
 
@@ -53,9 +57,10 @@ class MacroStyle:
 class Macro:
     name: str
     kind: str
-    arguments: tuple[int, ...] | str
+    arguments: tuple[int, ...]
     styles: tuple[MacroStyle, ...]
-    dynamic_arity: bool = False
+    auto_arity: bool = True
+    calc_symbol: str | None = None
 
 
 @dataclass(frozen=True)

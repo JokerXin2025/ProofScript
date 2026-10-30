@@ -6,13 +6,11 @@ open Lean Elab Command
 
 initialize pageBuild : Lean.Option Bool ← Lean.Option.register `proofScript.pageBuild {
   defValue := false
-  descr := "enable ProofScript page recording and export"
+  descr := "ProofScript's page-build mode"
 }
 
 /-- Version of the persistent module build-mode marker. -/
 def schemaModeVersion : Nat := 1
-
-def buildModeVersion : Nat := schemaModeVersion
 
 /-- Modules using page commands record the context that produced their Lean artifacts. -/
 structure ModuleBuildMode where

@@ -1,7 +1,7 @@
 import ProofScript.Info.Patch
 import ProofScript.Foundation.ModuleGraph
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
@@ -38,59 +38,37 @@ instance : FromJson InfoTarget where
     identity.validate
     return identity
 
-/-- The exclusive limit is a committed transaction count, not a source offset. -/
-inductive Boundary where
-  | endOfModule
-  | before (sequence : Nat)
-  deriving Inhabited, Repr, BEq, ToJson, FromJson
-
 structure Query where
   moduleName : Name
-  boundary : Boundary := .endOfModule
   deriving Inhabited, Repr, BEq, ToJson, FromJson
-
-def Query.includes (query : Query) (owner : Name) (sequence : Nat) : Bool :=
-  owner != query.moduleName || match query.boundary with
-    | .endOfModule => true
-    | .before limit => sequence < limit
 
 /-- Context selections are separate from renderable configuration fields. -/
 structure ContextBinding where
   key : String
   value : Json
-  source : Foundation.SourceLocation
+  source : SourceLocation
   deriving Inhabited, ToJson, FromJson
 
-/-- One atomic transaction. Initialization stores decisions made in the defining context. -/
+/-- One atomic metadata update. -/
 structure InfoEvent where
   schemaId : Name
   schemaVersion : String
   identity : InfoTarget
   owner : Name
   sequence : Nat
-  initialization : Option Patch := none
   assignments : Patch := #[]
   bindings : Array ContextBinding := #[]
-  source : Foundation.SourceLocation
+  source : SourceLocation
   deriving Inhabited, ToJson, FromJson
 
-/-- Imported payloads stay in the extension's module tables. The state is the local
-metadata clock; integrations can advance it without adding an Info event. -/
+/-- Imported payloads stay in the extension's module tables. The local count
+orders updates within each module. -/
 initialize infoEventExt : SimplePersistentEnvExtension InfoEvent Nat ←
   registerSimplePersistentEnvExtension {
-    name := `ProofScript.Info.events
+    name := `ProofScript.events
     addEntryFn := fun count _ => count + 1
     addImportedFn := fun _ => 0
   }
-
-/-- Reserve an ordered metadata transaction without manufacturing a renderable Info event.
-The state change rolls back with the Environment and need not persist: entries carry their
-own sequence, and every importing module starts its own clock at zero. -/
-def advanceBoundary (env : Environment) : Environment :=
-  infoEventExt.modifyState env (· + 1)
-
-def currentBoundary (env : Environment) : Boundary :=
-  .before (infoEventExt.getState env)
 
 def moduleEvents (env : Environment) (moduleName : Name) : Array InfoEvent :=
   if moduleName == env.mainModule then (infoEventExt.getEntries env).reverse.toArray
@@ -100,10 +78,9 @@ def moduleEvents (env : Environment) (moduleName : Name) : Array InfoEvent :=
 
 /-- Read only the requested module's closure, rather than the exporter's full environment. -/
 def queryEvents (env : Environment) (query : Query) : Except Diagnostic (Array InfoEvent) := do
-  let order ← (Foundation.ModuleGraph.ofEnvironment env).order query.moduleName
+  let order ← (ModuleGraph.ofEnvironment env).order query.moduleName
     |>.mapError fun message => { message }
-  return order.flatMap fun owner => (moduleEvents env owner).filter fun event =>
-    query.includes event.owner event.sequence
+  return order.flatMap (moduleEvents env)
 
 /-- Validation at the wire/commit boundary does not demand a complete record. -/
 def validatePatch (schema : InfoSchema Record) (patch : Patch) : Except Diagnostic Patch := do
@@ -133,23 +110,14 @@ def validatePatch (schema : InfoSchema Record) (patch : Patch) : Except Diagnost
 
 /-- Construct the entire new environment before the elaborator installs it once. -/
 def commitInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (target : Name ⊕ String)
-    (patch : Patch) (source : Foundation.SourceLocation)
-    (initialization : Option Patch := none) (bindings : Array ContextBinding := #[]) :
+    (patch : Patch) (source : SourceLocation)
+    (bindings : Array ContextBinding := #[]) :
     Except Diagnostic Environment := do
   let schema : InfoSchema Record := inferInstance
   schema.validateDefinition
   let patch ← validatePatch schema patch
-  let initialization ← initialization.mapM fun initial => do
-    let initial ← validatePatch schema initial
-    if initial.any (fun assignment => match assignment.operation with | .reset => true | _ => false) then
-      throw { message := "initialization must store explicit values, not reset operations" }
-    return initial
   let identity := { kind := spec.kind, target : InfoTarget }
   identity.validate |>.mapError fun message => { message, source := some source }
-  if initialization.isSome then
-    let incoming ← queryEvents env { moduleName := env.mainModule }
-    if incoming.any (·.identity == identity) then
-      throw { message := s!"{spec.kind} `{target}` is already initialized", source := some source }
   let mut keys : Array String := #[]
   for binding in bindings do
     if binding.key.isEmpty || keys.contains binding.key then
@@ -158,7 +126,7 @@ def commitInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) 
   let event : InfoEvent := {
     schemaId := schema.id, schemaVersion := schema.version, identity
     owner := env.mainModule, sequence := infoEventExt.getState env
-    initialization, assignments := patch, bindings, source }
+    assignments := patch, bindings, source }
   return infoEventExt.addEntry env event
 
-end ProofScript.Info
+end ProofScript

@@ -7,13 +7,12 @@ open Lean
 
 namespace ProofScript
 
-open Recording
 
 /-- Private box positions are converted to public structural paths only after assembly. -/
 structure BoxContractBinding where
   box : String
   index : Nat
-  binding : Output.StepBinding
+  binding : StepBinding
   deriving Inhabited
 
 /-- Internal, stable positions reserved for one step. Public recorders use RecordingStep. -/
@@ -27,15 +26,25 @@ structure RecordingSlot where
 structure PendingRecordingStrategy where
   slot : RecordingSlot
   childPrefix : String
-  labels : List String
+  labels : List Name
   deriving Inhabited
+
+/-! A strategy route retains the actual metavariable selected for each branch.
+    Branch labels are export names; they are never used to rediscover a goal. -/
+structure RecordingStrategyBranch where
+  label : Name
+  goal : MVarId
+
+structure RecordingStrategyRoute where
+  mainTag : String
+  branches : List RecordingStrategyBranch
 
 /-- Mutable data owned by a single proof recording. -/
 structure RecordingState where
-  boxes : Array (String × Array RecordedData) := #[]
-  nodes : Array ExprNode := #[]
+  statement : Option RecordedValue := none
+  boxes : Array (String × Array RecordedValue) := #[]
   boxTags : List String := []
-  strategyBranches : List (String × List String) := []
+  strategyBranches : List RecordingStrategyRoute := []
   pendingStrategies : List PendingRecordingStrategy := []
   openSteps : List RecordingSlot := []
   selectedContract : Option RecordingContract := none
@@ -68,14 +77,15 @@ private def modifyRecordingState {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   let state ← getRecordingState
   Lean.modifyEnv (recordingSessionExt.setState · (some (f state)))
 
-/-- Append one local graph to the current proof, relocating only typed
-    expression roots and child references. -/
-def importRecordingValue {m : Type → Type} [Monad m] [MonadEnv m] [MonadLiftT IO m]
-    (value : RecordedValue) : m RecordedData := do
-  let state ← getRecordingState
-  let (data, nodes) := value.importInto state.nodes
-  modifyRecordingState fun _ => { state with nodes }
-  return data
+def setRecordingStatement {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] (statement : RecordedValue) : m Unit :=
+  modifyRecordingState fun state => { state with statement := some statement }
+
+def requireRecordingStatement {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] : m RecordedValue := do
+  let some statement := (← getRecordingState).statement
+    | liftM (throw (IO.userError "ProofScript: missing reserved statement field; capture the initial theorem context before export") : IO RecordedValue)
+  return statement
 
 def selectedRecordingContract {m : Type → Type} [Monad m] [MonadEnv m]
     [MonadLiftT IO m] : m (Option RecordingContract) :=
@@ -116,31 +126,49 @@ def takeRecordingStrategy {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   return pending
 
 def beginStrategyBranches {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (mainTag : String) (remaining : List String) : m Unit := do
+    [MonadLiftT IO m] (mainTag : String) (branches : List RecordingStrategyBranch) : m Unit := do
   modifyRecordingState fun state =>
-    { state with strategyBranches := (mainTag, remaining) :: state.strategyBranches }
+    { state with strategyBranches := { mainTag, branches } :: state.strategyBranches }
 
 def hasStrategyBranches {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] : m Bool := do
   return !(← getRecordingState).strategyBranches.isEmpty
 
-/-- Pop the active branch and return its next label, if one remains. -/
-def nextStrategyBranch {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] : m (Option (String × String)) := do
+def strategyBranchForGoal {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] (goal : MVarId) : m (Option (String × Name)) := do
   let state ← getRecordingState
   match state.strategyBranches with
-  | [] => return none
-  | (mainTag, nodes) :: rest =>
-    match nodes with
-    | [] =>
-      modifyRecordingState fun _ => { state with strategyBranches := rest }
-      return none
-    | nextNode :: remaining =>
-      modifyRecordingState fun _ => { state with strategyBranches := (mainTag, remaining) :: rest }
-      return some (mainTag, nextNode)
+  | route :: _ =>
+      pure <| route.branches.find? (·.goal == goal) |>.map fun branch => (route.mainTag, branch.label)
+  | [] => pure none
+
+def activateStrategyBranch {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] (label : Name) : m Unit := do
+  let state ← getRecordingState
+  let some route := state.strategyBranches.head?
+    | liftM (throw (IO.userError "[ProofScript] no active strategy route") : IO Unit)
+  unless route.branches.any (·.label == label) do
+    return ← liftM (throw (IO.userError s!"[ProofScript] unknown strategy branch '{label}'") : IO Unit)
+  let tag := route.mainTag ++ "_" ++ label.toString
+  unless state.boxTags.headD "" == tag do
+    pushRecordingTag tag
+
+/-! Complete the active branch and either select the route's next target or
+    return to its parent. The caller resolves the next target by MVarId. -/
+def advanceStrategyCase {m : Type → Type} [Monad m] [MonadEnv m]
+    [MonadLiftT IO m] (next : Option (String × Name)) : m Unit := do
+  let state ← getRecordingState
+  let some route := state.strategyBranches.head?
+    | pure ()
+  let current := state.boxTags.headD ""
+  if current.startsWith (route.mainTag ++ "_") then
+    popRecordingTag
+  match next with
+  | some (mainTag, label) => pushRecordingTag (mainTag ++ "_" ++ label.toString)
+  | none => modifyRecordingState fun state => { state with strategyBranches := state.strategyBranches.drop 1 }
 
 def takeBoxWithContracts {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (box : String) : m (Array RecordedData × Array Output.StepBinding) := do
+    [MonadLiftT IO m] (box : String) : m (Array RecordedValue × Array StepBinding) := do
   let state ← getRecordingState
   match state.boxes.findIdx? (fun (b, _) => b == box) with
   | none => return (#[], #[])
@@ -153,12 +181,8 @@ def takeBoxWithContracts {m : Type → Type} [Monad m] [Lean.MonadEnv m]
       contractBindings := state.contractBindings.filter (·.box != box) }
     return (items, bindings)
 
-def takeBox {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (box : String) : m (Array RecordedData) :=
-  return (← takeBoxWithContracts box).1
-
 private def bindCurrentContract (state : RecordingState) (box : String) (index : Nat)
-    (children : Array Output.StepBinding := #[]) : RecordingState := Id.run do
+    (children : Array StepBinding := #[]) : RecordingState := Id.run do
   let mut bindings := state.contractBindings ++ children.map fun binding => { box := box, index := index, binding := binding }
   if let some contract := state.selectedContract then
     bindings := bindings.push { box, index, binding := { path := #[], contract } }
@@ -173,7 +197,7 @@ def ensureBox {m : Type → Type} [Monad m] [Lean.MonadEnv m]
 
 /-- Append one item to an existing box; never creates a box or modifies earlier items. -/
 def appendBoxItem {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (box : String) (item : RecordedData) (children : Array Output.StepBinding := #[]) : m Unit := do
+    [MonadLiftT IO m] (box : String) (item : RecordedValue) (children : Array StepBinding := #[]) : m Unit := do
   let state ← getRecordingState
   let some idx := state.boxes.findIdx? (fun (b, _) => b == box)
     | liftM (throw (IO.userError s!"[ProofScript] Box '{box}' has not been initialized.") : IO Unit)
@@ -190,7 +214,7 @@ def reserveRecordingSlot {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   let items := state.boxes[idx]!.2
   let slot : RecordingSlot := { token, box, recordIndex := items.size }
   modifyRecordingState fun state => bindCurrentContract { state with
-    boxes := state.boxes.set! idx (box, items.push (.object [("_ruleId", .plain (.str ruleId.toString))]))
+    boxes := state.boxes.set! idx (box, items.push (.object [("$ruleId", .plain (.str ruleId.toString))]))
     openSteps := slot :: state.openSteps } box items.size
   return slot
 
@@ -199,16 +223,16 @@ def recordingSlotIsOpen {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   return (← getRecordingState).openSteps.any (·.token == slot.token)
 
 def getRecordingSlotItem {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (slot : RecordingSlot) : m RecordedData := do
+    [MonadLiftT IO m] (slot : RecordingSlot) : m RecordedValue := do
   let state ← getRecordingState
   let some (_, items) := state.boxes.find? (fun (b, _) => b == slot.box)
-    | liftM (throw (IO.userError "[ProofScript] Recording step has no box.") : IO RecordedData)
+    | liftM (throw (IO.userError "[ProofScript] Recording step has no box.") : IO RecordedValue)
   let some item := items[slot.recordIndex]?
-    | liftM (throw (IO.userError "[ProofScript] Recording step has no entry.") : IO RecordedData)
+    | liftM (throw (IO.userError "[ProofScript] Recording step has no entry.") : IO RecordedValue)
   return item
 
 def setRecordingSlotItem {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (slot : RecordingSlot) (item : RecordedData) : m Unit := do
+    [MonadLiftT IO m] (slot : RecordingSlot) (item : RecordedValue) : m Unit := do
   let state ← getRecordingState
   let some idx := state.boxes.findIdx? (fun (b, _) => b == slot.box)
     | liftM (throw (IO.userError "[ProofScript] Recording step has no box.") : IO Unit)
@@ -219,21 +243,45 @@ def setRecordingSlotItem {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   modifyRecordingState fun state =>
     { state with boxes := state.boxes.set! idx (slot.box, items.set! index item) }
 
+private def bindingUnderField (binding : BoxContractBinding) (field : String) : Bool :=
+  match binding.binding.path[0]? with
+  | some (JsonPath.Part.key name) => name == field
+  | _ => false
+
+/-- Replace fields in update order. Replacing a field also removes contract
+    bindings below that field, since the old nested value no longer exists. The
+    root invocation binding remains attached to the step itself. -/
 def mergeRecordingSlotFields {m : Type → Type} [Monad m] [Lean.MonadEnv m]
-    [MonadLiftT IO m] (slot : RecordingSlot) (updates : List (String × RecordedData)) : m Unit := do
-  let .object fields ← getRecordingSlotItem slot
+    [MonadLiftT IO m] (slot : RecordingSlot) (updates : List (String × RecordedValue)) : m Unit := do
+  let state ← getRecordingState
+  let some idx := state.boxes.findIdx? (fun (b, _) => b == slot.box)
+    | liftM (throw (IO.userError "[ProofScript] Recording step has no box.") : IO Unit)
+  let (_, items) := state.boxes[idx]!
+  let some (.object fields) := items[slot.recordIndex]?
     | liftM (throw (IO.userError "[ProofScript] Recording step is not an object.") : IO Unit)
   let fields := updates.foldl (init := fields) fun fields (key, value) =>
     if fields.any (·.1 == key) then
       fields.map fun (existing, previous) => (existing, if existing == key then value else previous)
     else fields ++ [(key, value)]
-  setRecordingSlotItem slot (.object fields)
+  let updateKeys := updates.map Prod.fst
+  let bindings := state.contractBindings.filter fun binding =>
+    !(binding.box == slot.box && binding.index == slot.recordIndex &&
+      updateKeys.any (bindingUnderField binding))
+  modifyRecordingState fun state =>
+    { state with
+      boxes := state.boxes.set! idx (slot.box, items.set! slot.recordIndex (.object fields))
+      contractBindings := bindings }
 
 def attachRecordingSlotContracts {m : Type → Type} [Monad m] [MonadEnv m]
-    [MonadLiftT IO m] (slot : RecordingSlot) (children : Array Output.StepBinding) : m Unit :=
-  modifyRecordingState fun state => { state with
-    contractBindings := state.contractBindings ++ children.map fun binding =>
-      { box := slot.box, index := slot.recordIndex, binding } }
+    [MonadLiftT IO m] (slot : RecordingSlot) (children : Array StepBinding) : m Unit :=
+  modifyRecordingState fun state =>
+    let paths := children.map (·.path)
+    { state with
+      contractBindings :=
+        (state.contractBindings.filter fun existing =>
+          !(existing.box == slot.box && existing.index == slot.recordIndex &&
+            paths.contains existing.binding.path)) ++
+        children.map fun binding => { box := slot.box, index := slot.recordIndex, binding } }
 
 def closeRecordingSlot {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] (slot : RecordingSlot) : m Unit := do
@@ -242,24 +290,24 @@ def closeRecordingSlot {m : Type → Type} [Monad m] [Lean.MonadEnv m]
 
 /-- Actual invocation positions come only from structured proof data. Plain
     metadata cannot manufacture a child invocation or a binding obligation. -/
-private partial def structuredStepPaths (steps : Array RecordedData) (parent : JsonPath) :
+private partial def structuredStepPaths (steps : Array RecordedValue) (parent : JsonPath) :
     Array JsonPath := Id.run do
   let mut paths := #[]
   for index in [:steps.size] do
     let .object fields := steps[index]! | continue
     let path := parent.push (.index index)
     paths := paths.push path
-    if let some (.array branches) := fields.lookup "branches" then
+    if let some (.array branches) := fields.lookup "$branches" then
       for branchIndex in [:branches.size] do
         let .object branch := branches[branchIndex]! | continue
         if let some (.array children) := branch.lookup "proof" then
           paths := paths ++ structuredStepPaths children
-            (path ++ #[.key "branches", .index branchIndex, .key "proof"])
+            (path ++ #[.key "$branches", .index branchIndex, .key "proof"])
     if let some (.array children) := fields.lookup "proof" then
       -- A typed proof field becomes an embedded proof only when a structured
       -- child declares a rule; arrays of ordinary metadata remain opaque.
       let containsStep := children.any fun child => match child with
-        | .object fields => fields.any (·.1 == "_ruleId")
+        | .object fields => fields.any (·.1 == "$ruleId")
         | _ => false
       if containsStep then
         paths := paths ++ structuredStepPaths children (path.push (.key "proof"))
@@ -269,7 +317,7 @@ private partial def structuredStepPaths (steps : Array RecordedData) (parent : J
     data needed by the file writer; a missing or empty root is an error. -/
 def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] (boxName : String) (code : String)
-    (owner : Name) (artifactKey : Option Output.ArtifactKey := none) (path : String := "") : m Json := do
+    (owner : Name) (artifactKey : Option ArtifactKey := none) (path : String := "") : m Json := do
   unless (← getRecordingState).openSteps.isEmpty do
     return ← liftM (throw (IO.userError "[ProofScript] Cannot export an unfinished recording step.") : IO Json)
   unless (← getRecordingState).pendingStrategies.isEmpty &&
@@ -281,33 +329,36 @@ def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   if proof.isEmpty then
     return ← liftM (throw (IO.userError s!"[ProofScript] Box '{boxName}' is empty.") : IO Json)
   let state ← getRecordingState
-  let expressionRoots := proof.zipIdx.foldl (init := #[]) fun paths (data, index) =>
-    paths ++ data.expressionRoots.map (fun path => #[.key "proof", .index index] ++ path)
   let stepPaths := structuredStepPaths proof #[.key "proof"]
-  let proof := proof.map RecordedData.toJson
-  let expressions := encodeExpressionTable state.nodes
-  let document := json% {
-    schemaVersion: $recordingProtocolVersion,
-    module: $(owner.toString),
-    code: $code,
-    expressions: $expressions,
-    expressionRoots: $expressionRoots,
-    proof: $proof
-  }
+  let statement ← requireRecordingStatement
+  let document := encodeOwner <| [
+      ("schemaVersion", .plain (toJson recordingProtocolVersion)),
+      ("module", .plain (toJson owner.toString)),
+      ("code", .plain (toJson code)),
+      ("proof", .array proof), ("statement", statement)]
+  let proof ← match document.getObjValAs? (Array Json) "proof" with
+    | .ok proof => pure proof
+    | .error message => liftM (throw (IO.userError message) : IO (Array Json))
+  let expressions ← match document.getObjVal? "expressions" with
+    | .ok expressions => pure expressions
+    | .error message => liftM (throw (IO.userError message) : IO Json)
+  let expressionRoots ← match document.getObjValAs? (Array JsonPath) "expressionRoots" with
+    | .ok roots => pure roots
+    | .error message => liftM (throw (IO.userError message) : IO (Array JsonPath))
   if state.contractBindings.any (·.box != boxName) then
     return ← liftM (throw (IO.userError "[ProofScript] Cannot export unassembled child recording contracts.") : IO Json)
   let bindings := (state.contractBindings.filter (·.box == boxName)).map fun entry =>
     { entry.binding with path := #[.key "proof", .index entry.index] ++ entry.binding.path }
-  if let .error message := Output.validateStepBindings proof bindings stepPaths then
+  if let .error message := validateStepBindings proof bindings stepPaths then
     return ← liftM (throw (IO.userError message) : IO Json)
-  let dependencies ← match Output.recordedDependencies (← getEnv) expressions document bindings expressionRoots with
+  let dependencies ← match recordedDependencies (← getEnv) expressions document bindings expressionRoots with
     | .ok dependencies => pure dependencies
-    | .error message => liftM (throw (IO.userError message) : IO (Array Output.RenderDependency))
+    | .error message => liftM (throw (IO.userError message) : IO (Array RenderDependency))
   let key := artifactKey.getD { owner, kind := .proof, name := boxName.toName }
-  let artifact : Output.Artifact := {
+  let artifact : Artifact := {
     key, path, dependencies, bindings, contentDigest := document.sha256
     declaration := if (← getEnv).contains key.name then some key.name else none }
-  match Output.registerArtifact (← getEnv) artifact with
+  match registerProofArtifact (← getEnv) artifact with
   | .ok env => setEnv env
   | .error message => return ← liftM (throw (IO.userError message) : IO Json)
   return document
@@ -318,17 +369,11 @@ def exportProofToFile (fileName : System.FilePath) (proof : Json) : CoreM Unit :
     IO.FS.createDirAll parent
   IO.FS.writeFile fileName proof.pretty
 
-/-- Export a proof document containing only its complete source code. -/
-def codeOnlyProofJson (owner : Name) (code : String) := json% {
-  schemaVersion: $recordingProtocolVersion,
-  module: $(owner.toString),
-  code: $code
-}
-
-def exportCodeOnlyProofToFile (fileName : System.FilePath) (code : String) : CoreM Unit := do
-  if let some parent := fileName.parent then
-    IO.FS.createDirAll parent
-  let proofJson := codeOnlyProofJson (← getEnv).mainModule code
-  IO.FS.writeFile fileName proofJson.pretty
+/-- Native tactic proofs retain their statement graph but have no recorded steps. -/
+def codeOnlyProofJson (owner : Name) (code : String) (statement : RecordedValue) :=
+  encodeOwner [
+    ("schemaVersion", .plain (toJson recordingProtocolVersion)),
+    ("module", .plain (toJson owner.toString)),
+    ("code", .plain (toJson code)), ("statement", statement)]
 
 end ProofScript

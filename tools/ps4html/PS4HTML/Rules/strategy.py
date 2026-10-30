@@ -3,6 +3,7 @@
 import html
 
 from PS4HTML.engine import render_details, render_step, render_strategy
+from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD
 from PS4HTML.utils import to_roman
 
 
@@ -22,17 +23,17 @@ LAYOUTS = {
 }
 
 STRATEGIES = {
-    "ProofScript.Script.Basic.split_and!": ("decompose", "递归拆分合取", "To split the conjunction recursively,"),
-    "ProofScript.Script.Basic.cases_by!": ("cases", "逐项分类讨论", "Analyzing each case,"),
-    "ProofScript.Script.Basic.cases_on": ("cases", "分类讨论", "By cases,"),
-    "ProofScript.Script.Basic.constructor": ("constructor", "应用构造器", "Apply the constructor"),
-    "ProofScript.Script.Basic.constructor!": ("constructor", "应用指定构造器", "Apply the named constructor"),
+    "ProofScript.Builtin.Script.split_and!": ("decompose", "递归拆分合取", "To split the conjunction recursively,"),
+    "ProofScript.Builtin.Script.cases_by!": ("cases", "逐项分类讨论", "Analyzing each case,"),
+    "ProofScript.Builtin.Script.cases_on": ("cases", "分类讨论", "By cases,"),
+    "ProofScript.Builtin.Script.constructor": ("constructor", "应用构造器", "Apply the constructor"),
+    "ProofScript.Builtin.Script.constructor!": ("constructor", "应用指定构造器", "Apply the named constructor"),
 }
 
 
 def rule_strategy(step, proof, *, language, path=(), index=None, style=""):
-    config = STRATEGIES.get(step["_ruleId"])
-    branch_list = step["branches"]
+    config = STRATEGIES.get(step[RULE_ID_FIELD])
+    branch_list = step[BRANCHES_FIELD]
     if not branch_list:
         raise ValueError("Dynamic strategy has no branches")
     lang = "zh" if language == "zh" else "en"
@@ -47,5 +48,5 @@ def rule_strategy(step, proof, *, language, path=(), index=None, style=""):
         label = (f"{case_label} {to_roman(position)}" + ("," if lang == "en" else "")) if config else branch["name"]
         children.append(render_details(True, html.escape(label), "",
             proof.render_branch(branch["proof"], position - 1, path + (f"{index}:{branch['name']}",))))
-    title = config[1 if lang == "zh" else 2] if config else step["_ruleId"].rsplit(".", 1)[-1]
+    title = config[1 if lang == "zh" else 2] if config else step[RULE_ID_FIELD].rsplit(".", 1)[-1]
     return render_strategy("", html.escape(title), "\n".join(children), style=style)

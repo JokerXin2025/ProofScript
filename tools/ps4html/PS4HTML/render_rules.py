@@ -12,10 +12,8 @@ from PS4HTML.Rules.admit import rule_admit
 from PS4HTML.Rules.embed import rule_embed
 from PS4HTML.Rules.strategy import rule_strategy
 from PS4HTML.Rules.unrecorded import rule_unrecorded
-from PS4HTML.recording import (PROOF_SCHEMA_VERSION, validate_contract,
-                               validate_fields, validate_slots, slot_value,
-                               slot_schema, validate_value)
-from PS4HTML.schema import Expression
+from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD, branches, rule_id, slot_value
+from PS4HTML.schema import EXPRESSION_ID, Expression
 
 
 SPECIAL_RENDERERS = {
@@ -34,7 +32,7 @@ def template_language(entry):
     raise ValueError("Invalid template entry")
 
 
-def validate_template(entries, strategy):
+def validate_template(entries, kind):
     if not isinstance(entries, list) or not entries:
         raise ValueError("Invalid template")
     languages = []
@@ -43,6 +41,7 @@ def validate_template(entries, strategy):
         if not language or language in languages:
             raise ValueError("Invalid or duplicate template language")
         languages.append(language)
+        strategy = kind == "strategy"
         allowed = {"lang", "tag", "inline", "introducer", "cases"} if strategy else {"lang", "tag", "content"}
         required = {"lang", "tag", "cases"} if strategy else {"lang", "tag", "content"}
         if set(entry) - allowed or not required <= set(entry) or not isinstance(entry["tag"], str):
@@ -83,34 +82,31 @@ RENDERER_FIELDS = {
     "media": ("metadata", "svg", "source"), "diagram": ("code",),
     "remark": ("text",), "admit": ("reason",),
     "embed": ("theorem", "args", "argKinds", "proof", "h", "type"),
-    "strategy": ("branches",),
+    "strategy": (BRANCHES_FIELD,),
     "unrecorded": ("name",),
 }
 
 
-def template_texts(entries):
-    for entry in entries:
-        yield entry["tag"]
-        if "content" in entry:
-            yield entry["content"]
-        if "introducer" in entry:
-            yield from entry["introducer"].values()
-        for case in entry.get("cases", []):
-            yield case["tag"]
-            yield case["title"]
-            if "introducer" in case:
-                yield from case["introducer"].values()
-
-
 def validate_record(rule, step, *, resolver=None, path=None):
-    """Check facts supplied by Lean; renderer implementations need not infer missing fields."""
+    """Check the actual data needed by this renderer or template."""
     if not isinstance(step, dict):
         raise ValueError("Recorded step must be an object")
-    validate_fields(step, rule.get("recordedFields"), resolver=resolver, path=path)
+
+    def expression(value, *suffix):
+        if not isinstance(value, Expression) and not (
+                isinstance(value, dict) and set(value) == {"$ref"} and
+                isinstance(value["$ref"], str) and EXPRESSION_ID.fullmatch(value["$ref"])):
+            raise ValueError("Renderer expression must be an Expression or an exact expression reference")
+        if resolver is not None:
+            owner = resolver.path_of(step, path)
+            if owner is None:
+                raise ValueError("Renderer expression validation requires an owner path")
+            resolver.require_root(owner + suffix, value)
+
     fields = rule["fields"]
     if fields.get("display") is False:
-        if rule["strategy"]:
-            branches = step.get("branches")
+        if rule["kind"] == "strategy":
+            branches = step.get(BRANCHES_FIELD)
             if not isinstance(branches, list) or not branches or any(
                     not isinstance(branch, dict) or not isinstance(branch.get("name"), str) or
                     not isinstance(branch.get("proof"), list) for branch in branches):
@@ -129,6 +125,12 @@ def validate_record(rule, step, *, resolver=None, path=None):
             required = {"rhs", "proof", "relation"} if renderer == "calc" else {"rhs", "proof"}
             if not isinstance(chain, list) or not chain or any(not isinstance(link, dict) or not required <= link.keys() for link in chain):
                 raise ValueError(f"Invalid recorded {renderer} chain")
+            expression(step["init"], "init")
+            for index, link in enumerate(chain):
+                for key in required:
+                    if key == "proof" and link[key] == {"kind": "hole"}:
+                        continue
+                    expression(link[key], "chain", index, key)
         elif renderer == "embed":
             if not isinstance(step["theorem"], str) or not isinstance(step["args"], list) or \
                     not isinstance(step["argKinds"], list) or len(step["args"]) != len(step["argKinds"]) or \
@@ -137,6 +139,13 @@ def validate_record(rule, step, *, resolver=None, path=None):
             value = step["proof"]
             if not isinstance(value, (list, dict)) or (isinstance(value, dict) and "$resource" in value):
                 raise ValueError("Embed proof must be recorded inline or as an expression")
+            expression(step["type"], "type")
+            for index, arg in enumerate(step["args"]):
+                expression(arg, "args", index)
+            if step["h"] is not None:
+                expression(step["h"], "h")
+            if not isinstance(value, list):
+                expression(value, "proof")
         elif renderer == "media":
             if not isinstance(step["metadata"], dict) or not isinstance(step["source"], str) or \
                     not isinstance(step["svg"], (dict, str)):
@@ -156,8 +165,8 @@ def validate_record(rule, step, *, resolver=None, path=None):
             for text in texts:
                 for name in SLOT.findall(text):
                     slot_value(step, name)
-    if rule["strategy"]:
-        branches = step.get("branches")
+    if rule["kind"] == "strategy":
+        branches = step.get(BRANCHES_FIELD)
         if not isinstance(branches, list) or not branches or any(not isinstance(branch, dict) or
                 not isinstance(branch.get("name"), str) or not isinstance(branch.get("proof"), list) for branch in branches):
             raise ValueError("Invalid recorded strategy branches")
@@ -183,12 +192,11 @@ def validate_rules(document, module, imports=None):
         raise ValueError(f"Missing effective rendering rules for {module}")
     result = {}
     for entry in rules:
-        if not isinstance(entry, dict) or not isinstance(entry.get("ruleId"), str) or not isinstance(entry.get("strategy"), bool) or not isinstance(entry.get("fields"), dict):
+        if not isinstance(entry, dict) or not isinstance(entry.get("ruleId"), str) or entry.get("kind") not in ("tactic", "strategy", "metadata") or not isinstance(entry.get("fields"), dict):
             raise ValueError(f"Invalid rule entry for {module}")
         rule_id, fields = entry["ruleId"], entry["fields"]
-        if "recordedFields" not in entry:
-            raise ValueError(f"Missing recordedFields contract for {rule_id}")
-        validate_contract(entry.get("recordedFields"))
+        if "recordedFields" in entry:
+            raise ValueError(f"Rule output declarations are unsupported for {rule_id}; rebuild with Lean")
         if rule_id in result:
             raise ValueError(f"Duplicate rule {rule_id} in {module}")
         if set(fields) - {"renderer", "template", "display", "color"}:
@@ -206,8 +214,7 @@ def validate_rules(document, module, imports=None):
         if fields.get("renderer", "none") == "none" and "template" not in fields:
             raise ValueError(f"Incomplete template for {rule_id}")
         if "template" in fields:
-            validate_template(fields["template"], entry["strategy"])
-            validate_slots(template_texts(fields["template"]), entry.get("recordedFields"))
+            validate_template(fields["template"], entry["kind"])
         result[rule_id] = entry
     return result
 
@@ -216,35 +223,21 @@ def _language(entries, language):
     return next((entry for entry in entries if template_language(entry) == language), entries[0])
 
 
-def _slot(value, proof, schema=None):
-    # Resolution is manifest-based, including typed leaves deliberately composed
-    # inside schema.json. An ordinary {kind: ...} or {$ref: ...} stays data.
+def _slot(value, proof):
+    # Only the expression root manifest grants expression semantics to a value.
     value = proof.resolve(value)
     if isinstance(value, Expression):
         return proof.tex(value)
-    if schema and schema["kind"] == "optional":
-        return _slot(value, proof, schema["element"])
-    if schema and schema["kind"] == "union":
-        for option in schema["options"]:
-            try:
-                validate_value(value, option, "template slot")
-                return _slot(value, proof, option)
-            except ValueError:
-                continue
     if isinstance(value, list):
-        element = schema["element"] if schema and schema["kind"] == "array" else None
-        return ", ".join(_slot(item, proof, element) for item in value)
+        return ", ".join(_slot(item, proof) for item in value)
     if isinstance(value, str):
         return html.escape(value)
     if isinstance(value, (int, float, bool)):
         return html.escape(str(value))
     if value is None:
         return "—"
-    if isinstance(value, dict) and schema and schema["kind"] == "expression":
-        raise ValueError("Rendering expression requires a registered expression occurrence")
     if isinstance(value, dict):
-        children = {field["name"]: field["schema"] for field in (schema or {}).get("fields", [])}
-        return ", ".join(f"{html.escape(key)}: {_slot(item, proof, children.get(key))}"
+        return ", ".join(f"{html.escape(key)}: {_slot(item, proof)}"
                          for key, item in value.items())
     raise ValueError("Unsupported recorded template value")
 
@@ -256,9 +249,7 @@ def _template(text, step, proof):
         result.append(html.escape(text[last:match.start()]))
         key = match.group(1)
         value = slot_value(step, key)
-        rule = proof.current_rule or proof.rules.get(step.get("_ruleId"), {})
-        contract = rule.get("recordedFields")
-        result.append(_slot(value, proof, slot_schema(contract, key)))
+        result.append(_slot(value, proof))
         last = match.end()
     result.append(html.escape(text[last:]))
     return "".join(result)
@@ -308,10 +299,10 @@ def render_rule(rule, step, proof, path, index):
     entry = _language(fields["template"], proof.language)
     title = _template(entry["tag"], step, proof)
     style = _rule_style(fields)
-    if not rule["strategy"]:
+    if rule["kind"] != "strategy":
         content = _template(entry["content"], step, proof)
         return render_step(title, content, style=style)
-    branches = {branch["name"]: (index, branch["proof"]) for index, branch in enumerate(step["branches"])}
+    branches = {branch["name"]: (index, branch["proof"]) for index, branch in enumerate(step[BRANCHES_FIELD])}
     children = [_introducer(entry.get("introducer"), step, proof)]
     for case in entry["cases"]:
         name = case["name"]

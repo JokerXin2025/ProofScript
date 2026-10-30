@@ -3,7 +3,7 @@
 > Historical prototype. Its `build.sh` refers to the removed standalone
 > `ProofScript/Computation/Json.lean` layout and is not the supported current build entry.
 > Use `lake build MyLibrary:ps4html` and the [current computation quickstart](../../../docs/Embedded-Computation-Quickstart-zh.md).
-> The notes below record the original experiment; `build_lean_runtime.sh` remains the runtime preparation helper.
+> The old Node smoke/benchmark script has been removed. The notes below record the original experiment; `build_lean_runtime.sh` remains the runtime preparation helper.
 
 This directory contains the Phase 1 runtime probe and Phase 2 typed JSON ABI
 probe. It deliberately does not use the page computation component and does not
@@ -44,7 +44,6 @@ source "$HOME/Developer/emsdk/emsdk_env.sh"
 ./runtime/wasm/spike/build_lean_runtime.sh
 PROOF_SCRIPT_LEAN_WASM_PREFIX="$HOME/Developer/lean4-wasm-4.32.0/build/proofscript-emscripten" \
   ./runtime/wasm/spike/build.sh
-node runtime/wasm/spike/node_smoke_test.mjs
 ```
 
 If libuv cannot be downloaded during the runtime build, an existing v1.48.0
@@ -60,7 +59,6 @@ needed:
 
 ```sh
 ./runtime/wasm/spike/build.sh
-node runtime/wasm/spike/node_smoke_test.mjs
 ```
 
 The build always produces `build/Spike.c` and `build/build-report.json`. If `emcc`

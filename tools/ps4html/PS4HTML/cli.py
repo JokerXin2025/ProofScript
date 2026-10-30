@@ -2,7 +2,7 @@ import argparse
 from pathlib import Path
 
 from PS4HTML.clean import clean
-from PS4HTML.make import make, build_library
+from PS4HTML.make import make, build_library, build_module
 from PS4HTML.project import PS4HTMLError
 from PS4HTML.serve import serve
 
@@ -20,6 +20,13 @@ def main():
     library.add_argument("modules_and_sources", nargs="+")
     library.set_defaults(func=lambda args: build_library(args.package, args.library, args.modules_and_sources,
                                                        build_dir=args.build_dir))
+    module = commands.add_parser("_build-module", help="Internal Lake module facet entry point")
+    module.add_argument("package")
+    module.add_argument("module")
+    module.add_argument("--build-dir", type=Path, required=True)
+    module.add_argument("source")
+    module.set_defaults(func=lambda args: build_module(args.package, args.module, args.source,
+                                                     build_dir=args.build_dir))
     commands.add_parser("clean").set_defaults(func=lambda args: clean(True))
     preview = commands.add_parser("serve", help="Serve .PS4HTML/build with Wasm headers")
     preview.add_argument("target", nargs="?", default=".")

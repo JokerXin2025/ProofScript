@@ -1,118 +1,88 @@
 import ProofScript.Script.Recording.Strategy
-import ProofScript.Script.Recording.Conversion
+import ProofScript.Script.Recording.Parameter
+
+open Lean Elab Tactic
+
 
 /-!
 Recorder blocks provide a lexical scope for ordinary `TacticM` code:
 
 ```lean
-recording_step do
-  capture_params #[goalParam "goal_before"]
-  record_value "label" "example"
-  execute_recorded
-  capture_params #[goalParam "goal_after"]
+script_recorder myTactic => do
+  record_goal "$goal_before"
+  record_param "h" h
+  record_value "name" "my_tctic"
+  execute
+  record_goal "$goal_after"
 ```
 
-`recording_strategy nodes (continuation := some 1) do ...` additionally prepares
-branch recording destinations after its body succeeds. The continuation argument
-is optional. Neither block adds snapshots or executes a tactic implicitly.
+For a strategy registration, the same `script_recorder myTactic => do ...`
+body automatically prepares branch recording destinations after it succeeds.
+The continuation is obtained from the registered declaration.
 
 The statements are term/do syntax for recorder definitions, not native tactics.
-Helpers taking `[RecorderContext]` use the scope at their call site; an action
+Helpers taking `[RecordingStep]` use the scope at their call site; an action
 constructed earlier retains the context it was constructed with.
+
+`script_recorder` uses the registration's `strategy` flag to insert the
+appropriate recording block automatically for a plain `do` body.
 -/
 
-namespace ProofScript.Recording
+namespace ProofScript
 
-open Lean Elab Tactic
+private def recordValue {α : Type} [step : RecordingStep] [RecordValue α]
+    (field : String) (value : α) (context : RecordContext := none)
+    : TacticM Unit := withRollback do
+  step.ensureOpen
+  let recorded ← recordValueFromContext field value context
+  step.recordValue field recorded
 
-/-- Strategy routing information, interpreted against the goals at capture or completion time. -/
-structure StrategySpec where
-  nodes : List String
-  continuationIndex : Option Nat := none
+private def recordGoal (target : Option MVarId := none) : TacticM RecordedValue := do
+  match target.or (← getGoals).head? with
+  | none => return .plain .null
+  | some goal => goal.withContext <| recordExpression (← goal.getType)
 
-/-- A lexical recorder scope. Primitives use a local instance supplied by a recording block.
-    Reusable helpers should take `[RecorderContext]` at their call site. -/
-class RecorderContext where
-  step : RecordingStep
-  strategy : Option StrategySpec := none
+/-- Record the current value of a script parameter in a named goal. -/
+macro "record_param "
+    field:term:arg
+    value:term:arg
+    atomic("(" &"goal" " := ") goal:term ")"
+: doElem => `(doElem| (open scoped ProofScript.ParamRecorder in
+  recordValue $field $value (some (← resolveGoal! (← getGoals) $goal))
+))
 
-/-- Open one recording destination without adding snapshots or executing the tactic. -/
-def withStepRecorder (body : RecorderContext → TacticM α) : TacticM α :=
-  withMainContext <| withRecordingStep fun step => body { step }
-
-/-- Prepare strategy branches after a successful body, before closing its recording destination.
-    An early return from the body still prepares branches; an exception rolls back the block. -/
-def withStrategyRecorder (spec : StrategySpec) (body : RecorderContext → TacticM α) :
-    TacticM α :=
-  withMainContext <| withRecordingStep fun step => do
-    let result ← body { step, strategy := some spec }
-    step.prepareBranches (← resolveStrategyContexts spec.nodes spec.continuationIndex)
-    return result
-
-private def captureInContext (context : RecorderContext) (parameter : ParamCapture) :
-    CaptureM RecordedData := do
-  if parameter.context == .main then
-    return ← parameter.capture
-  let some spec := context.strategy
-    | throwError "recording context {repr parameter.context} has no goal"
-  let contexts ← resolveStrategyContexts spec.nodes spec.continuationIndex
-  let some goal ← contexts.goal parameter.context
-    | throwError "recording context {repr parameter.context} has no goal"
-  withCaptureGoal (some goal) parameter.capture
-
-/-- Capture parameters now, resolving their selectors inside each parameter's failure boundary.
-    The batch is atomic even when its caller catches an error. -/
-def captureParams [context : RecorderContext] (parameters : Array ParamCapture) : TacticM Unit :=
-  context.step.captureParameters parameters (captureInContext context)
-
-/-- Record a typed value through isolated conversion and the normal reference-aware commit path. -/
-def recordValue [context : RecorderContext] [ToRecordedValue α]
-    (field : String) (value : α) (collectReferences : Bool := true) : TacticM Unit :=
-  context.step.captureField field (ToRecordedValue.capture value) { collectReferences }
-
-/-- Explicit display opt-in for typed values; ordinary `recordValue` stays unchanged. -/
-def recordValueWithDisplay [context : RecorderContext] [ToRecordedValue α]
-    (field : String) (value : α) (collectReferences : Bool := true)
-    (source : Option Syntax := none) : TacticM Unit :=
-  context.step.captureFieldWithDisplay field (ToRecordedValue.capture value)
-    { collectReferences } source
-
-/-- Commit a previously paired capture without querying its expired context. -/
-def recordCapturedWithDisplay [context : RecorderContext] (field : String)
-    (captured : RecordedValue) (collectReferences : Bool := true) : TacticM Unit :=
-  context.step.recordCapturedWithDisplay field captured collectReferences
-
-/-- Execute this invocation's selected original tactic. Recording blocks never execute it implicitly. -/
-def execute [RecorderContext] : TacticM Unit := executeRecordedStep
-
-macro "recording_step " "do " body:doSeq : term => `(term|
-  withStepRecorder fun context => do
-    letI : RecorderContext := context
-    do $body:doSeq
-)
-
-macro "recording_strategy " nodes:term:max " do " body:doSeq : term => `(term|
-  withStrategyRecorder { nodes := $nodes } fun context => do
-    letI : RecorderContext := context
-    do $body:doSeq
-)
-
-macro "recording_strategy " nodes:term:max " (" &"continuation" " := "
-    continuation:term ")" " do " body:doSeq : term => `(term|
-  withStrategyRecorder { nodes := $nodes, continuationIndex := $continuation }
-    fun context => do
-      letI : RecorderContext := context
-      do $body:doSeq
-)
-
-macro "capture_params " parameters:term : doElem => `(doElem|
-  captureParams $parameters
-)
-
-macro "record_value " field:term:arg value:term:arg : doElem => `(doElem|
+/-- Record the current value of a script parameter in the main context. -/
+macro "record_param "
+    field:term:arg
+    value:term:arg
+: doElem => `(doElem| (open scoped ProofScript.ParamRecorder in
   recordValue $field $value
-)
+))
 
-macro "execute_recorded" : doElem => `(doElem| execute)
+/-- Record a static value. -/
+macro "record_value "
+    field:term:arg
+    value:term:arg
+: doElem => `(doElem| (open scoped ProofScript.ValueRecorder in
+  recordValue $field $value
+))
 
-end ProofScript.Recording
+/-- Record a named goal. -/
+macro "record_goal "
+    field:term:arg
+    atomic("(" &"goal" " := ") goal:term ")"
+: doElem => `(doElem| (open scoped ProofScript.ValueRecorder in
+  recordValue $field (← recordGoal (some (← resolveGoal! (← getGoals) $goal)))
+))
+
+/-- Record the main goal. No remaining goal is represented by `null`. -/
+macro "record_goal "
+    field:term:arg
+: doElem => `(doElem| (open scoped ProofScript.ValueRecorder in
+  recordValue $field (← recordGoal)
+))
+
+/-- Execute the predecessor implementation selected for the current recorder. -/
+macro "execute" : doElem => `(doElem| executeRecorderPredecessor)
+
+end ProofScript

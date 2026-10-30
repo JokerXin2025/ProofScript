@@ -30,14 +30,14 @@ def computeFibonacci
     sequence := (Array.range (request.n + 1)).map fibonacci
   }
 
-@text r#"
+#page text r#"
 = Lean/Wasm Fibonacci <interactive-fibonacci>
 
 移动滑杆会调用编译为 WebAssembly 的 Lean 函数。返回结果包含当前 Fibonacci 数和从
 $F(0)$ 到 $F(n)$ 的完整序列；计算过程并非由前端 JavaScript 重写。
 "#
 
-@computation {
+#page computation {
   metadata := (title := "Lean/Wasm Fibonacci calculator", label := "fibonacci-calculator"),
   renderer := "proofscript/fibonacci-calculator-v1",
   function := computeFibonacci,
@@ -55,4 +55,4 @@ $F(0)$ 到 $F(n)$ 的完整序列；计算过程并非由前端 JavaScript 重�
   }
   "#}
 
-page_end
+#page end

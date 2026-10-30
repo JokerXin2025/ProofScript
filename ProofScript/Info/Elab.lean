@@ -4,7 +4,7 @@ import ProofScript.Info.State
 open Lean Elab Command
 
 
-namespace ProofScript.Info
+namespace ProofScript
 
 /-- Read only the object syntax needed by editor annotations. Invalid metadata remains
 optional in verification builds, while cancellation and resource failures still propagate.
@@ -64,14 +64,14 @@ def parsePatch (schema : InfoSchema Record) (fields : Array InputField) : Comman
           assigned := assigned.push key
           let operation ← if isReset entry.value then pure UpdateOperation.reset
             else UpdateOperation.set <$> parseExtraValue entry.value
-          result := result.push { key, operation, source := Foundation.SourceLocation.ofSyntax file entry.ref }
+          result := result.push { key, operation, source := SourceLocation.ofSyntax file entry.ref }
       else
         let key := FieldKey.builtin field.name
         if assigned.contains key then throwErrorAt input.ref m!"duplicate field `{field.name}`"
         assigned := assigned.push key
         let operation ← if isReset input.value then pure UpdateOperation.reset
           else UpdateOperation.set <$> field.parse input.value
-        result := result.push { key, operation, source := Foundation.SourceLocation.ofSyntax file input.ref }
+        result := result.push { key, operation, source := SourceLocation.ofSyntax file input.ref }
     else
       unless schema.extraField?.isSome do throwErrorAt input.ref m!"unknown field `{input.key}`"
       let key := FieldKey.extra input.key
@@ -81,24 +81,24 @@ def parsePatch (schema : InfoSchema Record) (fields : Array InputField) : Comman
         else UpdateOperation.set <$> parseExtraValue input.value
       if let some suggestion := spellingSuggestion schema input.key then
         logWarningAt input.ref m!"unknown field `{input.key}` was stored in extra; did you mean `{suggestion}`? Use explicit extra to suppress this hint"
-      result := result.push { key, operation, source := Foundation.SourceLocation.ofSyntax file input.ref }
+      result := result.push { key, operation, source := SourceLocation.ofSyntax file input.ref }
   return result
 
 /-- Installs one validated transaction after a domain has made its context decisions. -/
 def commitInfoCommand [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String) (patch : Patch)
-    (ref : Syntax) (initialization : Option Patch := none)
+    (ref : Syntax)
     (bindings : Array ContextBinding := #[]) : CommandElabM Unit := do
-  let source := Foundation.SourceLocation.ofSyntax (← getFileName) ref
-  match commitInfo spec (← getEnv) target patch source initialization bindings with
+  let source := SourceLocation.ofSyntax (← getFileName) ref
+  match commitInfo spec (← getEnv) target patch source bindings with
   | .error error => throwErrorAt ref error.render
   | .ok env => setEnv env
 
-/-- Parsing, initialization, and context selection succeed before any environment mutation. -/
+/-- Parsing and context selection succeed before any environment mutation. -/
 def elaborateInfo [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String) (fields : Array InputField)
-    (ref : Syntax) (initialization : Option Patch := none)
+    (ref : Syntax)
     (bindings : Array ContextBinding := #[]) : CommandElabM Unit := do
   let patch ← parsePatch (inferInstance : InfoSchema Record) fields
-  commitInfoCommand spec target patch ref initialization bindings
+  commitInfoCommand spec target patch ref bindings
 
 /-- Nested records use the same field parser, but require a complete typed value. -/
 @[implicit_reducible] def schemaCodec (schema : InfoSchema Record) : InfoCodec Record where
@@ -115,4 +115,4 @@ def elaborateInfo [InfoSchema Record] (spec : InfoSpec Record) (target : Name �
 instance (priority := low) [InfoSchema Record] : InfoCodec Record :=
   schemaCodec inferInstance
 
-end ProofScript.Info
+end ProofScript

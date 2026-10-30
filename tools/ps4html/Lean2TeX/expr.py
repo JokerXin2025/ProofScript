@@ -3,12 +3,29 @@
 from __future__ import annotations
 
 
-def flatten_app(node: dict) -> tuple[dict, list[dict]]:
-    """Return the head and left-to-right arguments of a binary app chain."""
+def unwrap_mdata(node: object, *, visit=None) -> tuple[object, dict]:
+    """Read one occurrence's metadata wrappers, keeping each outer value first."""
+    data = {}
+    while isinstance(node, dict) and node.get("kind") == "mdata":
+        if visit is not None:
+            visit()
+        for key, value in node["data"].items():
+            data.setdefault(key, value)
+        node = node["expr"]
+    return node, data
+
+
+def flatten_app(node: dict, *, visit=None) -> tuple[dict, list[dict]]:
+    """Flatten applications through metadata, preserving each argument and head occurrence."""
     args: list[dict] = []
     current = node
-    while isinstance(current, dict) and current.get("kind") == "app":
-        args.append(current.get("arg", {}))
-        current = current.get("fn", {})
+    while True:
+        structural, _ = unwrap_mdata(current, visit=visit)
+        if not isinstance(structural, dict) or structural.get("kind") != "app":
+            break
+        if visit is not None:
+            visit()
+        args.append(structural["arg"])
+        current = structural["fn"]
     args.reverse()
     return current, args

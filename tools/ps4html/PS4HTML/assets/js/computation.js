@@ -3,7 +3,7 @@
 
   const ABI = "proofscript-json-v1";
   const SCHEMA_VERSION = "0.0.0";
-  const RECORDING_VERSION = "0.1.0";
+  const RECORDING_VERSION = "0.3.0";
   const DEFAULTS = { inputBytes: 64 * 1024, outputBytes: 8 * 1024 * 1024, timeoutMs: 2000 };
   const bundles = new Map();
   const renderers = new Map();

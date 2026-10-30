@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PS4HTML.project import PS4HTMLError
-from PS4HTML.recording import PROOF_SCHEMA_VERSION
+from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD
 
 
 EXPRESSION_ID = re.compile(r"^e(0|[1-9][0-9]*)$")
@@ -16,7 +16,7 @@ SCHEMA_VERSION = "0.0.0"
 BINDER_INFOS = {"default", "implicit", "strictImplicit", "instImplicit"}
 CHILDREN = {"app": ("fn", "arg"), "lam": ("type", "body"),
             "forall": ("type", "body"), "let": ("type", "value", "body"),
-            "proj": ("expr",)}
+            "proj": ("expr",), "mdata": ("expr",)}
 REBUILD_HINT = "Rebuild with lake build <Library>:ps4html to regenerate recording data."
 
 
@@ -76,25 +76,18 @@ def _level(level):
 
 
 class Expression(dict):
-    """A typed expression occurrence. Display hints belong to this view and path.
+    """A native expression node; only structural graph edges are resolved lazily."""
 
-    The dictionary contains only the structural node fields. Children are exposed
-    lazily to avoid expanding a shared DAG into an exponential JSON tree.
-    """
-
-    def __init__(self, resolver, reference, display=None, view=None, path=()):
+    def __init__(self, resolver, reference):
         super().__init__(resolver.expressions[reference])
         self.resolver = resolver
         self.reference = reference
-        self.display = display
-        self.view = view
-        self.occurrence_path = tuple(path)
 
     def __getitem__(self, key):
         value = super().__getitem__(key)
-        if key in CHILDREN.get(super().get("kind"), ()):
-            return Expression(self.resolver, value["$ref"], self.display, self.view,
-                              self.occurrence_path + (key,))
+        kind = super().get("kind")
+        if key in CHILDREN.get(kind, ()):
+            return self.resolver.node(value)
         return value
 
     def get(self, key, default=None):
@@ -106,52 +99,9 @@ class Expression(dict):
     def values(self):
         return (self[key] for key in self)
 
-    def child(self, edge):
-        if edge not in CHILDREN.get(self.get("kind"), ()):
-            _fail(f"Invalid {self.get('kind')} expression edge: {edge}")
-        return self[edge]
-
-    @property
-    def hint(self):
-        if self.display is None:
-            return {}
-        return self.display.hints[self.view].get(self.occurrence_path, {})
-
-    def resolve_view(self, index):
-        if index is None or self.display is None:
-            return None
-        return self.display.expression(index)
-
-    @property
-    def declaration(self):
-        value = self.hint.get("declaration")
-        if value is None:
-            return None
-        return {"name": value["name"], "type": self.resolve_view(value["typeView"]),
-                "value": self.resolve_view(value["valueView"])}
-
-    @property
-    def is_prop(self):
-        return self.hint.get("isProp")
-
-    @property
-    def source_range(self):
-        return self.hint.get("sourceRange")
-
-
-class Display:
-    def __init__(self, resolver, value, roots, hints):
-        self.resolver = resolver
-        self.value = value
-        self.roots = roots
-        self.hints = hints
-
-    def expression(self, index):
-        return Expression(self.resolver, self.roots[index], self, index)
-
 
 class ExpressionResolver:
-    """Validate structural nodes and resolve only explicitly registered roots."""
+    """Validate native expression graphs and resolve only registered roots."""
 
     def __init__(self, expressions, expression_roots=None, owner=None):
         if not isinstance(expressions, dict):
@@ -159,20 +109,28 @@ class ExpressionResolver:
         self.expressions = expressions
         self.owner = owner
         self.roots = set()
-        self.displays = {}
         self._paths = {}
         self._validate()
         if expression_roots is not None:
             if not isinstance(expression_roots, list) or owner is None:
                 _fail("Expression roots require an owner and an array manifest")
+            previous = None
+            root_references = []
             for raw_path in expression_roots:
                 if not isinstance(raw_path, list):
                     _fail("Expression root paths must be arrays")
                 path = _path(raw_path)
                 if not path or path in self.roots:
                     _fail("Expression root paths must be nonempty and unique")
-                self.reference(json_path(owner, path))
+                if path[0] in {"expressions", "expressionRoots"}:
+                    _fail("Expression roots cannot enter the owner expression table or manifest")
+                order = tuple((0, part) if isinstance(part, str) else (1, part) for part in path)
+                if previous is not None and order <= previous:
+                    _fail("Expression root paths must follow object key and array index order")
+                previous = order
+                root_references.append(self.reference(json_path(owner, path)))
                 self.roots.add(path)
+            self._validate_postorder(root_references)
         if owner is not None:
             self._index(owner, ())
 
@@ -199,12 +157,19 @@ class ExpressionResolver:
                       "lam": {"name", "type", "body", "binderInfo"},
                       "forall": {"name", "type", "body", "binderInfo"},
                       "let": {"name", "type", "value", "body", "nondep"},
-                      "lit": {"lit"}, "proj": {"typeName", "index", "expr"}}
+                      "lit": {"lit"}, "proj": {"typeName", "index", "expr"},
+                      "mdata": {"data", "expr"}}
             if not isinstance(kind, str) or kind not in fields:
                 _fail(f"Unknown expression node kind: {kind!r}")
             _keys(node, fields[kind] | {"kind"}, f"{kind} expression")
-            for edge in CHILDREN.get(kind, ()):
-                child = self.reference(node[edge])
+            if kind == "mdata":
+                data = node["data"]
+                if not isinstance(data, dict) or not data or any(
+                        not isinstance(key, str) or type(value) not in {str, bool, int}
+                        for key, value in data.items()):
+                    _fail(f"Expression {reference}.data must be a nonempty object of native metadata scalars")
+            for edge, value in self._edges(node):
+                child = self.reference(value)
                 if int(child[1:]) >= index:
                     _fail(f"Expression {reference}.{edge} must refer to an earlier node")
             for key in ("id", "name", "typeName"):
@@ -229,6 +194,33 @@ class ExpressionResolver:
                 if not ((literal["kind"] == "literal.nat" and _nat(literal["value"])) or
                         (literal["kind"] == "literal.str" and isinstance(literal["value"], str))):
                     _fail("Invalid expression literal")
+
+    @staticmethod
+    def _edges(node):
+        for edge in CHILDREN.get(node["kind"], ()):
+            yield edge, node[edge]
+
+    def _validate_postorder(self, roots):
+        """Check owner traversal order and reject table entries without a typed root."""
+        visited = set()
+        next_index = 0
+        for root in roots:
+            pending = [(root, False)]
+            while pending:
+                reference, complete = pending.pop()
+                if reference in visited:
+                    continue
+                if complete:
+                    if reference != f"e{next_index}":
+                        _fail("Expression IDs must follow structural postorder from owner roots")
+                    visited.add(reference)
+                    next_index += 1
+                    continue
+                pending.append((reference, True))
+                edges = list(self._edges(self.expressions[reference]))
+                pending.extend((value["$ref"], False) for _, value in reversed(edges))
+        if len(visited) != len(self.expressions):
+            _fail("Expression table contains nodes unreachable from expressionRoots")
 
     def reference(self, value):
         if isinstance(value, Expression):
@@ -269,12 +261,10 @@ class ExpressionResolver:
 
     def resolve(self, value, path=None):
         if isinstance(value, Expression):
+            self.reference(value)
             return value
         path = self.path_of(value, path)
         if path in self.roots:
-            display_view = self.displays.get(path)
-            if display_view is not None:
-                return display_view[0].expression(display_view[1])
             return self.node(value)
         if isinstance(value, list):
             return [self.resolve(child, path + (index,) if path is not None else None)
@@ -284,155 +274,51 @@ class ExpressionResolver:
                     for key, child in value.items()}
         return value
 
-    def apply_fields(self, step, fields, path=None):
-        from PS4HTML.recording import validate_fields
-        validate_fields(step, fields, resolver=self, path=path)
-        return self.resolve(step, path)
-
-    def register_display(self, step, display_field, field, path=None):
-        path = self.path_of(step, path)
-        if path is None:
-            _fail("Display validation requires its owner path")
-        display = validate_display(self, step[display_field], step, field,
-                                   path, path + (display_field,))
-        for index, view in enumerate(display.value["views"]):
-            if view["root"]["kind"] == "field":
-                target = path + (field,) + tuple(view["root"]["path"])
-            else:
-                target = path + (display_field, "views", index, "root", "expression")
-            self.displays[target] = (display, index)
-        return display
-
-
-def validate_display(resolver, value, step, field, step_path=(), display_path=None):
-    """Explicitly validate a declared Display. Never discover markers in JSON."""
-    _keys(value, {"kind", "field", "views"}, "Display")
-    if value["kind"] != "expression-display-v1" or value["field"] != field or field not in step or step[field] is None:
-        _fail("Display must identify an existing nonnull sibling subject field")
-    if not isinstance(value["views"], list):
-        _fail("Display views must be an array")
-    step_path = tuple(step_path)
-    if display_path is None:
-        display_path = step_path + (field + "_display",)
-    roots, hints, main_paths, links = [], [], set(), []
-    for index, view in enumerate(value["views"]):
-        _keys(view, {"root", "hints"}, "Display view")
-        root = view["root"]
-        if not isinstance(root, dict):
-            _fail("Invalid Display root")
-        if root.get("kind") == "field":
-            _keys(root, {"kind", "path"}, "Display field root")
-            if not isinstance(root["path"], list):
-                _fail("Display field occurrence paths must be arrays")
-            relative = _path(root["path"])
-            if relative in main_paths:
-                _fail("Duplicate Display main occurrence path")
-            main_paths.add(relative)
-            target = step_path + (field,) + relative
-            resolver.require_root(target)
-            reference = resolver.reference(json_path(step[field], relative))
-        elif root.get("kind") == "auxiliary":
-            _keys(root, {"kind", "expression"}, "Display auxiliary root")
-            resolver.require_root(tuple(display_path) + ("views", index, "root", "expression"))
-            reference = resolver.reference(root["expression"])
-        else:
-            _fail("Unknown Display root kind")
-        roots.append(reference)
-        if not isinstance(view["hints"], list):
-            _fail("Display hints must be an array")
-        view_hints, view_links = {}, set()
-        for hint in view["hints"]:
-            _keys(hint, {"path", "isProp", "declaration", "appBinders", "sourceRange"}, "Display hint")
-            raw_path = hint["path"]
-            if not isinstance(raw_path, list) or any(not isinstance(edge, str) for edge in raw_path):
-                _fail("Display hint paths must be arrays of structural edges")
-            hint_path = tuple(raw_path)
-            if hint_path in view_hints:
-                _fail("Duplicate Display hint occurrence path")
-            current = resolver.node(reference)
-            for edge in hint_path:
-                current = current.child(edge)
-            if hint["isProp"] is not None and type(hint["isProp"]) is not bool:
-                _fail("Display isProp must be boolean or null")
-            declaration = hint["declaration"]
-            if declaration is not None:
-                _keys(declaration, {"name", "typeView", "valueView"}, "Display declaration")
-                if current["kind"] not in {"fvar", "mvar"} or not isinstance(declaration["name"], str):
-                    _fail("Declaration hints require an fvar or mvar expression")
-                if current["kind"] != "fvar" and declaration["valueView"] is not None:
-                    _fail("Only fvar declarations may reference local values")
-                for key in ("typeView", "valueView"):
-                    target = declaration[key]
-                    if target is not None:
-                        if not _nat(target) or target >= len(value["views"]):
-                            _fail("Display declaration view index is out of bounds")
-                        candidate = value["views"][target]
-                        if not isinstance(candidate, dict) or not isinstance(candidate.get("root"), dict) or candidate["root"].get("kind") != "auxiliary":
-                            _fail("Display declaration references must target auxiliary views")
-                        view_links.add(target)
-            binders = hint["appBinders"]
-            if binders is not None:
-                if current["kind"] != "app" or not isinstance(binders, list) or any(
-                        binder is not None and (not isinstance(binder, str) or binder not in BINDER_INFOS) for binder in binders):
-                    _fail("Display appBinders requires an application and valid binder information")
-                count, application = 0, current
-                while application["kind"] == "app":
-                    count += 1
-                    application = application["fn"]
-                if len(binders) != count:
-                    _fail("Display appBinders length must match flattened application arguments")
-            source = hint["sourceRange"]
-            if source is not None:
-                _keys(source, {"file", "start", "stop"}, "Display source range")
-                if not isinstance(source["file"], str) or not _nat(source["start"]) or not _nat(source["stop"]) or source["start"] > source["stop"]:
-                    _fail("Invalid Display source byte range")
-            view_hints[hint_path] = hint
-        hints.append(view_hints)
-        links.append(view_links)
-    active, checked = set(), set()
-    def visit(index):
-        if index in active:
-            _fail("Cyclic Display auxiliary view references")
-        if index in checked:
-            return
-        active.add(index)
-        for target in links[index]:
-            visit(target)
-        active.remove(index)
-        checked.add(index)
-    for index in range(len(roots)):
-        visit(index)
-    return Display(resolver, value, roots, hints)
-
-
 def validate_document(document):
-    """Validate the 0.1 recording envelope and root ownership, returning its resolver."""
+    """Validate the recording envelope and expression root ownership."""
     if not isinstance(document, dict):
         _fail("Proof document must be an object")
     if document.get("schemaVersion") != PROOF_SCHEMA_VERSION:
         _fail(f"Unsupported recording schema version: {document.get('schemaVersion')!r}. {REBUILD_HINT}")
-    base = {"schemaVersion", "module", "code"}
-    graph = {"proof", "expressions", "expressionRoots"}
-    if not base <= set(document) or set(document) - (base | graph):
-        _fail("Invalid proof document fields")
+    base = {"schemaVersion", "module", "code", "statement", "expressions", "expressionRoots"}
+    if not base <= set(document) or set(document) - (base | {"proof"}):
+        _fail(f"Proof document requires the reserved statement and expression graph fields. {REBUILD_HINT}")
     if not isinstance(document["module"], str) or not document["module"] or not isinstance(document["code"], str):
         _fail("Proof document requires a module and source code")
-    present = set(document) & graph
-    if not present:
-        return None
-    if present != graph:
-        _fail("Proof, expressions and expressionRoots must appear together")
     from PS4HTML.recording import proof_steps
     try:
-        proof_steps(document["proof"])
+        if "proof" in document:
+            proof_steps(document["proof"])
     except ValueError as error:
         _fail(str(error))
     resolver = ExpressionResolver(document["expressions"], document["expressionRoots"], document)
+    statement_roots = set()
+    if "statement" in document:
+        statement = document["statement"]
+        _keys(statement, {"parameters", "conditions", "conclusion"}, "theorem statement")
+        if not isinstance(statement["parameters"], list) or not isinstance(statement["conditions"], list):
+            _fail("Statement parameters and conditions must be arrays")
+        statement_roots.add(("statement", "conclusion"))
+        for index, parameter in enumerate(statement["parameters"]):
+            _keys(parameter, {"variable", "type", "instance"}, "statement parameter")
+            if type(parameter["instance"]) is not bool:
+                _fail("Statement instance flag must be boolean")
+            for key in ("variable", "type"):
+                statement_roots.add(("statement", "parameters", index, key))
+        statement_roots.update(("statement", "conditions", index) for index in range(len(statement["conditions"])))
+        for path in statement_roots:
+            resolver.require_root(path, json_path(document, path))
+        for index in range(len(statement["parameters"])):
+            node = resolver.node(statement["parameters"][index]["variable"])
+            while node["kind"] == "mdata":
+                node = node["expr"]
+            if node["kind"] != "fvar":
+                _fail("Statement parameter variable must be a free variable")
     def validate_records(steps):
         for record in steps:
-            if "branches" not in record:
+            if BRANCHES_FIELD not in record:
                 continue
-            branches = record["branches"]
+            branches = record[BRANCHES_FIELD]
             if not isinstance(branches, list):
                 _fail("Proof branches must be an array")
             for branch in branches:
@@ -445,8 +331,10 @@ def validate_document(document):
                     except ValueError as error:
                         _fail(str(error))
                     validate_records(branch["proof"])
-    validate_records(document["proof"])
+    validate_records(document.get("proof", []))
     for path in resolver.roots:
+        if path in statement_roots:
+            continue
         if len(path) < 3 or path[0] != "proof" or not _nat(path[1]):
             _fail("Proof expression root paths must belong to proof record data")
         # Structural branch metadata and rule IDs are not expression data.
@@ -454,12 +342,12 @@ def validate_document(document):
         record = document["proof"][path[1]]
         while remaining:
             key = remaining[0]
-            if key == "_ruleId":
+            if key == RULE_ID_FIELD:
                 _fail("Expression roots cannot target proof protocol fields")
-            if key == "branches":
+            if key == BRANCHES_FIELD:
                 if len(remaining) < 5 or not _nat(remaining[1]) or remaining[2] != "proof" or not _nat(remaining[3]):
                     _fail("Expression roots cannot target branch metadata")
-                record = record["branches"][remaining[1]]["proof"][remaining[3]]
+                record = record[BRANCHES_FIELD][remaining[1]]["proof"][remaining[3]]
                 remaining = remaining[4:]
             else:
                 break
@@ -467,23 +355,18 @@ def validate_document(document):
 
 
 def validate_computation_function(function):
-    """Validate one computation's independent expression graph and Display owner."""
+    """Validate one computation's independent expression owner."""
     if not isinstance(function, dict) or function.get("recordingVersion") != PROOF_SCHEMA_VERSION:
         version = function.get("recordingVersion") if isinstance(function, dict) else None
         _fail(f"Unsupported computation recording version: {version!r}. {REBUILD_HINT}")
-    required = {"declaration", "type", "expression", "implementation", "expressions", "expressionRoots"}
-    if not required <= set(function) or not isinstance(function["declaration"], str) or not isinstance(function["type"], str):
+    required = {"recordingVersion", "declaration", "type", "expression", "implementation", "expressions", "expressionRoots"}
+    _keys(function, required, "computation function")
+    if not isinstance(function["declaration"], str) or not isinstance(function["type"], str):
         _fail("Computation function is missing expression provenance")
     resolver = ExpressionResolver(function["expressions"], function["expressionRoots"], function)
-    from PS4HTML.recording import display_schema, validate_fields
-    fields = [{"name": field, "schema": {"kind": "expression"}, "nullable": False}
-              for field in ("expression", "implementation")]
+    # Computation has its own fixed format, independent of script recordings.
     for field in ("expression", "implementation"):
-        companion = field + "_display"
-        if companion in function:
-            fields.append({"name": companion, "schema": {"kind": "optional", "element": display_schema(field)},
-                           "nullable": True})
-    validate_fields(function, fields, resolver=resolver, path=())
+        resolver.require_root((field,), function[field])
     for path in resolver.roots:
         if path[0] in {"expressions", "expressionRoots", "recordingVersion", "declaration", "type"}:
             _fail("Computation expression roots cannot target protocol metadata")

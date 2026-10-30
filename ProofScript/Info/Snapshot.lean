@@ -1,46 +1,40 @@
 import ProofScript.Info.Theorem
 import ProofScript.Info.Definition
-import ProofScript.Info.Variable
 import ProofScript.Info.Phrase
 import ProofScript.Info.Script
 import ProofScript.Output.Manifest
 import ProofScript.Info.TheoremDependencies
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
-open Output (RenderDependency)
 
-def snapshotSchemaVersion : String := "4"
+def snapshotSchemaVersion : String := "7"
 
 structure RendererDependencyEntry where
-  owner : Name
-  sequence : Nat
   renderer : ScriptRenderer
   dependencies : Array RenderDependency
   deriving Inhabited
 
 initialize rendererDependencyExt : SimplePersistentEnvExtension RendererDependencyEntry Unit ←
   registerSimplePersistentEnvExtension {
-    name := `ProofScript.Info.rendererDependencies
+    name := `ProofScript.rendererDependencies
     addEntryFn := fun _ _ => ()
     addImportedFn := fun _ => () }
 
 /-- Renderer integrations declare static configuration use; runtime-only access remains a backend check. -/
 def declareRendererDependencies (env : Environment) (renderer : ScriptRenderer)
     (dependencies : Array RenderDependency) : Environment :=
-  advanceBoundary <| rendererDependencyExt.addEntry env {
-    owner := env.mainModule, sequence := infoEventExt.getState env, renderer, dependencies }
+  rendererDependencyExt.addEntry env { renderer, dependencies }
 
 private def rendererDependencies (env : Environment) (query : Query) (renderer : ScriptRenderer) :
     Except Diagnostic (Array RenderDependency) := do
-  let order ← (Foundation.ModuleGraph.ofEnvironment env).order query.moduleName
+  let order ← (ModuleGraph.ofEnvironment env).order query.moduleName
     |>.mapError fun message => { message }
   let entries := order.flatMap fun owner =>
     if owner == env.mainModule then (rendererDependencyExt.getEntries env).reverse.toArray
     else (env.getModuleIdx? owner).map (rendererDependencyExt.getModuleEntries env) |>.getD #[]
-  return (entries.filter fun entry => entry.renderer == renderer &&
-    query.includes entry.owner entry.sequence).flatMap (·.dependencies)
+  return (entries.filter (·.renderer == renderer)).flatMap (·.dependencies)
 
 structure SnapshotRecord where
   identity : InfoTarget
@@ -68,7 +62,7 @@ def Snapshot.payload (snapshot : Snapshot) :=
   }
   json% {
     schemaVersion: $(snapshot.schemaVersion),
-    query: { module: $(snapshot.query.moduleName), boundary: $(snapshot.query.boundary) },
+    query: { module: $(snapshot.query.moduleName) },
     recordingVersion: $(snapshot.recordingVersion),
     contractVersion: $(snapshot.contractVersion),
     records: $(snapshot.records),
@@ -77,36 +71,8 @@ def Snapshot.payload (snapshot : Snapshot) :=
 
 def Snapshot.id (snapshot : Snapshot) : String := snapshot.payload.sha256
 
-private def schemaIdentity [InfoSchema Record] (spec : InfoSpec Record) : String × Name × String :=
-  let schema : InfoSchema Record := inferInstance
-  (spec.kind, schema.id, schema.version)
-
-def Snapshot.validateVersions (snapshot : Snapshot) : Except Diagnostic Unit := do
-  unless snapshot.schemaVersion == snapshotSchemaVersion && snapshot.recordingVersion == recordingProtocolVersion &&
-      snapshot.contractVersion == recordingContractVersion do
-    throw { message := "unsupported persisted snapshot version; rebuild or migrate the artifact" }
-  let schemas := #[
-    schemaIdentity projectSpec, schemaIdentity theoremSpec, schemaIdentity scriptSpec,
-    schemaIdentity definitionSpec, schemaIdentity variableSpec, schemaIdentity phraseSpec]
-  for record in snapshot.records do
-    unless schemas.any (fun (kind, id, version) => record.identity.kind == kind && record.schemaId == id && record.schemaVersion == version) do
-      throw { message := "unsupported persisted record schema; rebuild or migrate the artifact", kind := some record.identity.kind, target := some (toString record.identity.target) }
-  for contract in snapshot.contracts do
-    unless contract.contractVersion == recordingContractVersion && contract.recordingVersion == recordingProtocolVersion do
-      throw { message := "unsupported persisted invocation contract version" }
-
 def Snapshot.find? (snapshot : Snapshot) (kind : String) (target : Name ⊕ String) : Option SnapshotRecord :=
   snapshot.records.find? (fun record => record.identity.kind == kind && record.identity.target == target)
-
-initialize snapshotExt : SimplePersistentEnvExtension Snapshot Unit ←
-  registerSimplePersistentEnvExtension {
-    name := `ProofScript.Info.snapshots
-    addEntryFn := fun _ _ => ()
-    addImportedFn := fun _ => () }
-
-def moduleSnapshots (env : Environment) (owner : Name) : Array Snapshot :=
-  if owner == env.mainModule then (snapshotExt.getEntries env).reverse.toArray
-  else (env.getModuleIdx? owner).map (snapshotExt.getModuleEntries env) |>.getD #[]
 
 private def entry [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String) (info : ResolvedInfo Record) : SnapshotRecord :=
   let schema : InfoSchema Record := inferInstance
@@ -117,6 +83,29 @@ private def sources (identity : InfoTarget) (info : ResolvedInfo Record) :=
   let fields := info.provenance.map fun (key, origins) =>
     json% { path: $(key.path), origins: $(origins.map Origin.related) }
   json% { identity: $identity, fields: $fields }
+
+/-- Select explicit binders from the declaration's structural telescope. A
+    dependent result may expose further binders after application; those require
+    configured numeric indices rather than occurrence-specific type inference. -/
+private def explicitArgumentIndices (type : Expr) : Array Nat := Id.run do
+  let mut type := type.consumeMData
+  let mut index := 0
+  let mut selected := #[]
+  while let .forallE _ _ body binderInfo := type do
+    if binderInfo == .default then selected := selected.push index
+    index := index + 1
+    type := body.consumeMData
+  return selected
+
+private def allArgumentIndices (type : Expr) : Array Nat := Id.run do
+  let mut type := type.consumeMData
+  let mut index := 0
+  let mut selected := #[]
+  while let .forallE _ _ body _ := type do
+    selected := selected.push index
+    index := index + 1
+    type := body.consumeMData
+  return selected
 
 private def dependencyRecords (env : Environment) (query : Query) (dependency : RenderDependency) :
     Except Diagnostic (SnapshotRecord × Array RenderDependency × Json) := do
@@ -134,15 +123,22 @@ private def dependencyRecords (env : Environment) (query : Query) (dependency : 
     return (record, info.dependencies.map fun (kind, target) => { kind, target, required := true }, sources record.identity info)
   | "definition" =>
     let info ← resolveDefinitionInfo env query target
-    let normalized ← if info.value.alias.isSome || info.value.unwrap.isSome then pure info.value else do
-      let display ← info.value.display
-      pure { info.value with kind := some display.kind, arguments := some display.arguments, styles := some display.styles }
-    let record := entry definitionSpec target { info with value := normalized }
+    let normalizedInfo : DefinitionInfo ← if info.value.alias.isSome || info.value.unwrap.isSome then
+      pure info.value
+      else do
+        let display ← info.value.display
+        let normalized := { info.value with kind := some display.kind, styles := some display.styles }
+        validateDefinitionInfo normalized
+        pure normalized
+    let some declaration := env.find? target
+      | throw { message := "unknown declaration", kind := some kind, target := some target.toString }
+    let argumentIndices := if normalizedInfo.auto_arity then explicitArgumentIndices declaration.type else allArgumentIndices declaration.type
+    if let some template := normalizedInfo.parameter_template then
+      if (argumentReferences template).arguments.any (· >= argumentIndices.size) then
+        throw { message := "parameter_template references a missing type argument", kind := some kind, target := some target.toString }
+    let record := entry definitionSpec target { info with value := normalizedInfo }
+    let record := { record with value := record.value.setObjVal! "argument_indices" (toJson argumentIndices) }
     return (record, info.dependencies.map fun (kind, target) => { kind, target, required := true }, sources record.identity info)
-  | "variable" =>
-    let info ← resolveVariableInfo env query target
-    let record := entry variableSpec target info
-    return (record, #[], sources record.identity info)
   | "phrase" =>
     let info ← resolvePhraseInfo env query target
     let record := entry phraseSpec target info
@@ -150,7 +146,7 @@ private def dependencyRecords (env : Environment) (query : Query) (dependency : 
   | _ =>
     throw { message := s!"unsupported rendering dependency kind `{kind}`", kind := some kind, target := some (toString target) }
 
-/-- Resolve only actual use at one explicit boundary and validate every invocation's pinned contract. -/
+/-- Resolve actual configuration use in the owner's import closure and validate pinned contracts. -/
 def freezeSnapshot (env : Environment) (query : Query) (dependencies : Array RenderDependency)
     (contracts : Array RecordingContract) : Except Diagnostic Snapshot := do
   let events ← queryEvents env query
@@ -176,7 +172,7 @@ def freezeSnapshot (env : Environment) (query : Query) (dependencies : Array Ren
     let identity : InfoTarget := { kind := dependency.kind, target := dependency.target }
     identity.validate |>.mapError fun message => { message }
     let configured := events.any (·.identity == identity)
-    unless #[projectSpec.kind, theoremSpec.kind, definitionSpec.kind, variableSpec.kind, phraseSpec.kind, scriptSpec.kind].contains identity.kind do
+    unless #[projectSpec.kind, theoremSpec.kind, definitionSpec.kind, phraseSpec.kind, scriptSpec.kind].contains identity.kind do
       throw { message := "unsupported rendering dependency kind", kind := some identity.kind, target := some (toString identity.target) }
     if !configured && dependency.required then
       throw { message := "required rendering dependency is not configured", kind := some dependency.kind, target := some (toString dependency.target) }
@@ -221,38 +217,40 @@ def freezeSnapshot (env : Environment) (query : Query) (dependencies : Array Ren
   actualContracts := actualContracts.qsort (·.id < ·.id)
   return { query, records, contracts := actualContracts, provenance }
 
-def freezeArtifacts (env : Environment) (query : Query) (artifacts : Array Output.Artifact)
-    (additional : Array RenderDependency := #[]) : Except Diagnostic Snapshot :=
-  freezeSnapshot env query (additional ++ artifacts.flatMap fun artifact =>
-    artifact.dependencies ++ artifact.declaration.toList.toArray.map fun name =>
-      { kind := theoremSpec.kind, target := .inl name })
-    (artifacts.flatMap fun artifact => artifact.bindings.map (·.contract))
+structure FrozenArtifact where
+  artifact : Artifact
+  snapshot : Snapshot
+  facts : Option FrozenTheoremFacts
+  projectId : Option String
+  deriving Inhabited
 
-/-- Every artifact retains the configuration boundary captured when its content was created.
-Page closure and the exporter's environment never select a later view. -/
-def freezeModuleArtifacts (env : Environment) (owner : Name) : Except Diagnostic (Array (String × Snapshot)) := do
-  let artifacts := Output.moduleArtifacts env owner
-  unless artifacts.all (·.schemaVersion == Output.manifestSchemaVersion) do
-    throw { message := "unsupported persisted artifact manifest version; rebuild or migrate the artifact" }
-  artifacts.mapM fun artifact => do
-    if artifact.boundary == .endOfModule then
-      throw { message := "artifact is missing its content boundary; rebuild its defining module" }
-    let snapshot ← freezeArtifacts env artifact.query #[artifact]
-    snapshot.validateVersions
-    discard <| theoremFactsForArtifact env artifact snapshot.query snapshot.id
-    return (artifact.key.id, snapshot)
+/-- Resolve an artifact once, including its presentation, project and semantic proof facts. -/
+def freezeArtifact (env : Environment) (artifact : Artifact) : Except Diagnostic FrozenArtifact := do
+  unless artifact.schemaVersion == manifestSchemaVersion do
+    throw { message := "unsupported persisted artifact manifest version; rebuild the defining module" }
+  let projectId ← if artifact.declaration.isSome then pure none else
+    unambiguousModuleProject env artifact.query
+  let references ← match artifact.declaration with
+    | none => pure #[]
+    | some declaration => do
+      let some facts := declarationFacts? env declaration
+        | throw { message := "missing declaration reference facts; rebuild the defining module", target := some declaration.toString }
+      pure <| facts.proofRefs.filterMap fun ref =>
+        if ref.isDependency then some { kind := theoremSpec.kind, target := .inl ref.name : RenderDependency }
+        else none
+  let dependencies := artifact.dependencies ++
+    references ++
+    artifact.declaration.toList.toArray.map (fun name =>
+      { kind := theoremSpec.kind, target := .inl name }) ++
+    projectId.toList.toArray.map (fun id =>
+      { kind := projectSpec.kind, target := .inr id, required := true })
+  let snapshot ← freezeSnapshot env artifact.query dependencies (artifact.bindings.map (·.contract))
+  let facts ← theoremFactsForArtifact env artifact snapshot.id
+  return { artifact, snapshot, facts, projectId }
 
-/-- Export-ready semantic theorem facts use the same per-content boundary as rendering. -/
-def freezeModuleTheorems (env : Environment) (owner : Name) :
-    Except Diagnostic (Array (String × FrozenTheoremFacts)) := do
-  let artifacts := Output.moduleArtifacts env owner
-  let views ← freezeModuleArtifacts env owner
-  let mut result := #[]
-  for (id, snapshot) in views do
-    let some artifact := artifacts.find? (·.key.id == id)
-      | throw { message := "theorem view has no artifact" }
-    if let some facts ← theoremFactsForArtifact env artifact snapshot.query snapshot.id then
-      result := result.push (id, facts)
-  return result
+/-- Resolve each artifact in its defining module's final import closure.
+The exporter's downstream or sibling modules cannot enter this view. -/
+def freezeModuleArtifacts (env : Environment) (owner : Name) : Except Diagnostic (Array FrozenArtifact) :=
+  (moduleArtifacts env owner).mapM (freezeArtifact env)
 
-end ProofScript.Info
+end ProofScript

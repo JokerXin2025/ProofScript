@@ -5,7 +5,7 @@ Lean/Wasm bundle，并将计算结果交给具体页面组件。
 
 当前内置实现位于 `tools/ps4html/PS4HTML/assets/js/computation.js`，注册入口为
 `PS4HTMLComputation.register`。本文 TypeScript/React 片段为下游接入参考，不表示内置实现使用 React。
-component、pending 和 bundle 的 `schemaVersion` 仍为 `0.0.0`，执行 ABI 为 `proofscript-json-v1`。函数来源信息单独采用 `function.recordingVersion = "0.1.0"`；缺失或旧版本必须重新运行 `lake build MyLibrary:ps4html`。缓存读取不会迁移旧来源数据。
+component、pending 和 bundle 的 `schemaVersion` 仍为 `0.0.0`，执行 ABI 为 `proofscript-json-v1`。函数来源信息单独采用 `function.recordingVersion = "0.3.0"`；缺失或旧版本必须重新运行 `lake build MyLibrary:ps4html`。缓存读取不会迁移旧来源数据。
 
 ## 站点构建器职责
 
@@ -18,25 +18,18 @@ PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
   lake build MyLibrary:ps4html
 ```
 
-普通 `lake build` 只验证证明，不产生页面录制。自定义管线也必须先执行页面模式编译，取得 page/pending/wrapper/C IR，再以同一 `PROOF_SCRIPT_OUTPUT_ROOT` 调用 `build-computations.mjs` 和 `finalize-computations.mjs`，最后生成完整 Info 清单。标准 facet 已处理这些步骤；发布输入位于 `.PS4HTML/inputs/<包>/<库>/.ProofScript/`。
+普通 `lake build` 只验证证明，不产生页面录制。自定义管线也必须先执行页面模式编译，取得包含页面草稿的 `.olean`、pending/wrapper/C IR；再从 `.olean` 导出最终页面与 Info 清单，以同一 `PROOF_SCRIPT_OUTPUT_ROOT` 调用 `build-computations.mjs` 和 `finalize-computations.mjs`，最后更新页面和资源摘要。标准 facet 已处理这些步骤；发布输入位于 `.PS4HTML/inputs/<包>/<库>/.ProofScript/`。
 
-渲染器的生产构建必须在任一步失败时失败，不能继续发布旧页面或静态 fallback 冒充成功。推荐在
-部署前额外检查：
-
-```sh
-# 不应有要部署的 pending 页面；所有 ready 资源必须存在
-node /path/to/ProofScript/scripts/test-finalized-computation.mjs \
-  .PS4HTML/inputs/<包>/<库>/.ProofScript/pages/<page>.json
-```
+渲染器的生产构建必须在任一步失败时停止发布。标准构建入口在发布前校验完成清单与资源摘要。
 
 重要约束：
 
-- `@computation` 在 Lean elaboration 时登记 wrapper，但模块 C IR 在 elaboration 完成后才写出，所以
+- `#page computation` 在 Lean elaboration 时登记 wrapper，但模块 C IR 在 elaboration 完成后才写出，所以
   不能省略第一步，也不能在 command elaborator 中同步链接 Wasm。
-- Lake 若复用未变化的 `.olean`，编译期文件副作用不一定重新执行。清空 `.ProofScript/` 后应确保
-  页面模块被重新 elaboration，必要时使用项目自己的 clean/rebuild 流程。
-- Finalize 之后若再次编译页面模块，`page_end` 会把页面重新写回 `pending`。发布流程中 finalize
-  必须位于最后一次 Lean 编译之后。
+- Lake 若复用未变化的 `.olean`，证明和外部资源的编译期文件副作用不一定重新执行。清空这些文件后
+  应确保页面模块被重新 elaboration。页面 JSON 由导出器从持久化草稿生成，`#page end` 不写页面文件。
+- Finalize 之后再次导出页面，会从草稿重新生成 `pending` 页面。发布流程中 finalize
+  必须位于最后一次 Lean 页面导出之后。
 - 只有 `.ProofScript/pages/` 和 `.ProofScript/resources/` 是前端部署输入；pending 和 bundles 是
   构建中间产物。
 - `PROOF_SCRIPT_LEAN_WASM_PREFIX` 必须指向与项目 Lean commit 匹配的 Emscripten Lean runtime，
@@ -66,7 +59,7 @@ Finalized component 示例：
   "data": {
     "computation": {
       "value": {
-         "schemaVersion": "0.0.0",
+        "schemaVersion": "0.0.0",
         "metadata": {
           "title": "Typed computation",
           "label": "typed-computation",
@@ -74,17 +67,20 @@ Finalized component 示例：
         },
         "renderer": "proofscript/test-json-v1",
         "function": {
-          "recordingVersion": "0.1.0",
+          "recordingVersion": "0.3.0",
           "declaration": "Demo.compute",
           "type": "Bool → Nat",
-          "expression": {"$ref": "e0"},
-          "implementation": {"$ref": "e3"},
+          "expression": {"$ref": "e1"},
+          "implementation": {"$ref": "e4"},
           "expressions": {
             "e0": {"kind": "const", "name": "Demo.compute", "levels": []},
-            "e1": {"kind": "const", "name": "Bool", "levels": []},
-            "e2": {"kind": "lit", "lit": {"kind": "literal.nat", "value": 0}},
-            "e3": {"kind": "lam", "name": "_", "type": {"$ref": "e1"},
-              "body": {"$ref": "e2"}, "binderInfo": "default"}
+            "e1": {"kind": "mdata", "data": {"ProofScript.sourceFile": "Demo.lean",
+              "ProofScript.sourceStart": 120, "ProofScript.sourceStop": 132},
+              "expr": {"$ref": "e0"}},
+            "e2": {"kind": "const", "name": "Bool", "levels": []},
+            "e3": {"kind": "lit", "lit": {"kind": "literal.nat", "value": 0}},
+            "e4": {"kind": "lam", "name": "_", "type": {"$ref": "e2"},
+              "body": {"$ref": "e3"}, "binderInfo": "default"}
           },
           "expressionRoots": [["expression"], ["implementation"]]
         },
@@ -92,7 +88,7 @@ Finalized component 示例：
           "backend": "wasm",
           "status": "ready",
           "abi": "proofscript-json-v1",
-          "bundleId": "Test.ComputationComponentTest",
+          "bundleId": "Demo.Computation",
           "entry": "Demo.compute",
           "wrapper": "__proofScript_compute",
           "manifest": {"$resource": {}},
@@ -119,7 +115,7 @@ Finalized component 示例：
 | `execution.manifest` | bundle entries 和产物元数据 |
 | `payload` | renderer 专用初始配置、fallback 和领域数据 |
 
-`function` 的根路径相对于函数对象，节点表不与 proof 或其他函数共用。可选的 `expression_display` / `implementation_display` 由生产者显式提供，其辅助表达式仍属于本图。Finalizer 只回填执行资源，保留全部 function 数据；来源字段不参与浏览器执行 ABI。
+`function` 的根路径相对于函数对象，节点表不与 proof 或其他函数共用。表达式结构镜像原生 `Lean.Expr`，元数据保存为 `mdata.data` 标量对象，`mdata.expr` 是唯一子引用；不再导出声明快照或应用 binder 描述。格式见 [function Schema](schema/recording-function.schema.json)。Finalizer 只回填执行资源，保留全部 function 数据；来源字段不参与浏览器执行 ABI。
 
 前端必须要求：
 
@@ -484,18 +480,11 @@ Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval
 
 ## 后端构建命令
 
-以下命令与文档开头“站点构建器职责”相同，保留在此作为部署检查表：
+标准入口自动完成页面编译、Wasm 构建、finalize 和发布：
 
 ```sh
-# 1. Lean 页面编译，产生 pending manifests 和 C IR
-lake build
-
-# 2. 多入口 Wasm bundle
 PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
-  node /path/to/ProofScript/scripts/build-computations.mjs
-
-# 3. 内容寻址发布和页面回填
-node /path/to/ProofScript/scripts/finalize-computations.mjs
+  lake build MyLibrary:ps4html
 ```
 
-前端只应部署 finalize 之后的 pages 和 resources，不应部署 `computations/pending` 或 bundles 中间目录。
+前端部署完整发布版本中的 pages 和 resources；`computations/pending` 和 bundles 是构建中间目录。普通 `lake build` 只验证证明，无法替代页面构建。

@@ -49,14 +49,20 @@ def qualifiedNameSchema := json% {
 def targetSchema (kind : String) : Json :=
   if kind == "project" then nonemptyStringSchema else qualifiedNameSchema
 
+/-- Both reference fields are required on the wire; constructor defaults do not apply. -/
+def referenceSchema : Json :=
+  objectSchema [("name", qualifiedNameSchema), ("isDependency", boolSchema)] #["name", "isDependency"]
+
 /-- Fixed theorem fields, also embedded in the completed-bundle artifact schema. -/
 def theoremExportSchema : Json :=
   objectSchema [
     ("declaration", qualifiedNameSchema),
+    ("declarationKind", json% { enum: ["theorem", "lemma"] }),
     ("projectId", nonemptyStringSchema),
+    ("proofRefs", arraySchema referenceSchema),
     ("proofDependencies", (arraySchema qualifiedNameSchema).setObjVal! "uniqueItems" (toJson true))
   ] #[
-    "declaration", "projectId", "proofDependencies"
+    "declaration", "declarationKind", "projectId", "proofRefs", "proofDependencies"
   ]
 
 end InfoJson

@@ -12,7 +12,14 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: leanprover/lean-action@v1
-      - name: Build optional Embed script
-        run: lake build ProofScript.Script.Embed
-      - name: Lean language server integration
-        run: python3 -m unittest Test.test_language_server -v
+        with:
+          test: false
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+      - name: Page component regression
+        run: python3 scripts/test-page-components.py
+      - name: Install renderer dependencies
+        run: python3 -m pip install ./tools/ps4html
+      - name: Reference collection regression
+        run: python3 scripts/test-references.py

@@ -2,14 +2,14 @@ import ProofScript.Info.Snapshot
 import ProofScript.Info.JsonSchemas
 import ProofScript.Output.Path
 
-namespace ProofScript.Output
+namespace ProofScript
 
-open Lean Info
+open Lean
 open InfoJson (qualifiedNameSchema objectSchema stringSchema boolSchema natSchema digestSchema arraySchema
-  nullableSchema constantSchema targetSchema theoremExportSchema)
+  nullableSchema constantSchema targetSchema referenceSchema theoremExportSchema)
 open scoped InfoJson
 
-def infoProtocolVersion : String := "5.0.0"
+def infoProtocolVersion : String := "9.0.0"
 
 /-- File names use the digest of the lossless name, independently of display spelling. -/
 def moduleId (name : Name) : String := (toJson name).sha256
@@ -29,7 +29,7 @@ private def Artifact.baseJson (artifact : Artifact) (snapshotId : String) := jso
   bindings: $(artifact.bindings)
 }
 
-/-- Bind semantic facts to this artifact's source content and exact configuration boundary. -/
+/-- Bind semantic facts to this artifact's source content and module configuration. -/
 def Artifact.proofFactsDigest (artifact : Artifact) (snapshotId : String) (value : TheoremExport) : String :=
   Json.sha256 <| json% {
     schemaVersion: $(artifact.schemaVersion), artifactId: $(artifact.key.id),
@@ -38,16 +38,15 @@ def Artifact.proofFactsDigest (artifact : Artifact) (snapshotId : String) (value
 /-- The only publication boundary for proof facts. Pages and unnamed recordings have no theorem fields. -/
 def Artifact.exportJson (artifact : Artifact) (snapshot : Snapshot)
     (facts : Option FrozenTheoremFacts) (projectId : Option String := none) : Except String Json := do
-  unless artifact.schemaVersion == manifestSchemaVersion && artifact.query == snapshot.query &&
-      artifact.boundary != .endOfModule do
-    throw "artifact version/boundary disagrees with its export snapshot; rebuild the defining module"
+  unless artifact.schemaVersion == manifestSchemaVersion && artifact.query == snapshot.query do
+    throw "artifact version or owner disagrees with its export snapshot; rebuild the defining module"
   let base := artifact.baseJson snapshot.id
   if artifact.key.kind == .proof && artifact.declaration.isSome then
     let some facts := facts | throw "missing theorem proof facts; rebuild the defining module"
     let value := facts.value
     value.validate
     unless artifact.declaration == some value.declaration && artifact.key.name == value.declaration &&
-        facts.ownerModule == artifact.key.owner && facts.query == snapshot.query && facts.snapshotId == snapshot.id do
+        facts.query == snapshot.query && facts.snapshotId == snapshot.id do
       throw "theorem proof facts disagree with their artifact identity or snapshot"
     let some source := snapshot.find? theoremSpec.kind (.inl value.declaration)
       | throw "theorem proof facts have no source metadata in their snapshot"
@@ -55,7 +54,18 @@ def Artifact.exportJson (artifact : Artifact) (snapshot : Snapshot)
       throw "theorem proof facts disagree with their frozen project metadata"
     unless (snapshot.find? projectSpec.kind (.inr value.projectId)).any (·.configured) do
       throw "theorem proof facts reference an unconfigured project"
-    return base.setObjVal! "projectId" (toJson value.projectId)
+    let mut dependencies := #[]
+    for ref in value.proofRefs do
+      unless ref.isDependency do continue
+      let some target := snapshot.find? theoremSpec.kind (.inl ref.name)
+        | throw "automatic reference is absent from its export snapshot"
+      if target.configured && (target.value.getObjValAs? (Option String) "project").toOption == some (some value.projectId) then
+        dependencies := dependencies.push ref.name
+    unless dependencies == value.proofDependencies do
+      throw "proofDependencies disagree with automatic references and their frozen projects"
+    return base.setObjVal! "declarationKind" (toJson value.declarationKind)
+      |>.setObjVal! "projectId" (toJson value.projectId)
+      |>.setObjVal! "proofRefs" (toJson value.proofRefs)
       |>.setObjVal! "proofDependencies" (toJson value.proofDependencies)
       |>.setObjVal! "proofFactsDigest" (toJson (artifact.proofFactsDigest snapshot.id value))
   unless facts.isNone && artifact.declaration.isNone do
@@ -74,7 +84,6 @@ def modelSchemas := json% {
   "theorem": $((inferInstance : InfoSchema TheoremInfo).jsonSchema),
   script: $((inferInstance : InfoSchema ScriptInfo).jsonSchema),
   definition: $((inferInstance : InfoSchema DefinitionInfo).jsonSchema),
-  "variable": $((inferInstance : InfoSchema VariableInfo).jsonSchema),
   phrase: $((inferInstance : InfoSchema PhraseInfo).jsonSchema)
 }
 
@@ -89,22 +98,19 @@ private def recordSchema [InfoSchema Record] (spec : InfoSpec Record) : Json :=
 private def contractSchema : Json := objectSchema [
   ("contractVersion", constantSchema recordingContractVersion), ("recordingVersion", constantSchema recordingProtocolVersion),
   ("ruleId", qualifiedNameSchema), ("name", stringSchema),
-  ("strategy", boolSchema),
-  ("continuation", nullableSchema natSchema),
-  ("fields", nullableSchema (arraySchema (json% { type: "object" })))]
-  #["contractVersion", "recordingVersion", "ruleId", "name", "strategy", "continuation", "fields"]
+  ("kind", json% { enum: ["tactic", "strategy", "metadata"] }),
+  ("continuation", nullableSchema qualifiedNameSchema)]
+  #["contractVersion", "recordingVersion", "ruleId", "name", "kind", "continuation"]
 
 def snapshotSchema : Json :=
   let records := json% { oneOf: [
     $(recordSchema projectSpec), $(recordSchema theoremSpec),
     $(recordSchema scriptSpec), $(recordSchema definitionSpec),
-    $(recordSchema variableSpec), $(recordSchema phraseSpec)] }
-  let boundary := objectSchema [
-    ("before", objectSchema [("sequence", natSchema)] #["sequence"])] #["before"]
+    $(recordSchema phraseSpec)] }
   let payload := objectSchema [
     ("schemaVersion", constantSchema snapshotSchemaVersion),
     ("recordingVersion", constantSchema recordingProtocolVersion), ("contractVersion", constantSchema recordingContractVersion),
-    ("query", objectSchema [("module", qualifiedNameSchema), ("boundary", boundary)] #["module", "boundary"]),
+    ("query", objectSchema [("module", qualifiedNameSchema)] #["module"]),
     ("records", arraySchema records),
     ("contracts", arraySchema (objectSchema [("id", digestSchema), ("value", contractSchema)] #["id", "value"]))]
     #["schemaVersion", "recordingVersion", "contractVersion", "query", "records", "contracts"]
@@ -113,7 +119,7 @@ def snapshotSchema : Json :=
     #["schemaVersion", "id", "payload", "provenance"]).setObjVal! "$schema" (json% "https://json-schema.org/draft/2020-12/schema")
 
 private def dependencySchema : Json :=
-  let variants := #["project", "theorem", "definition", "script", "variable", "phrase"].map fun kind =>
+  let variants := #["project", "theorem", "definition", "script", "phrase"].map fun kind =>
     objectSchema [
       ("kind", constantSchema kind), ("target", targetSchema kind),
       ("required", boolSchema)] #["kind", "target", "required"]
@@ -125,7 +131,9 @@ private def artifactSchema : Json := (objectSchema [
   ("kind", json% { enum: ["page", "proof"] }), ("name", qualifiedNameSchema),
   ("path", stringSchema), ("snapshotId", digestSchema), ("contentDigest", digestSchema),
   ("declaration", nullableSchema qualifiedNameSchema),
+  ("declarationKind", json% { enum: ["theorem", "lemma"] }),
   ("projectId", nullableSchema (targetSchema "project")),
+  ("proofRefs", arraySchema referenceSchema),
   ("proofDependencies", arraySchema qualifiedNameSchema), ("proofFactsDigest", digestSchema),
   ("dependencies", arraySchema dependencySchema),
   ("bindings", arraySchema (objectSchema [
@@ -137,7 +145,9 @@ private def artifactSchema : Json := (objectSchema [
     { properties: { kind: { const: "proof" } },
       required: ["proofFactsDigest"],
       allOf: [$(theoremExportSchema.setObjVal! "additionalProperties" (toJson true))] },
-    { properties: { declaration: { type: "null" }, proofDependencies: false, proofFactsDigest: false } }
+    { properties: {
+        declaration: { type: "null" }, declarationKind: false,
+        proofRefs: false, proofDependencies: false, proofFactsDigest: false } }
   ])
 
 /-- All domain field schemas come from InfoSchema; consumers only adapt this wire format. -/
@@ -158,4 +168,4 @@ def protocolSchema : Json :=
     |>.setObjVal! "$schema" (json% "https://json-schema.org/draft/2020-12/schema")
     |>.setObjVal! "title" (json% "ProofScript completed Info bundle")
 
-end ProofScript.Output
+end ProofScript

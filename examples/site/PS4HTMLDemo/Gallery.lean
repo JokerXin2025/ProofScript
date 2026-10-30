@@ -4,7 +4,7 @@ set_option linter.defProp false
 
 open PS4HTMLDemo.Library
 
-@text r#"
+#page text r#"
 = PS4HTML 页面组件总览 <overview>
 
 这个项目完全由 *ProofScript* 源码生成。PS4HTML 读取模块页面 JSON 和独立证明树，
@@ -51,7 +51,7 @@ $$
 $$
 
 ```lean
-@theorem demo (P Q : Prop) (h : P ∧ Q) : P := script
+#page theorem demo (P Q : Prop) (h : P ∧ Q) : P := script
  unpack_and ⟨hP, hQ⟩ := h
  assumption
 ```
@@ -60,7 +60,7 @@ $$
 跨文件参考文献记录。
 "#
 
-@latex (
+#page latex (
   title := "示例 LaTeX 表格",
   label := "example-table"
 ) r#"
@@ -73,21 +73,22 @@ $$
   \end{tabular}
 "#
 
-@figure (
+#page figure (
   title := "ProofScript 到 PS4HTML 的构建流程",
   label := "component-preview",
   width := "wide"
 ) "assets/component-preview.svg"
 
-@theorem galleryResult (info := {
-  name := "跨模块合取投影",
-  tags := ["demo", "cross-module"]
-}) (P Q : Prop) (h : P ∧ Q) : P := by
+#page theorem galleryResult (P Q : Prop) (h : P ∧ Q) : P := by
   -- "调用参考定理库中已经形式化的结果"
   exact (andLeft P Q h)
 
+theorem_info galleryResult {
+  name := "跨模块合取投影",
+  tags := ["demo", "cross-module"]
+}
 
-@text r#"
+#page text r#"
 == 大型证明树展示 <large-proof>
 
 下面的定理展示一个较大的组合单调性证明。我们从五个自然数之间的递增链出发，
@@ -97,10 +98,7 @@ $$
 free variable、bound variable、application argument 与 binder 信息。
 "#
 
-@theorem iteratedMonotoneChain (info := {
-  name := "多层单调映射的链式传递",
-  tags := ["demo", "order", "monotonicity", "calc", "infer"]
-})
+#page theorem iteratedMonotoneChain
     (a b c d e : Nat)
     (F G H : Nat → Nat)
     (hab : a ≤ b) (hbc : b ≤ c) (hcd : c ≤ d) (hde : d ≤ e)
@@ -133,20 +131,24 @@ free variable、bound variable、application argument 与 binder 信息。
       _ ≤ n + F d := Nat.add_le_add_left (hF hcd) n
       _ ≤ n + F e := Nat.add_le_add_left (hF hde) n
 
+theorem_info iteratedMonotoneChain {
+  name := "多层单调映射的链式传递",
+  tags := ["demo", "order", "monotonicity", "calc", "infer"]
+}
 
-@text r#"
+#page text r#"
 证明完成后，@thm:PS4HTMLDemo.Gallery.galleryResult 指向当前页面中的 theorem component。
 大型证明可以通过 @thm:PS4HTMLDemo.Gallery.iteratedMonotoneChain 定位。
 接下来的 references component 会把证明中实际使用的外部定理按项目分组展示。
 "#
 
-@references
+#page references
 
-@text r#"
+#page text r#"
 == 组件顺序 <component-order>
 
 参考文献之后仍然可以继续插入 ProofText。这个段落证明 PS4HTML 严格保持
 `components` 数组的源文件顺序，而不是把参考文献强制移动到页面末尾。
 "#
 
-page_end
+#page end

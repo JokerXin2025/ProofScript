@@ -1,4 +1,4 @@
-import ProofScript.Page.Component.Core
+import ProofScript.Page.Component.Command
 
 open Lean
 open ProofScript
@@ -281,11 +281,12 @@ private partial def headingLabels (blocks : Array Block) : Array String := Id.ru
     | _ => pure ()
   return labels
 
-elab "@""text" source:str : command => whenPageBuild do
-  let raw := source.getString
-  let blocks ←
-    match parse raw with
-    | .ok blocks => pure blocks
-    | .error message => throwErrorAt source message
-  let labels := (headingLabels blocks).map fun label => ("heading", label)
-  addPageComponent source.raw "text" (toJson (⟨raw, blocks⟩ : TextComponent)) labels
+page_component "text" source:str => do
+  when_page_build
+    let raw := source.getString
+    let blocks ←
+      match parse raw with
+      | .ok blocks => pure blocks
+      | .error message => throwErrorAt source message
+    let labels := (headingLabels blocks).map fun label => ("heading", label)
+    addPageComponent source.raw "text" (toJson (⟨raw, blocks⟩ : TextComponent)) labels

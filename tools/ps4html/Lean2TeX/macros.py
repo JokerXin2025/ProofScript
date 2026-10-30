@@ -73,13 +73,14 @@ def _selectors_match(style: MacroStyle, node) -> bool:
 
 def macro_from_data(entry: dict) -> Macro:
     """Validate one macro independently of its configuration source."""
-    arguments = entry.get("arguments", [])
-    if arguments != "explicit":
-        if not isinstance(arguments, list) or not all(type(i) is int and i >= 0 for i in arguments):
-            raise ValueError(f"L2T002: invalid arguments for macro {entry.get('name')}")
-        arguments = tuple(arguments)
-    styles = tuple(_parse_style(entry["name"], raw, bool(entry.get("dynamic_arity", False))) for raw in entry.get("styles", []))
-    if not styles:
+    arguments = entry.get("argument_indices", [])
+    if not isinstance(arguments, list) or not all(type(i) is int and i >= 0 for i in arguments):
+        raise ValueError(f"L2T002: invalid arguments for macro {entry.get('name')}")
+    arguments = tuple(arguments)
+    auto_arity = bool(entry.get("auto_arity", True))
+    styles = tuple(_parse_style(entry["name"], raw, auto_arity) for raw in entry.get("styles", []))
+    calc_symbol = entry.get("calc_symbol")
+    if not styles and calc_symbol is None:
         raise ValueError(f"L2T004: macro {entry['name']} has no styles")
     if any(_BINDER.search(style.template) for style in styles) and not any(
         not _BINDER.search(style.template) for style in styles
@@ -90,19 +91,19 @@ def macro_from_data(entry: dict) -> Macro:
         binders = [(len(prefix), int(index)) for prefix, index in _BINDER.findall(style.template)]
         if any(index not in style.binders or depth > style.binders[index] + 1 for depth, index in binders):
             raise ValueError(f"L2T004: @ selector needs a matching binder count in macro {entry['name']}")
-        if isinstance(arguments, tuple):
+        if auto_arity:
             if any(index >= len(arguments) for index in refs) or any(index >= len(arguments) for _, index in binders):
                 raise ValueError(f"L2T004: template references a missing child in macro {entry['name']}")
             if any(index >= len(arguments) for index in style.isolated_arguments):
                 raise ValueError(f"L2T004: isolated_arguments references a missing child in macro {entry['name']}")
         referenced = set(refs) | {index for _, index in binders}
-        if not entry.get("dynamic_arity", False) and any(index not in referenced for index in style.isolated_arguments):
+        if auto_arity and any(index not in referenced for index in style.isolated_arguments):
             raise ValueError(f"L2T004: isolated_arguments must reference a template argument in macro {entry['name']}")
     return Macro(entry["name"], entry.get("kind", "const"), arguments, styles,
-                 bool(entry.get("dynamic_arity", False)))
+                 bool(entry.get("auto_arity", True)), entry.get("calc_symbol"))
 
 
-def _parse_style(macro_name: str, raw: dict, dynamic: bool) -> MacroStyle:
+def _parse_style(macro_name: str, raw: dict, auto_arity: bool) -> MacroStyle:
     mode = raw.get("mode", "formula")
     fixity = raw.get("fixity", "custom")
     associativity = raw.get("associativity", "none")
@@ -123,17 +124,16 @@ def _parse_style(macro_name: str, raw: dict, dynamic: bool) -> MacroStyle:
         raise ValueError(f"L2T008: invalid layout for macro {macro_name}")
     if not isinstance(precedence, int) or not 0 <= precedence <= 100:
         raise ValueError(f"L2T008: invalid precedence for macro {macro_name}")
-    has_dynamic = "#*" in template
-    if dynamic != has_dynamic:
-        raise ValueError(f"L2T004: dynamic placeholder mismatch for macro {macro_name}")
+    if "#*" in template:
+        raise ValueError(f"L2T004: dynamic placeholder is no longer supported for macro {macro_name}")
     refs = sorted({int(value) for value in _PLACEHOLDER.findall(template)} | {
         int(index) for _, index in _BINDER.findall(template)
     })
-    if not dynamic and refs and refs != list(range(refs[-1] + 1)):
+    if refs and auto_arity and refs != list(range(refs[-1] + 1)):
         raise ValueError(f"L2T004: non-contiguous placeholders for macro {macro_name}")
     return MacroStyle(
         raw.get("name", "formula"), mode, template, fixity, precedence,
-        associativity, raw.get("separator", ", "),
+        associativity,
         {int(key): value for key, value in binder_counts.items()},
         frozenset(isolated),
     )

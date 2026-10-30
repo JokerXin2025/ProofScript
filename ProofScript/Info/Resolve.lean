@@ -1,15 +1,13 @@
 import ProofScript.Info.State
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
 structure Origin where
   owner : Name
   sequence : Nat
-  /-- Initialization precedes ordinary assignments within the same transaction. -/
-  write : Nat
-  source : Foundation.SourceLocation
+  source : SourceLocation
   deriving Inhabited, Repr, BEq
 
 def Origin.related (origin : Origin) : RelatedSource :=
@@ -42,13 +40,12 @@ structure UnitState where
   candidates : Array Candidate := #[]
   deriving Inhabited
 
-private def dominates (graph : Foundation.ModuleGraph) (later earlier : Origin) : Bool :=
+private def dominates (graph : ModuleGraph) (later earlier : Origin) : Bool :=
   if later.owner == earlier.owner then
-    later.sequence > earlier.sequence ||
-      (later.sequence == earlier.sequence && later.write > earlier.write)
+    later.sequence > earlier.sequence
   else graph.dependsOn later.owner earlier.owner
 
-def UnitState.add (state : UnitState) (graph : Foundation.ModuleGraph) (candidate : Candidate) : UnitState :=
+def UnitState.add (state : UnitState) (graph : ModuleGraph) (candidate : Candidate) : UnitState :=
   if state.candidates.any (fun old => dominates graph old.origin candidate.origin) then state
   else { state with candidates := (state.candidates.filter fun old =>
     old.origin != candidate.origin && !dominates graph candidate.origin old.origin).push candidate }
@@ -88,14 +85,13 @@ def PartialView.provenance (view : PartialView) : Array (UnitKey × Array Origin
 private def PartialView.unit (view : PartialView) (key : UnitKey) : UnitState :=
   (view.units.find? (·.key == key)).getD { key }
 
-/-- Keep the query module explicit; only its own events are clipped by the boundary. -/
-def selectEvents (graph : Foundation.ModuleGraph) (events : Array InfoEvent) (query : Query) :
+/-- Select the requested module's complete import closure and order its updates. -/
+def selectEvents (graph : ModuleGraph) (events : Array InfoEvent) (query : Query) :
     Except Diagnostic (Array InfoEvent) := do
   let order ← (graph.order query.moduleName).mapError fun message => { message }
   let mut selected : Array InfoEvent := #[]
   for owner in order do
-    let localEvents := (events.filter fun event =>
-      event.owner == owner && query.includes owner event.sequence).qsort (fun a b => a.sequence < b.sequence)
+    let localEvents := (events.filter (·.owner == owner)).qsort (fun a b => a.sequence < b.sequence)
     for event in localEvents do
       if let some old := selected.find? (fun old => old.owner == event.owner && old.sequence == event.sequence) then
         unless toJson old == toJson event do
@@ -107,9 +103,8 @@ def selectEvents (graph : Foundation.ModuleGraph) (events : Array InfoEvent) (qu
 
 private def writes (events : Array InfoEvent) : Array (Assignment × Origin) :=
   events.flatMap fun event =>
-    let assignments := event.initialization.getD #[] ++ event.assignments
-    assignments.mapIdx fun index assignment =>
-      (assignment, { owner := event.owner, sequence := event.sequence, write := index, source := assignment.source })
+    event.assignments.map fun assignment =>
+      (assignment, { owner := event.owner, sequence := event.sequence, source := assignment.source })
 
 private def keyedValues (field : FieldSpec Record) (value : Json) :
     Except Diagnostic (Array (String × Json)) := do
@@ -118,7 +113,7 @@ private def keyedValues (field : FieldSpec Record) (value : Json) :
   | .keyed split _ => split decoded
   | .replace => throw { message := "expected a keyed field" }
 
-private def resolveKeyed (graph : Foundation.ModuleGraph) (field : FieldSpec Record)
+private def resolveKeyed (graph : ModuleGraph) (field : FieldSpec Record)
     (assignments : Array (Assignment × Origin)) : Except Diagnostic (Array UnitState × Array String) := do
   let defaults ← field.defaultJson.mapM (keyedValues field)
   let defaults := defaults.getD #[]
@@ -159,7 +154,7 @@ private def resolveKeyed (graph : Foundation.ModuleGraph) (field : FieldSpec Rec
   return (#[presence] ++ units, order)
 
 /-- Resolve candidates without rejecting incomplete records or unresolved independent writes. -/
-def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : Foundation.ModuleGraph)
+def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : ModuleGraph)
     (events : Array InfoEvent) (query : Query) (target : Name ⊕ String) : Except Diagnostic PartialView := do
   let schema : InfoSchema Record := inferInstance
   schema.validateDefinition
@@ -172,10 +167,6 @@ def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : Foundati
         message := s!"unsupported schema `{event.schemaId}@{event.schemaVersion}`; expected `{schema.id}@{schema.version}`"
         kind := some spec.kind, target := some (toString target), source := some event.source } : Diagnostic)
     discard <| validatePatch schema event.assignments
-    if let some initial := event.initialization then
-      discard <| validatePatch schema initial
-      if initial.any (fun assignment => match assignment.operation with | .reset => true | _ => false) then
-        throw { message := "invalid reset in initialization", kind := some spec.kind, target := some (toString target) }
   let allWrites := writes selected
   let mut units := #[]
   let mut keyOrder := #[]
@@ -213,7 +204,7 @@ def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : Foundati
 
 def resolvePartial [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name ⊕ String) :
     Except Diagnostic PartialView := do
-  resolveEvents spec (Foundation.ModuleGraph.ofEnvironment env) (← queryEvents env query) query target
+  resolveEvents spec (ModuleGraph.ofEnvironment env) (← queryEvents env query) query target
 
 /-- Domain checks performed after materialization retain the same field provenance. -/
 def PartialView.attach (view : PartialView) (error : Diagnostic) : Diagnostic := Id.run do
@@ -273,17 +264,17 @@ def resolveInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment)
   consumeView spec (← resolvePartial spec env query target)
 
 /-- Context ambiguity is checked when a caller actually asks for that binding. -/
-def resolveContextEvents (graph : Foundation.ModuleGraph) (events : Array InfoEvent)
+def resolveContextEvents (graph : ModuleGraph) (events : Array InfoEvent)
     (query : Query) (key : String) : Except Diagnostic UnitState := do
   let mut state : UnitState := { key := .binding key }
   for event in ← selectEvents graph events query do
     for binding in event.bindings do
       if binding.key == key then
         state := state.add graph { value := some binding.value, origin := {
-          owner := event.owner, sequence := event.sequence, write := 0, source := binding.source } }
+          owner := event.owner, sequence := event.sequence, source := binding.source } }
   return state
 
 def resolveContext (env : Environment) (query : Query) (key : String) : Except Diagnostic UnitState := do
-  resolveContextEvents (Foundation.ModuleGraph.ofEnvironment env) (← queryEvents env query) query key
+  resolveContextEvents (ModuleGraph.ofEnvironment env) (← queryEvents env query) query key
 
-end ProofScript.Info
+end ProofScript

@@ -3,7 +3,7 @@ import ProofScript.Utils.Json
 
 open Lean Elab Command
 
-namespace ProofScript.Info
+namespace ProofScript
 
 instance : Coe Name (Name ⊕ String) := ⟨Sum.inl⟩
 instance : Coe String (Name ⊕ String) := ⟨Sum.inr⟩
@@ -201,4 +201,4 @@ def InfoSchema.withOverrides (schema : InfoSchema Record) (overrides : SchemaOve
     let _ : Inhabited (InfoSchema Record) := ⟨schema⟩
     panic! error.render
 
-end ProofScript.Info
+end ProofScript

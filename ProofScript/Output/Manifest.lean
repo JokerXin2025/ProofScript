@@ -3,12 +3,12 @@ import ProofScript.Utils.Json
 import ProofScript.Utils.JsonPath
 import ProofScript.Info.State
 
-namespace ProofScript.Output
+namespace ProofScript
 
 open Lean
 open scoped InfoJson
 
-def manifestSchemaVersion : String := "5"
+def manifestSchemaVersion : String := "9"
 
 structure StepBinding where
   path : JsonPath
@@ -31,12 +31,12 @@ structure RenderDependency where
 
 instance : ToJson RenderDependency where
   toJson dependency :=
-    let identity : Info.InfoTarget := { kind := dependency.kind, target := dependency.target }
+    let identity : InfoTarget := { kind := dependency.kind, target := dependency.target }
     (toJson identity).setObjVal! "required" (toJson dependency.required)
 
 instance : FromJson RenderDependency where
   fromJson? value := do
-    let identity : Info.InfoTarget ← fromJson? value
+    let identity : InfoTarget ← fromJson? value
     let required ← match value.getObjVal? "required" with
       | .ok field => fromJson? field
       | .error _ => pure false
@@ -59,26 +59,24 @@ structure Artifact where
   schemaVersion : String := manifestSchemaVersion
   key : ArtifactKey
   path : String
-  /-- Registration captures the current boundary when this input is left unspecified. -/
-  boundary : Info.Boundary := .endOfModule
   declaration : Option Name := none
   dependencies : Array RenderDependency := #[]
   bindings : Array StepBinding := #[]
   contentDigest : String
   deriving Inhabited
 
-def Artifact.query (artifact : Artifact) : Info.Query :=
-  { moduleName := artifact.key.owner, boundary := artifact.boundary }
+def Artifact.query (artifact : Artifact) : Query :=
+  { moduleName := artifact.key.owner }
 
 def Artifact.fingerprint (artifact : Artifact) : String := Json.sha256 <| json% {
   schemaVersion: $(artifact.schemaVersion),
   id: $(artifact.key.id), path: $(artifact.path), content: $(artifact.contentDigest),
-  boundary: $(artifact.boundary), declaration: $(artifact.declaration),
+  declaration: $(artifact.declaration),
   dependencies: $(artifact.dependencies), bindings: $(artifact.bindings) }
 
 initialize artifactExt : SimplePersistentEnvExtension Artifact Unit ←
   registerSimplePersistentEnvExtension {
-    name := `ProofScript.Output.artifacts
+    name := `ProofScript.artifacts
     addEntryFn := fun _ _ => ()
     addImportedFn := fun _ => () }
 
@@ -90,20 +88,15 @@ def moduleArtifacts (env : Environment) (owner : Name) : Array Artifact := Id.ru
     artifacts := (artifacts.filter (·.key != artifact.key)).push artifact
   return artifacts
 
-def registerArtifact (env : Environment) (artifact : Artifact) : Except String Environment := do
+/-- Only recorded proof files are persisted. Page artifacts are built from closed drafts at export. -/
+def registerProofArtifact (env : Environment) (artifact : Artifact) : Except String Environment := do
   unless artifact.schemaVersion == manifestSchemaVersion do throw "unsupported artifact manifest version"
+  unless artifact.key.kind == .proof do throw "page artifacts are generated from closed page drafts"
   unless artifact.key.owner == env.mainModule do throw "artifacts must be committed by their defining module"
-  let boundary := match artifact.boundary with
-    | .endOfModule => Info.currentBoundary env
-    | .before sequence => Info.Boundary.before sequence
-  let .before sequence := boundary | throw "artifacts require a content boundary"
-  unless sequence <= Info.infoEventExt.getState env do
-    throw "artifact boundary is ahead of its defining environment"
-  let artifact := { artifact with boundary }
   let existing := moduleArtifacts env artifact.key.owner
   if let some previous := existing.find? (·.key == artifact.key) then
     if previous.fingerprint == artifact.fingerprint then return env
     throw s!"artifact identity already exists: {artifact.key.name}"
   return artifactExt.addEntry env artifact
 
-end ProofScript.Output
+end ProofScript

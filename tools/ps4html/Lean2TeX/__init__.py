@@ -1,6 +1,6 @@
 """Lean2TeX —— PS4HTML 页面生成器的 TeX 直译接口。
 
-Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 导出结构表达式图和显式 Display，
+Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 导出原生表达式与 MData 注解，
 由文档根清单解析出具体表达式 occurrence，本模块将其转换为 DisplayTree，再渲染为 TeX：
 
     **接收已解析的表达式 occurrence，输出对应的 TeX 代码。**
@@ -23,14 +23,11 @@ Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 导出结构表
 from __future__ import annotations
 
 from .core import Expr2TeX, load
-from .expr import flatten_app
+from .expr import flatten_app, unwrap_mdata
 from .macros import MacroRegistry
-from .model import DisplayNode, Macro, MacroStyle, Unwrap, RenderDiagnostic
+from .model import DisplayNode, Macro, MacroStyle, Unwrap, RenderDiagnostic, RenderLimitError
 from .semantic import SemanticConverter
-from .variable import (
-    VarTypeConfig,
-    VariableAllocator,
-)
+from .variable import VariableAllocator
 
 __all__ = [
     # 核心接口
@@ -38,13 +35,14 @@ __all__ = [
     "load",
     "DisplayNode",
     "RenderDiagnostic",
+    "RenderLimitError",
     "SemanticConverter",
     "Macro",
     "MacroStyle",
     "Unwrap",
     "MacroRegistry",
     "flatten_app",
+    "unwrap_mdata",
     # 变量系统
     "VariableAllocator",
-    "VarTypeConfig",
 ]

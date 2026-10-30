@@ -1,19 +1,40 @@
-import ProofScript.Script.Basic
+import ProofScript.Utils.Tactic
+import ProofScript.Utils.Syntax
+import ProofScript.Script.Command
+import ProofScript.Info.Theorem
+import ProofScript.Script.Script
+import ProofScript.Script.Recording
+import Batteries.Tactic.Init
+import ProofScript.Page.Component.Core
+import ProofScript.Page.Component.Latex
+import ProofScript.Core.BuildMode
 import ProofScript.Info.Commands
 
-/-! Default presentation for the stable registrations in Script.Basic. -/
+open Lean Meta Parser Elab Tactic
+open ProofScript
 
-script_info ProofScript.Script.Basic.«assumption» {
+script_macro «assumption»
+"assumption" => `(tactic| assumption)
+
+script_info «assumption» {
   template := [{
-    lang := "zh", tag := "«assumption»",
-    content := ""
+    lang := "zh", tag := "已知条件",
+    content := "由已知条件给出了证明"
   }, {
     lang := "en", tag := "«assumption»",
     content := ""
   }]
 }
+example : True := by
+  try symm
+  trivial
 
-script_info ProofScript.Script.Basic.«change» {
+script_macro «change»
+"change" equation:term loc:(location)? => `(tactic|
+  change $equation $[$loc:location]?
+)
+
+script_info «change» {
   template := [{
     lang := "zh", tag := "改写目标",
     content := "待证目标即 ${equation_before}"
@@ -23,27 +44,36 @@ script_info ProofScript.Script.Basic.«change» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«contradiction» {
+script_macro «contradiction»
+"contradiction" => `(tactic| contradiction)
+
+script_info «contradiction» {
   template := [{
-    lang := "zh", tag := "«contradiction»",
+    lang := "zh", tag := "矛盾",
     content := ""
   }, {
-    lang := "en", tag := "«contradiction»",
+    lang := "en", tag := "contra",
     content := ""
   }]
 }
 
-script_info ProofScript.Script.Basic.«exfalso» {
+script_macro «exfalso»
+"exfalso" => `(tactic| exfalso)
+
+script_info «exfalso» {
   template := [{
-    lang := "zh", tag := "«exfalso»",
-    content := ""
+    lang := "zh", tag := "归假",
+    content := "矛盾蕴涵任何目标"
   }, {
-    lang := "en", tag := "«exfalso»",
+    lang := "en", tag := "exfalso",
     content := ""
   }]
 }
 
-script_info ProofScript.Script.Basic.«omega» {
+script_macro «omega»
+"omega" => `(tactic| omega)
+
+script_info «omega» {
   template := [{
     lang := "zh", tag := "整数算术",
     content := ""
@@ -53,17 +83,23 @@ script_info ProofScript.Script.Basic.«omega» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«rfl» {
+script_macro «rfl»
+"rfl" => `(tactic| rfl)
+
+script_info «rfl» {
   template := [{
     lang := "zh", tag := "自反性",
     content := ""
   }, {
-    lang := "en", tag := "«rfl»",
+    lang := "en", tag := "refl",
     content := ""
   }]
 }
 
-script_info ProofScript.Script.Basic.«symm» {
+script_macro «symm»
+"symm" loc:(location)? => `(tactic| symm $[$loc:location]?)
+
+script_info «symm» {
   template := [{
     lang := "zh", tag := "对称性",
     content := ""
@@ -73,7 +109,10 @@ script_info ProofScript.Script.Basic.«symm» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«trivial» {
+script_macro «trivial»
+"trivial" => `(tactic| trivial)
+
+script_info «trivial» {
   template := [{
     lang := "zh", tag := "显然",
     content := ""
@@ -83,7 +122,14 @@ script_info ProofScript.Script.Basic.«trivial» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«simp» {
+script_macro «simp» (clear := [config, args])
+"simp" config:optConfig args:simpArgs loc:(location)? =>
+  match args with
+  | `(simpArgs| [$rules,*]) => `(tactic|
+      simp $config:optConfig only [$rules,*] $[$loc:location]?)
+  | _ => Macro.throwUnsupported
+
+script_info «simp» {
   template := [{
     lang := "zh", tag := "化简",
     content := ""
@@ -93,7 +139,12 @@ script_info ProofScript.Script.Basic.«simp» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«rw» {
+script_macro «rw» (clear := [config, rules])
+"rw" config:optConfig rules:rwRuleSeq loc:(location)? => `(tactic|
+  rw $config:optConfig $rules:rwRuleSeq $[$loc:location]?
+)
+
+script_info «rw» {
   template := [{
     lang := "zh", tag := "代换",
     content := ""
@@ -103,7 +154,12 @@ script_info ProofScript.Script.Basic.«rw» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«unfold» {
+script_macro «unfold»
+"unfold" definitions:(colGt ident)+ => `(tactic|
+  unfold $definitions*
+)
+
+script_info «unfold» {
   template := [{
     lang := "zh", tag := "展开定义",
     content := ""
@@ -113,17 +169,99 @@ script_info ProofScript.Script.Basic.«unfold» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«have» {
+/-! ## Script-Steps -/
+
+private partial def hasProofParameter (type : Expr) : MetaM Bool := do
+  let type ← Meta.whnf type
+  match type with
+  | .forallE name domain body binderInfo =>
+      if ← isProp domain then pure true
+      else withLocalDecl name binderInfo domain fun x =>
+        hasProofParameter (body.instantiate1 x)
+  | _ => pure false
+
+private def rejectProofParameters (term : TSyntax `term) (value : Expr) : TacticM Unit := do
+  let some _ := value.getAppFn.const?
+  | return
+  let functionType ← inferType value.getAppFn
+  if ← hasProofParameter functionType then
+    throwErrorAt term "`have` and `exact` cannot apply a function with proof parameters"
+
+script_elab «have» (intro := [h])
+"have" h:ident ":=" term:term => withMainContext do
+  let expression ← elabTerm term none
+  let expression ← instantiateMVars expression
+  rejectProofParameters term expression
+  let type ← inferType expression
+  let goal ← getMainGoal
+  let rest ← goal.assert h.getId type expression
+  let (fvarId, rest) ← rest.intro1P
+  rest.withContext do
+    Elab.Term.addLocalVarInfo h (mkFVar fvarId)
+  replaceMainGoal [rest]
+
+script_info «have» {
   template := [{
     lang := "zh", tag := "引入事实",
-    content := "${h}"
+    content := "${h_after}"
   }, {
     lang := "en", tag := "«have»",
-    content := "${h}"
+    content := "${h_after}"
   }]
 }
 
-script_info ProofScript.Script.Basic.«exact» {
+/-- Introduce a local definition. Its type and value are recorded by the `let`
+    recorder at this step, rather than attached to later variable occurrences. -/
+script_elab «let» (intro := [h])
+"let" h:ident type:(group(":" term))? ":=" term:term => withMainContext do
+  let type ← type.mapM fun type => Term.elabType type.raw[1]
+  let expression ← match type with
+    | some type => elabTermEnsuringType term type
+    | none => elabTerm term none
+  let expression ← instantiateMVars expression
+  let type ← instantiateMVars <| ← match type with
+    | some type => pure type
+    | none => inferType expression
+  let rest ← (← getMainGoal).define h.getId type expression
+  let (fvarId, rest) ← rest.intro1P
+  rest.withContext do
+    Elab.Term.addLocalVarInfo h (mkFVar fvarId)
+  replaceMainGoal [rest]
+
+script_recorder «let» => do
+  record_goal "$goal_before"
+  execute
+  withMainContext do
+    let declaration ← getLocalDeclFromUserName h.getId
+    let typeSource ← match type with
+      | some type => trustedSyntaxSource? type.raw[1]
+      | none => pure none
+    record_value "name" h.getId.eraseMacroScopes.toString
+    record_value "type" (← recordExpression declaration.type typeSource)
+    let value ← recordExpression declaration.value (← trustedSyntaxSource? term.raw)
+    record_value "value" value
+  record_goal "$goal_after"
+
+script_info «let» {
+  template := [{
+    lang := "zh", tag := "定义",
+    content := "${name} : ${type} := ${value}"
+  }, {
+    lang := "en", tag := "«let»",
+    content := "${name} : ${type} := ${value}"
+  }]
+}
+
+script_elab «exact» (clear := [value])
+"exact" value:term => withMainContext do
+  let goal ← getMainGoal
+  let expression ← Elab.Tactic.elabTermEnsuringType value <| ← goal.getType
+  let expression ← instantiateMVars expression
+  rejectProofParameters value expression
+  goal.assign expression
+  replaceMainGoal []
+
+script_info «exact» {
   template := [{
     lang := "zh", tag := "«exact»",
     content := ""
@@ -133,7 +271,44 @@ script_info ProofScript.Script.Basic.«exact» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«exact_proj» {
+private partial def exactAndProj? (value target : Expr) : MetaM (Option Expr) :=
+  withIncRecDepth do
+    let saved ← Meta.saveState
+    let type ← inferType value
+    if ← Meta.withAssignableSyntheticOpaque <| isDefEq type target then
+      return some value
+    saved.restore
+    let type ← whnf <| ← inferType value
+    unless type.isAppOfArity ``And 2 do return none
+    -- Future extensions to Prod/Iff/dependent projections need explicit projection rules here.
+    for projection in [``And.left, ``And.right] do
+      let saved ← Meta.saveState
+      let projected := mkApp3 (mkConst projection) (type.getArg! 0) (type.getArg! 1) value
+      if let some proof ← exactAndProj? projected target then return some proof
+      saved.restore
+    return none
+
+script_elab «exact_proj» (clear := [value])
+"exact_proj" value:term => withMainContext do
+  let goal ← getMainGoal
+  let target ← goal.getType
+  let direct? ← try
+      pure (some <| ← withoutRecover <| elabTermEnsuringType value target)
+    catch ex =>
+      if ex.isInterrupt || ex.isMaxRecDepth || ex.isMaxHeartbeat then throw ex
+      pure none
+  let expression ← match direct? with
+    | some expression => pure expression
+    | none => elabTerm value none
+  let expression ← instantiateMVars expression
+  -- Check the supplied term, not the proof-parameter-bearing projections we generate.
+  rejectProofParameters value expression
+  let some proof ← exactAndProj? expression target
+    | throwErrorAt value "exact_proj failed: neither the term nor its And projections match the goal"
+  goal.assign proof
+  replaceMainGoal []
+
+script_info «exact_proj» {
   template := [{
     lang := "zh", tag := "投影",
     content := "待证目标蕴涵于已知条件“${value_before}”之中"
@@ -143,7 +318,23 @@ script_info ProofScript.Script.Basic.«exact_proj» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«intro» {
+script_elab «intro» (intro := [h])
+"intro" h:(colGt ident)+ => do
+  for h in h do withMainContext do
+    let goal ← getMainGoal
+    let goalExpr ← whnf <| ← goal.getType
+    match goalExpr with
+    | .forallE _ domain body _ =>
+      if (← isProp domain) && (← whnf body).isConstOf ``False then
+        throwError "to solve the goal of form `... → False`, please use `contra`"
+      let (fvarId, newMVarId) ← goal.intro h.getId
+      newMVarId.withContext do
+        Elab.Term.addLocalVarInfo h (mkFVar fvarId)
+      replaceMainGoal [newMVarId]
+    | _ =>
+      throwError "intro failed: the current goal has no binder to introduce."
+
+script_info «intro» {
   template := [{
     lang := "zh", tag := "«intro»",
     content := ""
@@ -153,7 +344,15 @@ script_info ProofScript.Script.Basic.«intro» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«left» {
+script_macro «left»
+"left" => `(tactic| focus
+  first
+  | guard_target =~ (_ ∨ _)
+  | fail "`left` can only be used with propositions connected by `∨`"
+  left
+)
+
+script_info «left» {
   template := [{
     lang := "zh", tag := "确定目标",
     content := ""
@@ -163,7 +362,15 @@ script_info ProofScript.Script.Basic.«left» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«right» {
+script_macro «right»
+"right" => `(tactic| focus
+  first
+  | guard_target =~ (_ ∨ _)
+  | fail "`right` can only be used with propositions connected by `∨`"
+  right
+)
+
+script_info «right» {
   template := [{
     lang := "zh", tag := "确定目标",
     content := ""
@@ -173,29 +380,106 @@ script_info ProofScript.Script.Basic.«right» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«unpack_and» {
+private def unpackProof (h : TSyntax `term) : TacticM (MVarId × FVarId) := withMainContext do
+  let proof ← instantiateMVars <| ← elabTerm h none
+  let goal ← getMainGoal
+  match proof with
+  | .fvar id => return (goal, id)
+  | _ =>
+    let asserted ← goal.assert (← mkFreshUserName `unpackProof) (← inferType proof) proof
+    let (id, rest) ← asserted.intro1P
+    return (rest, id)
+
+-- Split n - 1 times down the right spine; a singleton renames the whole conjunction.
+script_elab «unpack_and» (intro := [names], clear := [h])
+"unpack_and" "⟨" names:sepBy1(ident, ",") "⟩" ":=" h:term => withMainContext do
+  let names := names.getElems
+  let (initialGoal, initialRemainder) ← unpackProof h
+  let mut goal := initialGoal
+  let mut remainder := initialRemainder
+  for i in [:names.size] do
+    let (nextGoal, nextRemainder) ← goal.withContext do
+      if i == 0 || i + 1 < names.size then
+        let type ← whnf <| ← remainder.getType
+        unless type.isAppOfArity ``And 2 do
+          throwErrorAt names[i]! "unpack_and failed: proof '{h}' or its right-hand remainder is not a conjunction (And)"
+      if i + 1 == names.size then
+        let goal ← goal.rename remainder names[i]!.getId
+        goal.withContext do
+          Elab.Term.addLocalVarInfo names[i]! (mkFVar remainder)
+        pure (goal, remainder)
+      else
+        let altNames := { varNames := [names[i]!.getId, names[i + 1]!.getId] }
+        let #[subgoal] ← goal.cases remainder #[altNames]
+        | throwError "unexpected error occurred during executing `unpack_and`"
+        let #[first, second] := subgoal.fields
+        | throwError "unexpected error occurred during executing `unpack_and`"
+        subgoal.mvarId.withContext do
+          Elab.Term.addLocalVarInfo names[i]! first
+        pure (subgoal.mvarId, second.fvarId!)
+    goal := nextGoal
+    remainder := nextRemainder
+  replaceMainGoal [goal]
+
+script_info «unpack_and» {
   template := [{
-    lang := "zh", tag := "拆分合取",
+    lang := "zh", tag := "拆解",
     content := ""
   }, {
-    lang := "en", tag := "«unpack_and»",
+    lang := "en", tag := "unpack",
     content := ""
   }]
 }
 
-script_info ProofScript.Script.Basic.«unpack_iff» {
+script_elab «unpack_iff» (intro := [h₁, h₂], clear := [h])
+"unpack_iff" "⟨" h₁:ident "," h₂:ident "⟩" ":=" h:term => withMainContext do
+  let (goal, fvarId) ← unpackProof h
+  let subgoal ← goal.withContext do
+    let hExpr ← whnf <| ← fvarId.getType
+    unless hExpr.isAppOfArity ``Iff 2 do
+      throwErrorAt h "unpack_iff failed: proof '{h}' is not an equivalence (Iff)"
+    let altNames := { varNames := [h₁.getId, h₂.getId] }
+    let #[subgoal] ← goal.cases fvarId #[altNames]
+      | throwError "unexpected error occurred during executing `unpack_iff`"
+    pure subgoal
+  subgoal.mvarId.withContext do
+    let #[first, second] := subgoal.fields
+    | throwError "unexpected error occurred during executing `unpack_iff`"
+    Elab.Term.addLocalVarInfo h₁ first
+    Elab.Term.addLocalVarInfo h₂ second
+  replaceMainGoal [subgoal.mvarId]
+
+script_info «unpack_iff» {
   template := [{
-    lang := "zh", tag := "拆分等价",
+    lang := "zh", tag := "拆解",
     content := ""
   }, {
-    lang := "en", tag := "«unpack_iff»",
+    lang := "en", tag := "unpack",
     content := ""
   }]
 }
 
-script_info ProofScript.Script.Basic.«obtain_exist» {
+script_elab «obtain_exist» (intro := [h₁, h₂], clear := [h])
+"obtain_exist" "⟨" h₁:ident "," h₂:ident "⟩" ":=" h:term => withMainContext do
+  let (goal, fvarId) ← unpackProof h
+  let subgoal ← goal.withContext do
+    let hExpr ← whnf <| ← fvarId.getType
+    unless hExpr.isAppOfArity ``Exists 2 do
+      throwErrorAt h "obtain_exist failed: proof '{h}' is not an existential proposition (Exists)"
+    let altNames := { varNames := [h₁.getId, h₂.getId] }
+    let #[subgoal] ← goal.cases fvarId #[altNames]
+      | throwError "unexpected error occurred during executing `obtain_exist`"
+    pure subgoal
+  subgoal.mvarId.withContext do
+    let #[first, second] := subgoal.fields
+    | throwError "unexpected error occurred during executing `obtain_exist`"
+    Elab.Term.addLocalVarInfo h₁ first
+    Elab.Term.addLocalVarInfo h₂ second
+  replaceMainGoal [subgoal.mvarId]
+
+script_info «obtain_exist» {
   template := [{
-    lang := "zh", tag := "解构存在性",
+    lang := "zh", tag := "拆解",
     content := ""
   }, {
     lang := "en", tag := "«obtain_exist»",
@@ -203,9 +487,15 @@ script_info ProofScript.Script.Basic.«obtain_exist» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«obtain_exist'» {
+script_macro «obtain_exist'» (intro := [h₁, h₂, h₃], clear := [h])
+"obtain_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":=" h:term => `(tactic| focus
+  script_obtain_exist ⟨$h₁, existBody⟩ := $h
+  script_unpack_and ⟨$h₂, $h₃⟩ := existBody
+)
+
+script_info «obtain_exist'» {
   template := [{
-    lang := "zh", tag := "解构存在性",
+    lang := "zh", tag := "拆解",
     content := ""
   }, {
     lang := "en", tag := "«obtain_exist'»",
@@ -213,9 +503,23 @@ script_info ProofScript.Script.Basic.«obtain_exist'» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«funext» {
+script_elab «funext» (intro := [arg])
+"funext" arg:ident => withMainContext do
+  let target ← getMainGoalExpr'
+  unless target.isAppOfArity ``Eq 3 do
+    throwError "`funext` can only be used on function equality goals"
+  let lhsType ← whnf <| ← inferType (target.getArg! 1)
+  let rhsType ← whnf <| ← inferType (target.getArg! 2)
+  match lhsType, rhsType with
+  | .forallE _ domain _ _, .forallE _ domain' _ _ =>
+    unless ← isDefEq domain domain' do
+      throwError "`funext` requires both sides of the equality to have the same function domain"
+    evalTactic <| ← `(tactic| funext $arg:ident)
+  | _, _ => throwError "`funext` can only be used on function equality goals"
+
+script_info «funext» {
   template := [{
-    lang := "zh", tag := "函数外延性",
+    lang := "zh", tag := "外延性",
     content := ""
   }, {
     lang := "en", tag := "By function extensionality,",
@@ -223,7 +527,27 @@ script_info ProofScript.Script.Basic.«funext» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«provide» {
+script_elab «provide» (clear := [data])
+"provide" data:term => withMainContext do
+  let goal ← getMainGoal
+  let target ← whnf <| ← goal.getType
+  let dataExpr ← elabTerm data none
+  let isWitnessDataGoal := match ← goal.getType with
+    | .mdata data _ => data.getBool `ProofScript.witnessDataGoal false
+    | _ => false
+  if isWitnessDataGoal then
+    goal.assign dataExpr
+    replaceMainGoal []
+  else if target.isAppOfArity ``Exists 2 then
+    let goals ← goal.apply <| ← Meta.mkConstWithFreshMVarLevels ``Exists.intro
+    match goals with
+    | [proofGoal, dataGoal] =>
+      dataGoal.assign dataExpr
+      replaceMainGoal [proofGoal]
+    | _ => throwError "unexpected error occurred during `provide`"
+  else throwError "`provide` can only be used in the `data` branch of `witness` or on an existential goal"
+
+script_info «provide» {
   template := [{
     lang := "zh", tag := "选取",
     content := "${data_before}"
@@ -233,17 +557,53 @@ script_info ProofScript.Script.Basic.«provide» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«apply» {
+script_elab «apply» (clear := [h])
+"apply" h:term => withMainContext do
+  let hExpr ← instantiateMVars <| ← Elab.Tactic.elabTermForApply h
+  let hType ← whnf <| ← inferType hExpr
+  let target ← whnf <| ← getMainGoalExpr
+  let premise ←
+    if hType.isAppOfArity ``Iff 2 then
+      let lhs := hType.getArg! 0
+      let rhs := hType.getArg! 1
+      if ← isDefEq target rhs then
+        pure (hType.getArg! 0, mkApp (mkConst ``Iff.mp) hExpr)
+      else if ← isDefEq target lhs then
+        pure (hType.getArg! 1, mkApp (mkConst ``Iff.mpr) hExpr)
+      else
+        throwErrorAt h m!"Either `{lhs}` or `{rhs}` should be definitionally equal to `{target}`"
+    else
+      match hType with
+      | .forallE _ premiseType conclusion _ =>
+        unless (← isProp premiseType) && (← isProp conclusion) do
+          throwErrorAt h m!"`{h}` should be in the form of `P → Q`, `P ← Q`, or `P ↔ Q`"
+        unless ← isDefEq target conclusion do
+          throwErrorAt h m!"`{conclusion}` should be definitionally equal to `{target}`"
+        pure (premiseType, hExpr)
+      | _ =>
+        throwErrorAt h m!"`{h}` should be in the form of `P → Q`, `P ← Q`, or `P ↔ Q`"
+  let (premiseType, applied) := premise
+  let premiseMVar ← mkFreshExprMVar premiseType
+  let goal ← getMainGoal
+  goal.assign (mkApp applied premiseMVar)
+  replaceMainGoal [premiseMVar.mvarId!]
+
+script_info «apply» {
   template := [{
     lang := "zh", tag := "应用定理",
-    content := "${h}"
+    content := "${h_before}"
   }, {
     lang := "en", tag := "Applying the theorem,",
-    content := "${h}"
+    content := "${h_before}"
   }]
 }
 
-script_info ProofScript.Script.Basic.«quot_induction» {
+script_macro quot_induction (intro := [a])
+"quot_induction" q:term "with" a:ident => `(tactic|
+  refine Quot.inductionOn $q:term (fun $a:ident => ?_)
+)
+
+script_info «quot_induction» {
   template := [{
     lang := "zh", tag := "商归纳",
     content := ""
@@ -253,9 +613,31 @@ script_info ProofScript.Script.Basic.«quot_induction» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«claim» {
+/-! ## Script-Strategy -/
+
+/-! ### Assertions -/
+
+script_elab «claim» (intro := [h], kind := strategy, continuation := `rest)
+"claim" h:ident ":" type:term => withMainContext do
+  let goal ← getMainGoal
+  let type ← elabTerm type none
+  let proofMVar ← mkFreshExprMVar type
+  proofMVar.mvarId!.setTag `proof
+  let restMVar ← goal.assert h.getId type proofMVar
+  let (fvarId, restMVar') ← restMVar.intro1P
+  restMVar'.setTag `rest
+  restMVar'.withContext do
+    Elab.Term.addLocalVarInfo h (mkFVar fvarId)
+  replaceMainGoal [proofMVar.mvarId!, restMVar']
+
+script_recorder «claim» => do
+  record_goal "$goal_before"
+  execute
+  record_param "h" h (goal := `rest)
+
+script_info «claim» {
   template := [{
-    lang := "zh", tag := "先证明断言",
+    lang := "zh", tag := "断言",
     cases := [{name := "proof", tag := "证明", title := ""}]
   }, {
     lang := "en", tag := "Proving an intermediate claim,",
@@ -263,9 +645,59 @@ script_info ProofScript.Script.Basic.«claim» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«claimExistTwo» {
+open Term (addLocalVarInfo) in
+private def claimExist (names : Array (TSyntax `ident)) (type : TSyntax `term) : TacticM Unit :=
+    withMainContext do
+  let goal ← getMainGoal
+  let typeExpr ← elabTerm type none
+  unless (← whnf typeExpr).isAppOfArity ``Exists 2 do
+    throwErrorAt type "claim_exist requires an existential proposition (Exists)"
+  let proofMVar ← mkFreshExprMVar typeExpr
+  proofMVar.mvarId!.setTag `proof
+  let asserted ← goal.assert (← mkFreshUserName `claimExist) typeExpr proofMVar
+  let (existId, rest) ← asserted.intro1P
+  let subgoal ← rest.withContext do
+    let altNames := { varNames := [names[0]!.getId, names[1]!.getId] }
+    let #[subgoal] ← rest.cases existId #[altNames]
+      | throwError "unexpected error occurred during executing `claim_exist`"
+    pure subgoal
+  let #[first, second] := subgoal.fields
+    | throwError "unexpected error occurred during executing `claim_exist`"
+  subgoal.mvarId.withContext do
+    addLocalVarInfo names[0]! first
+    if names.size == 2 then
+      addLocalVarInfo names[1]! second
+  let rest ← if names.size == 2 then pure subgoal.mvarId else do
+    let remainder := second.fvarId!
+    let subgoal' ← subgoal.mvarId.withContext do
+      unless (← whnf <| ← remainder.getType).isAppOfArity ``And 2 do
+        throwErrorAt names[2]! "claim_exist requires a conjunction after the existential witness (And)"
+      let altNames := { varNames := [names[1]!.getId, names[2]!.getId] }
+      let #[subgoal'] ← subgoal.mvarId.cases remainder #[altNames]
+        | throwError "unexpected error occurred during executing `claim_exist`"
+      pure subgoal'
+    subgoal'.mvarId.withContext do
+      let #[left, right] := subgoal'.fields
+        | throwError "unexpected error occurred during executing `claim_exist`"
+      addLocalVarInfo names[1]! left
+      addLocalVarInfo names[2]! right
+    pure subgoal'.mvarId
+  rest.setTag `rest
+  replaceMainGoal [proofMVar.mvarId!, rest]
+
+script_elab «claimExistTwo» (intro := [h₁, h₂], kind := strategy, continuation := `rest)
+"claim_exist" "⟨" h₁:ident "," h₂:ident "⟩" ":" type:term =>
+  claimExist #[h₁, h₂] type
+
+script_recorder «claimExistTwo» => do
+  record_goal "$goal_before"
+  execute
+  record_param "h₁" h₁ (goal := `rest)
+  record_param "h₂" h₂ (goal := `rest)
+
+script_info «claimExistTwo» {
   template := [{
-    lang := "zh", tag := "先证明存在性断言",
+    lang := "zh", tag := "断言",
     cases := [{name := "proof", tag := "证明", title := ""}]
   }, {
     lang := "en", tag := "Proving an existential claim,",
@@ -273,9 +705,20 @@ script_info ProofScript.Script.Basic.«claimExistTwo» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«claimExistThree» {
+script_elab «claimExistThree» (intro := [h₁, h₂, h₃], kind := strategy, continuation := `rest)
+"claim_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":" type:term =>
+  claimExist #[h₁, h₂, h₃] type
+
+script_recorder «claimExistThree» => do
+  record_goal "$goal_before"
+  execute
+  record_param "h₁" h₁ (goal := `rest)
+  record_param "h₂" h₂ (goal := `rest)
+  record_param "h₃" h₃ (goal := `rest)
+
+script_info «claimExistThree» {
   template := [{
-    lang := "zh", tag := "先证明存在性断言",
+    lang := "zh", tag := "断言",
     cases := [{name := "proof", tag := "证明", title := ""}]
   }, {
     lang := "en", tag := "Proving an existential claim,",
@@ -283,10 +726,29 @@ script_info ProofScript.Script.Basic.«claimExistThree» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«witness» {
+/-! ### Existential Construction -/
+
+script_elab «witness» (kind := strategy)
+"witness" => withMainContext do
+  let goal ← getMainGoal
+  let goalExpr ← whnf <| ← goal.getType
+  unless goalExpr.isAppOfArity ``Exists 2 do
+    throwError "`witness` can only be used with `∃` propositions"
+  let mvarIds ← goal.apply <| ← Meta.mkConstWithFreshMVarLevels ``Exists.intro
+  match mvarIds with
+  | [m₁, m₂] =>
+    m₁.setTag `proof
+    m₂.setTag `data
+    let dataType ← m₂.getType
+    m₂.setType (.mdata (Lean.MData.empty.setBool `ProofScript.witnessDataGoal true) dataType)
+    replaceMainGoal [m₁, m₂]
+  | _ =>
+    throwError "unexpected error occurred during executing `witness`"
+
+script_info «witness» {
   color := (some "#166a80", some "#9ac7d0", some "#eff8fa"),
   template := [{
-    lang := "zh", tag := "构造性证明",
+    lang := "zh", tag := "构造",
     introducer := {tag := "目标拆解", content := "将目标拆分为数据构造和性质证明两个子目标"},
     cases := [
       {name := "data", tag := "子目标 I", title := ""},
@@ -302,9 +764,19 @@ script_info ProofScript.Script.Basic.«witness» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«split_and» {
+/-! ### Goal Decomposition: Conjunction -/
+
+script_macro «split_and» (kind := strategy)
+"split_and" => `(tactic| focus
+  first
+  | guard_target =~ (_ ∧ _)
+  | fail "`split_and` can only be used with `∧` propositions"
+  apply And.intro
+)
+
+script_info «split_and» {
   template := [{
-    lang := "zh", tag := "拆分合取",
+    lang := "zh", tag := "分解",
     introducer := {tag := "目标拆解", content := "将目标拆分为子目标逐一证明"},
     cases := [
       {name := "left", tag := "子目标 I", title := ""},
@@ -320,13 +792,60 @@ script_info ProofScript.Script.Basic.«split_and» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«split_and!» {
+private partial def splitAndRec (mvarId : MVarId)
+                                : MetaM (List MVarId) := do
+  let goalExpr ← whnf <| ← mvarId.getType
+  if goalExpr.isAppOfArity ``And 2 then
+    let mvarIds ← mvarId.apply (mkConst ``And.intro)
+    match mvarIds with
+    | [m₁, m₂] =>
+      let leftLeaves ← splitAndRec m₁
+      let rightLeaves ← splitAndRec m₂
+      return leftLeaves ++ rightLeaves
+    | _ => return [mvarId]
+  else
+    return [mvarId]
+
+script_elab «split_and!» (kind := strategy)
+"split_and!" => withMainContext do
+  let goal ← getMainGoal
+  let goalExpr ← whnf <| ← goal.getType
+  unless goalExpr.isAppOfArity ``And 2 do
+    throwError "`split_and!` can only be used with `∧` propositions"
+  let leaves ← splitAndRec goal
+  let mut i := 1
+  for leaf in leaves do
+    let tagName := Name.mkSimple s!"goal{i.toRoman}"
+    leaf.setTag tagName
+    i := i + 1
+  replaceMainGoal leaves
+
+script_info «split_and!» {
   renderer := «strategy»
 }
 
-script_info ProofScript.Script.Basic.«split_iff» {
+/-! ### Goal Decomposition: Equivalence -/
+
+script_elab «split_iff» (kind := strategy)
+"split_iff" => withMainContext do
+  let goal ← getMainGoal
+  let goalExpr ← whnf <| ← goal.getType
+  unless goalExpr.isAppOfArity ``Iff 2 do
+    throwError "`split_iff` can only be used with `↔` propositions"
+  let mvarIds ← goal.apply (mkConst ``Iff.intro)
+  match mvarIds with
+  | [m₁, m₂] =>
+    let (_, m₁') ← m₁.intro `_
+    let (_, m₂') ← m₂.intro `_
+    m₁'.setTag `suffice
+    m₂'.setTag `necess
+    replaceMainGoal [m₁', m₂']
+  | _ =>
+    throwError "unexpected error occurred during executing `split_iff`"
+
+script_info «split_iff» {
   template := [{
-    lang := "zh", tag := "拆分充分必要",
+    lang := "zh", tag := "分解",
     introducer := {tag := "目标拆解", content := "将目标拆分为充分性和必要性两个子目标"},
     cases := [
       {name := "suffice", tag := "子目标 I", title := ""},
@@ -342,7 +861,45 @@ script_info ProofScript.Script.Basic.«split_iff» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«cases_by» {
+/-! ### Case Analysis on Disjunctions -/
+
+private def casesByProof (h : TSyntax `term) (tacticName : String) : TacticM (MVarId × FVarId) :=
+    withMainContext do
+  let proof ← instantiateMVars <| ← elabTerm h none
+  let type ← inferType proof
+  unless (← whnf type).isAppOfArity ``Or 2 do
+    throwError "`{tacticName}` can only be used with `∨` propositions"
+  let goal ← getMainGoal
+  match proof with
+  | .fvar id => return (goal, id)
+  | _ =>
+    let asserted ← goal.assert (← mkFreshUserName `casesByProof) type proof
+    let (id, rest) ← asserted.intro1P
+    return (rest, id)
+
+script_elab «cases_by» (kind := strategy)
+"cases_by" h:term => withMainContext do
+  let (goal, fvarId) ← casesByProof h "cases_by"
+  let altNames := #[
+    { varNames := [Name.mkSimple "hp"] },
+    { varNames := [Name.mkSimple "hq"] }
+  ]
+  let subgoals ← goal.cases fvarId altNames
+  match subgoals with
+  | #[leftGoal, rightGoal] =>
+      leftGoal.mvarId.setTag `left
+      rightGoal.mvarId.setTag `right
+      replaceMainGoal [leftGoal.mvarId, rightGoal.mvarId]
+  | _ =>
+    throwError "unexpected error occurred during executing `cases_by`"
+script_recorder «cases_by» => do
+  withRollback do
+    record_goal "$goal_before"
+    record_param "h" h
+    record_value "subject" (← recordValueFrom "subject" (expressionType h.raw))
+  execute
+
+script_info «cases_by» {
   template := [{
     lang := "zh", tag := "分类讨论",
     introducer := {tag := "分类依据", content := "对命题 ${subject} 的不同情形分别讨论"},
@@ -360,15 +917,81 @@ script_info ProofScript.Script.Basic.«cases_by» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«cases_by!» {
+script_elab «cases_by!» (kind := strategy)
+"cases_by!" h:term => withMainContext do
+  let (goal, hId) ← casesByProof h "cases_by!"
+  let leaves ← goal.casesRec fun declaration => do
+    pure ((declaration.fvarId == hId) ||
+      (← whnf declaration.type).isAppOfArity ``Or 2)
+  unless leaves.length ≥ 2 do
+    throwError "unexpected error occurred during executing `cases_by!`"
+  let mut tagged : List MVarId := []
+  let mut i := 1
+  for leaf in leaves do
+    leaf.setTag (Name.mkSimple s!"goal{i.toRoman}")
+    tagged := tagged ++ [leaf]
+    i := i + 1
+  replaceMainGoal tagged
+
+script_info «cases_by!» {
   renderer := «strategy»
 }
 
-script_info ProofScript.Script.Basic.«cases_on» {
+/-! ### Case Analysis on Propositions or Inductive Types -/
+
+script_elab «cases_on» (kind := strategy)
+"cases_on" value:term => withMainContext do
+  let (_valueExpr, valueType) ← do
+    let valueExpr ← elabTerm value none
+    pure (valueExpr, ← whnf <| ← inferType valueExpr)
+  if valueType == .sort .zero then
+    evalTactic <| ← `(tactic| open Classical in
+      by_cases h : $value:term)
+    let goals ← getGoals
+    match goals with
+    | [trueGoal, falseGoal] =>
+      trueGoal.setTag `true
+      falseGoal.setTag `false
+    | _ =>
+      throwError "unexpected error occurred during executing `cases_on`"
+  else if ← isProp valueType then
+    throwError "`cases_on` cannot be used on a proof of a proposition; pass the proposition itself"
+  else
+    evalTactic <| ← `(tactic| cases $value:term)
+
+script_info «cases_on» {
   renderer := «strategy»
 }
 
-script_info ProofScript.Script.Basic.«contra» {
+/-! ### Proof by Contradiction -/
+
+script_elab «contra» (intro := [h], kind := strategy)
+"contra" h:ident => withMainContext do
+  let goal ← getMainGoal
+  let isArrowToFalse :=
+    match ← whnf <| ← goal.getType with
+    | .forallE _ _ body _ => body.isConstOf ``False
+    | _                   => false
+  if isArrowToFalse then
+    let (fvarId, newMVarId) ← goal.intro h.getId
+    newMVarId.withContext do
+      Elab.Term.addLocalVarInfo h (mkFVar fvarId)
+    newMVarId.setTag `proof
+    replaceMainGoal [newMVarId]
+  else
+    evalTactic <| ← `(tactic| by_contra $h)
+    let newMVarId ← getMainGoal
+    newMVarId.setTag `proof
+    replaceMainGoal [newMVarId]
+
+script_recorder «contra» => do
+  record_goal "$goal_before"
+  execute
+  withRollback do
+    record_param "h" h
+    record_value "hypothesis" (← recordValueFrom "hypothesis" (expressionType h.raw))
+
+script_info «contra» {
   color := (some "#a33b45", some "#ddb0b4", some "#fcf2f2"),
   template := [{
     lang := "zh", tag := "反证法",
@@ -383,7 +1006,14 @@ script_info ProofScript.Script.Basic.«contra» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«induction» {
+/-! ### Induction -/
+
+script_macro «induction» (kind := strategy)
+"induction" n:ident => `(tactic|
+  induction $n:ident
+)
+
+script_info «induction» {
   color := (some "#2b6a4a", some "#a3c2b1", some "#f2f7f4"),
   template := [{
     lang := "zh", tag := "数学归纳法",
@@ -402,10 +1032,26 @@ script_info ProofScript.Script.Basic.«induction» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«complete_induction» {
+/-! ### Complete Induction -/
+
+private theorem strongInductionOn {motive : Nat → Prop}
+    (zero : motive 0) (t : Nat)
+    (succ : (n : Nat) → ((m : Nat) → m < n.succ → motive m) → motive n.succ)
+  : motive t
+:= Nat.strongRecOn t <| fun n ih =>
+    match n with
+    | 0    => zero
+    | n + 1 => succ n ih
+
+script_macro «complete_induction» (kind := strategy)
+"complete_induction" n:ident => `(tactic|
+  induction $n:ident using strongInductionOn
+)
+
+script_info «complete_induction» {
   color := (some "#61519a", some "#bdb3d8", some "#f6f3fa"),
   template := [{
-    lang := "zh", tag := "强数学归纳法",
+    lang := "zh", tag := "强归纳法",
     introducer := {tag := "归纳对象", content := "对自然数 ${n} 使用强数学归纳法。"},
     cases := [
       {name := "zero", tag := "基础情形", title := "验证命题对 $0$ 成立"},
@@ -421,33 +1067,135 @@ script_info ProofScript.Script.Basic.«complete_induction» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«constructor» {
+/-! ### Arbitrary Constructor -/
+
+private def rejectOverlappingConstructor (target : Expr) : MetaM Unit := do
+  let target ← whnf target
+  if target.isAppOfArity ``And 2 then
+    throwError "`constructor` cannot be used for `∧`; use `split_and`"
+  if target.isAppOfArity ``Iff 2 then
+    throwError "`constructor` cannot be used for `↔`; use `split_iff`"
+  if target.isAppOfArity ``Exists 2 then
+    throwError "`constructor` cannot be used for `∃`; use `witness`"
+  if target.isAppOfArity ``Or 2 then
+    throwError "`constructor` cannot be used for `∨`; use `left` or `right`"
+
+script_elab «constructor» (kind := strategy)
+"constructor" => withMainContext do
+  let goal ← getMainGoal
+  rejectOverlappingConstructor <| ← goal.getType
+  let goals ← goal.constructor
+  replaceMainGoal goals
+
+script_info «constructor» {
   renderer := «strategy»,
   color := (some "#a26423", some "#dfc39d", some "#fdf8ee")
 }
 
-script_info ProofScript.Script.Basic.«constructor!» {
+private partial def constructorFieldNames (type : Expr) : List Name :=
+  match type with
+  | .forallE name _ body _ => name :: constructorFieldNames body
+  | _ => []
+
+private def applyNamedConstructor (goal : MVarId)
+                                  (ctor : TSyntax `term)
+                                  : TacticM (List MVarId) := do
+  let ctorExpr ← elabTerm ctor none
+  let some (ctorName, _) := ctorExpr.getAppFn.const?
+  | throwErrorAt ctor "the named constructor must be a constructor constant"
+  let some ctorInfo ← isCtor? ctorName
+  | throwErrorAt ctor m!"`{ctorName}` is not a constructor"
+  let goals ← goal.apply ctorExpr
+  let fieldNames := (constructorFieldNames ctorInfo.type).drop ctorInfo.numParams
+  for (subgoal, name) in goals.zip fieldNames do
+    subgoal.setTag name
+  return goals
+
+script_elab «constructor!» (kind := strategy)
+"constructor!" ctor:term => withMainContext do
+  let goal ← getMainGoal
+  rejectOverlappingConstructor <| ← goal.getType
+  replaceMainGoal <| ← applyNamedConstructor goal ctor
+
+script_info «constructor!» {
   renderer := «strategy»,
   color := (some "#a26423", some "#dfc39d", some "#fdf8ee")
 }
 
-script_info ProofScript.Script.Basic.«remark» {
+/-! ## Metadata -/
+
+/-! ### Remark -/
+
+script_macro «remark» (kind := metadata, clear := [text])
+"remark" text:str => `(tactic| skip)
+
+script_info «remark» {
   renderer := «remark»
 }
 
-script_info ProofScript.Script.Basic.«svg» {
+/-! ### SVG -/
+
+script_macro «svg» (kind := metadata, clear := [code])
+"svg" code:str => `(tactic| skip)
+
+script_info «svg» {
   renderer := «diagram»
 }
 
-script_info ProofScript.Script.Basic.«latex» {
+/-! LaTeX (Compiled to SVG) -/
+
+script_elab «latex» (kind := metadata)
+"latex" _metadata:componentMeta _code:str =>
+  addComponentMetadataInfo _metadata.raw
+
+script_recorder «latex» => do
+  record_goal "$goal_before"
+  let metadata ←
+    match parseComponentMetadata _metadata.raw with
+    | .ok value => pure value
+    | .error message => throwErrorAt _metadata message
+  let svg ←
+    writeTextResource "svg" "svg" "image/svg+xml" <| ←
+      compileLatexToSvg _code.getString
+  record_value "metadata" (toJson metadata)
+  record_value "language" "latex"
+  record_value "source" _code.getString
+  record_value "svg" svg
+  execute
+  record_goal "$goal_after"
+
+script_info «latex» {
   renderer := «media»
 }
 
-script_info ProofScript.Script.Basic.«admit» {
+/-! Informal Proof -/
+
+script_macro «admit» (clear := [reason])
+"admit" reason:str => `(tactic| admit)
+
+script_info «admit» {
   renderer := «admit»
 }
 
-script_info ProofScript.Script.Basic.«cite» {
+macro "admit" reason:str : term => `(term| script admit $reason:str)
+
+/-! ### Manual Citation -/
+
+private def citeTheorem (thm : TSyntax `term) : TacticM Unit := withRollback <| withMainContext do
+  let expression ← instantiateMVars <| ← elabTerm thm none
+  unless ← isProp (← inferType expression) do
+    throwErrorAt thm "`cite` requires a proof of a proposition"
+  let refs ← RefInfo.collectConstantRefs expression.getUsedConstants false
+  for ref in refs do stageTheoremRef { name := ref.name, isDependency := false }
+
+script_elab «cite» (kind := metadata)
+"cite" thm:term => do citeTheorem thm; fun _ => pure ()
+
+script_recorder «cite» => do
+  record_param "theorem" thm
+  execute
+
+script_info «cite» {
   template := [{
     lang := "zh", tag := "引用定理",
     content := "${theorem}"
@@ -457,10 +1205,289 @@ script_info ProofScript.Script.Basic.«cite» {
   }]
 }
 
-script_info ProofScript.Script.Basic.«renderCalc» {
+/-! ## Calculation Chains -/
+
+/-- Parse `calcSteps` into one `(relation term, proof term)` pair per step.
+    The native structure is `calcFirstStep (calcStep)*` (see
+    `Lean.Elab.Calc.mkCalcStepViews`). Unlike `infer`, a `calc` relation
+    (`=`/`≤` and so on) is embedded in the relation term itself, so it is
+    extracted syntactically and decomposed after elaboration. -/
+private def parseCalcSteps  (steps : Syntax)
+                            : MacroM (Array (TSyntax `term × TSyntax `term)) := do
+  -- `calcSteps` has a first-step node followed by a `many` node of later steps.
+  let firstStep := steps[0]
+  let restSteps := steps[1]
+  let first ← match firstStep with
+              | `(calcFirstStep| $term:term := $proof:term) => pure (term, proof)
+              | `(calcFirstStep| $term:term) =>
+                  -- Without `:=`, complete the relation with `= _` and use `rfl`.
+                  let rel : TSyntax `term ← `($term:term = _)
+                  let rfl : TSyntax `term ← `(rfl)
+                  pure (rel, rfl)
+              | _ => Macro.throwError s!"calc: invalid first-step syntax (kind: {firstStep.getKind})"
+  let mut out := #[first]
+  for i in [:restSteps.getArgs.size] do
+    let step := restSteps[i]
+    let `(Lean.calcStep| $term:term := $proof:term) := step
+    | Macro.throwError s!"calc: invalid chain-step syntax (kind: {step.getKind})"
+    out := out.push (term, proof)
+  return out
+
+/-- Decompose `e` into `(relation, left, right)`.
+    The final two arguments are expected to be explicit, as in
+    `Lean.Elab.Term.getCalcRelation?`. -/
+private def decomposeCalcRelation (e : Expr) : Option (Expr × Expr × Expr) :=
+  if e.getAppNumArgs < 2 then none
+  else some (e.appFn!.appFn!, e.appFn!.appArg!, e.appArg!)
+
+-- Capture native `calc` elaboration in the current calc invocation. The
+-- environment slot backtracks with Lean and the outer value survives nesting.
+private abbrev CalcProofs := Array (Nat × Expr × Expr)
+initialize calcProofsExt : EnvExtension (Option CalcProofs) ← registerEnvExtension (pure none)
+
+def withCalcProofs (action : TacticM Unit) : TacticM CalcProofs := do
+  let previous := calcProofsExt.getState <| ← getEnv
+  modifyEnv (calcProofsExt.setState · (some #[]))
+  try
+    action
+    return (calcProofsExt.getState <| ← getEnv).getD #[]
+  finally
+    modifyEnv (calcProofsExt.setState · previous)
+
+syntax (name := recordedCalcProof) "_recorded_calc_proof%" num term : term
+
+@[term_elab recordedCalcProof] def elabRecordedCalcProof : Elab.Term.TermElab := fun stx expected? => do
+  let `(_recorded_calc_proof% $index:num $proof:term) := stx
+    | Elab.throwUnsupportedSyntax
+  let some expected := expected? | throwError "calc proof requires an expected type"
+  let expression ← Elab.Term.elabTermEnsuringType proof expected
+  let some _ := calcProofsExt.getState <| ← getEnv
+    | throwError "calc proof elaborated outside a recording capture"
+  modifyEnv fun env => calcProofsExt.modifyState env fun proofs =>
+    proofs.map (·.push (index.getNat, expected, expression))
+  return expression
+
+script_macro «renderCalc»
+"calc" steps:calcSteps => do
+  `(tactic| calc $steps:calcSteps)
+
+/-- Recorder for `_script_calc`: record the initial term and every chain step.
+    `init` is the left side of the first relation; `chain` contains
+    `{relation, rhs, proof}` entries, with proofs containing `?_` recorded as holes. -/
+script_recorder «renderCalc» => do
+  record_goal "$goal_before"
+  let chain ← liftMacroM <| parseCalcSteps steps
+  let views ← Elab.Term.mkCalcStepViews steps
+  let wrapped ← views.mapIdxM fun index view => do
+    let proof ← `(_recorded_calc_proof% $(quote index) $(view.proof))
+    return { view with proof }
+  let first ← `(calcFirstStep| $(wrapped[0]!.term) := $(wrapped[0]!.proof))
+  let rest ← (wrapped.extract 1 wrapped.size).mapM fun view =>
+    `(Lean.calcStep| $(view.term) := $(view.proof))
+  let recordedSteps : TSyntax ``calcSteps := ⟨steps.raw.setArg 0 first.raw |>.setArg 1 (mkNullNode rest)⟩
+  let recordInit : TacticM RecordedValue := do
+    let proofs := (calcProofsExt.getState (← getEnv)).getD #[]
+    let some (_, type, _) := proofs.find? (fun entry => entry.1 == 0)
+      | throwError "calc: missing first elaborated proof"
+    let some (_, lhs, _) := decomposeCalcRelation (← instantiateMVars type)
+      | throwError "calc: cannot extract the initial relation"
+    return ← recordExpression lhs
+  let recordChain : TacticM RecordedValue := do
+    let proofs := (calcProofsExt.getState (← getEnv)).getD #[]
+    let mut values := #[]
+    for i in [:chain.size] do
+      let (relTerm, prf) := chain[i]!
+      let some (_, type, proof) := proofs.find? (fun entry => entry.1 == i)
+        | throwErrorAt prf "calc: missing elaborated proof"
+      let some (rel, _, rhs) := decomposeCalcRelation (← instantiateMVars type)
+        | throwErrorAt relTerm "calc: cannot extract a binary relation from the step"
+      let proof ← if containsSyntheticHole prf.raw then
+          pure (RecordedValue.object [("kind", .plain (json% "hole"))])
+        else recordExpression proof (← trustedSyntaxSource? prf.raw)
+      values := values.push (.object [
+        ("relation", ← recordExpression rel),
+        ("rhs", ← recordExpression rhs), ("proof", proof)])
+    return .array values
+  let _ ← withCalcProofs do
+    -- Execute the wrapped call so native elaboration supplies the recorded proofs.
+    evalTactic <| ← `(tactic| script_calc $recordedSteps:calcSteps)
+    withRollback do
+      record_value "init" (← recordInit)
+      record_value "chain" (← recordChain)
+  record_goal "$goal_after"
+
+script_info «renderCalc» {
   renderer := «calc»
 }
 
-script_info ProofScript.Script.Basic.«infer» {
+/-! ## Inference Chains -/
+
+/-! Follow the native `calc` layout: the first step is wrapped in its own
+    `withPosition` and the remaining steps share a second `withPosition` that
+    re-anchors at the second step's column. This lets the second step sit at a
+    shallower column than the first, while still distinguishing subsequent
+    steps from following tactics. -/
+
+syntax inferArrow := " => " <|> " ⇒ "
+syntax inferFirstStep := ppIndent(colGe term inferArrow (atomic(ident " : "))? term " := " term)
+syntax inferStep := ppIndent(colGe inferArrow (atomic(ident " : "))? term " := " term)
+syntax inferSteps := ppLine withPosition(inferFirstStep) withPosition((ppLine linebreak inferStep)*)
+
+/-- Tactic proofs own their holes; only ordinary terms use inference placeholders. -/
+private partial def inferIsTacticProof (stx : Syntax) : Bool :=
+  match stx with
+  | `(term| by $_) => true
+  | `(term| ($proof:term)) => inferIsTacticProof proof.raw
+  | _ => false
+
+open Lean.Meta in
+/-- Recursively find a subexpression of `e` whose type is definitionally equal
+    to `targetType`. Instantiate binders with `withLocalDecl`/`withLetDecl`
+    before traversing their bodies so bound variables remain well-scoped. -/
+private partial def inferFindSubtermOfType  (e : Expr)
+                                    (targetType : Expr)
+                                    : MetaM Bool := do
+  let e ← instantiateMVars e
+  let checkSelf : MetaM Bool :=
+    try
+      let ty ← inferType e
+      isDefEqGuarded ty targetType
+    catch _ => pure false
+  if ← checkSelf then return true
+  match e with
+  | .app f a => return (← inferFindSubtermOfType f targetType) || (← inferFindSubtermOfType a targetType)
+  | .lam _ t b bi =>
+      if ← inferFindSubtermOfType t targetType then return true
+      withLocalDecl `infer_x bi t fun x => inferFindSubtermOfType (b.instantiate1 x) targetType
+  | .letE _ t v b _ =>
+      if ← inferFindSubtermOfType t targetType then return true
+      if ← inferFindSubtermOfType v targetType then return true
+      withLetDecl `infer_x t v fun x => inferFindSubtermOfType (b.instantiate1 x) targetType
+  | .forallE _ t b bi =>
+      if ← inferFindSubtermOfType t targetType then return true
+      withLocalDecl `infer_x bi t fun x => inferFindSubtermOfType (b.instantiate1 x) targetType
+  | .mdata _ b => inferFindSubtermOfType b targetType
+  | .proj _ _ b => inferFindSubtermOfType b targetType
+  | _ => pure false
+
+open Term in
+/-- Elaborate the first `P => Q := prf` step as a proof of `Q`, and ensure
+    that it contains a proof of `P`; otherwise the initial proposition is meaningless. -/
+elab "infer_check_first" P:term " => " Q:term " := " prf:term : term => do
+  if !inferIsTacticProof prf.raw && containsSyntheticHole prf.raw then
+    throwErrorAt prf "infer: the first step cannot contain '?_'; provide a proof of the initial proposition"
+  let pType ← elabType P
+  let qType ← elabType Q
+  let prfExpr ← elabTermEnsuringType prf qType
+  synthesizeSyntheticMVarsNoPostponing
+  let prfExpr ← instantiateMVars prfExpr
+  unless ← inferFindSubtermOfType prfExpr pType do
+    let pStr := (Syntax.reprint P.raw).getD "?" |>.trimAscii
+    throwErrorAt prf s!"infer: the first step must contain a proof of proposition '{pStr}'"
+  return prfExpr
+
+/-- Replace the unique `?_` in `stx` with `rep` and return the resulting syntax
+    together with the number of holes encountered. -/
+private partial def inferReplaceHole (stx : Syntax) (rep : TSyntax `term) : StateT Nat MacroM Syntax := do
+  if stx.getKind == ``Parser.Term.syntheticHole then
+    modify (· + 1)
+    return rep.raw
+  else
+    let args ← stx.getArgs.mapM fun a => inferReplaceHole a rep
+    if args == stx.getArgs then return stx
+    else return Syntax.node stx.getHeadInfo stx.getKind args
+
+/-- Replace exactly one `?_` in `stx`; otherwise report an error. -/
+private def inferReplaceSingleHole  (stx : Syntax)
+                                    (rep : TSyntax `term)
+                                    : MacroM (TSyntax `term) := do
+  let (stx', count) ← (inferReplaceHole stx rep).run 0
+  if count != 1 then
+    Macro.throwErrorAt stx s!"infer: each chain step must contain exactly one '?_', but found {count}"
+  return ⟨stx'⟩
+
+/-- Expand an `infer` chain into successive optionally named `have`s. Each step is
+    added to the local context. Later terms use `?_` for the preceding result;
+    tactic proofs instead receive a local `this` and keep native hole semantics.
+    The final result is only attempted as a goal-closing term. -/
+private def buildInferTactic (steps : Syntax) : MacroM (TSyntax `tactic) := do
+  let mut tactics : Array Syntax := #[]
+  let firstStep := steps[0]
+  let restSteps := steps[1]
+  let `(inferFirstStep| $P:term $_arrow:inferArrow $[$firstLabel:ident :]? $Q:term := $proof0:term) := firstStep
+  | Macro.throwError "infer: invalid first-step syntax"
+  let firstProof ← `(term| infer_check_first $P:term => $Q:term := $proof0:term)
+  let firstName ← withFreshMacroScope <|
+    MonadQuotation.addMacroScope `this
+  let firstId : TSyntax `ident := firstLabel.getD ⟨mkIdent firstName⟩
+  tactics := tactics.push (← `(tactic| have $firstId:ident : $Q:term := $firstProof:term)).raw
+  let mut previous ← `(term| $firstId:ident)
+  for step in restSteps.getArgs do
+    let `(inferStep| $_arrow:inferArrow $[$label:ident :]? $R:term := $proof:term) := step
+    | Macro.throwError "infer: invalid chain-step syntax"
+    let proof' ← if inferIsTacticProof proof.raw then do
+      -- Deliberately expose this alias to user syntax, only inside this proof.
+      let thisId := mkIdentFrom proof `this
+      `(term| let $thisId:ident := $previous; $proof)
+    else
+      inferReplaceSingleHole proof.raw previous
+    let stepName ← withFreshMacroScope <|
+      MonadQuotation.addMacroScope `this
+    let stepId : TSyntax `ident := label.getD ⟨mkIdent stepName⟩
+    tactics := tactics.push (← `(tactic| have $stepId:ident : $R:term := $proof':term)).raw
+    previous ← `(term| $stepId:ident)
+  tactics := tactics.push (← `(tactic| try exact $previous:term)).raw
+  let seq : TSyntax ``Parser.Tactic.tacticSeq := ⟨buildTacticSeq tactics⟩
+  `(tactic| ($seq:tacticSeq))
+
+/-- Parse `inferSteps` and extract the initial proposition and each step.
+    Returns `(initial proposition, [(right-hand proposition, proof term)])`. -/
+private def parseInferSteps (steps : Syntax)
+                            : MacroM (TSyntax `term × Array (TSyntax `term × TSyntax `term)) := do
+  -- The actual structure is `inferFirstStep (ppLine linebreak inferStep)*`.
+  let firstStep := steps[0]
+  let restSteps := steps[1]
+  let `(inferFirstStep| $P:term $_arrow:inferArrow $[$_firstLabel:ident :]? $Q:term := $prf1:term) := firstStep
+  | Macro.throwError s!"infer: invalid first-step syntax, kind: {firstStep.getKind}"
+  let mut chain := #[(Q, prf1)]
+  for i in [:restSteps.getArgs.size] do
+    let step := restSteps[i]
+    let `(inferStep| $_arrow:inferArrow $[$_label:ident :]? $R:term := $prf:term) := step
+    | Macro.throwError s!"infer: invalid chain-step syntax, kind: {step.getKind}"
+    chain := chain.push (R, prf)
+  return (P, chain)
+
+script_macro «infer»
+"infer" steps:inferSteps => buildInferTactic steps.raw
+
+script_recorder «infer» => do
+  let (init, chain) ← liftMacroM <| parseInferSteps steps
+  let recordChain : TacticM RecordedValue := do
+    let mut values := #[]
+    for i in [:chain.size] do
+      let (rhs, prf) := chain[i]!
+      let rhsExpr ← elabTerm rhs none
+      let proof ←
+        -- Later tactic proofs need a preceding result that does not exist at this phase.
+        if containsSyntheticHole prf.raw || (i > 0 && inferIsTacticProof prf.raw) then
+          pure (.object [("kind", .plain (toJson "hole"))])
+        else
+          recordExpression (← elabTerm prf (some rhsExpr))
+            (← trustedSyntaxSource? prf.raw)
+      values := values.push <| .object [
+        ("rhs", ← recordExpression rhsExpr (← trustedSyntaxSource? rhs.raw)),
+        ("proof", proof)
+      ]
+    return .array values
+  withRollback do
+    record_goal "$goal_before"
+    record_value "init" (← expression init.raw)
+    record_value "chain" (← recordChain)
+  execute
+  record_goal "$goal_after"
+
+script_info «infer» {
   renderer := «infer»
 }
+
+macro "infer" steps:inferSteps : term => `(term| script infer $steps:inferSteps)

@@ -1,0 +1,171 @@
+.theorem-statement {
+    --statement-ink: #1e293b;
+    --statement-muted: #64748b;
+    --statement-line: #cbd5e1;
+    --statement-blue: #2563eb;
+    margin: 20px 8px 28px;
+    color: var(--statement-ink);
+    line-height: 1.8;
+}
+
+.statement-parameters {
+    position: relative;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: stretch;
+    gap: 8px;
+    margin: 0 0 24px;
+    padding: 16px 18px 12px;
+    border: 1px solid var(--statement-line);
+    border-radius: 12px;
+    background: linear-gradient(110deg, rgba(248,250,252,.92), rgba(255,255,255,.98));
+}
+
+.statement-parameters::before {
+    content: "";
+    position: absolute;
+    top: -10px;
+    left: 18px;
+    padding: 0 8px;
+    color: var(--statement-muted);
+    background: #fff;
+    content: "Parameters";
+    font: 10px/20px system-ui, -apple-system, sans-serif;
+    letter-spacing: .12em;
+    text-transform: uppercase;
+}
+
+.theorem-statement[data-language="zh"] .statement-parameters::before { content: "参数"; }
+
+.statement-parameter-mark { display: none; }
+
+.statement-parameters > span {
+    display: inline-flex;
+    align-items: center;
+    min-height: 32px;
+    box-sizing: border-box;
+    padding: 4px 12px;
+    border: 1px solid #dbe3ee;
+    border-radius: 7px;
+    background: rgba(255,255,255,.72);
+    white-space: nowrap;
+    transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.statement-parameters > span:hover {
+    border-color: var(--statement-blue);
+    box-shadow: 0 3px 10px rgba(37,99,235,.12);
+    transform: translateY(-1px);
+}
+
+.statement-implication {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 18px;
+}
+
+.statement-conditions {
+    position: relative;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: 10px;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+}
+
+.statement-conditions li,
+.statement-conclusion {
+    position: relative;
+    min-height: 48px;
+    box-sizing: border-box;
+    padding: 10px 16px 10px 42px;
+    border: 1px solid #dbe3ee;
+    border-radius: 9px;
+    background: #fff;
+    transition: border-color .18s ease, box-shadow .18s ease, transform .18s ease;
+}
+
+.statement-conditions li::before {
+    content: "";
+    position: absolute;
+    top: 50%;
+    left: 16px;
+    width: 9px;
+    height: 9px;
+    box-sizing: border-box;
+    border: 2px solid #94a3b8;
+    border-radius: 50%;
+    transform: translateY(-50%);
+}
+
+.statement-conditions li:hover,
+.statement-conclusion:hover {
+    border-color: var(--statement-blue);
+    box-shadow: 0 5px 14px rgba(15,23,42,.08);
+    transform: translateY(-1px);
+}
+
+.statement-conditions li:hover::before {
+    border-color: var(--statement-blue);
+    background: #bfdbfe;
+}
+
+.statement-arrow { display: none; }
+
+.statement-conclusion {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    min-height: 58px;
+    padding-left: 18px;
+    border-color: #93c5fd;
+    box-shadow: 0 5px 16px rgba(37,99,235,.08);
+    font-size: 1.05em;
+}
+
+.statement-conclusion::before {
+    content: "⊢";
+    flex: 0 0 auto;
+    color: var(--statement-blue);
+    font: 24px/1 Georgia, serif;
+}
+
+.statement-conclusion p { margin: 4px 0; }
+
+.statement-proof-divider {
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    margin: 30px 0 0;
+    color: var(--statement-ink);
+    font-family: system-ui, -apple-system, sans-serif;
+    font-size: 19px;
+    font-weight: 700;
+    letter-spacing: .12em;
+}
+
+.statement-proof-divider::before {
+    content: "";
+    width: 4px;
+    height: 24px;
+    border-radius: 3px;
+    background: var(--statement-blue);
+}
+
+.statement-proof-divider::after {
+    content: "";
+    flex: 1;
+    height: 1px;
+    background: linear-gradient(to right, #cbd5e1, transparent);
+}
+
+@media (max-width: 700px) {
+    .statement-parameters { padding-top: 18px; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+    .statement-parameters > span,
+    .statement-conditions li,
+    .statement-conclusion { transition: none; }
+}

@@ -4,7 +4,7 @@ import ProofScript.Info.JsonSchemas
 open Lean Elab.Command Parser.Term
 
 
-namespace ProofScript.Info
+namespace ProofScript
 variable {α : Type}
 
 /-- Configuration syntax and structured decoding, with standard JSON serialization.
@@ -155,4 +155,4 @@ Keep this adapter after the primitive codecs so their `decodeJson` uses Lean's d
 instance (priority := low) [InfoCodec α] : FromJson α where
   fromJson? value := (InfoCodec.decode value).mapError Diagnostic.render
 
-end ProofScript.Info
+end ProofScript

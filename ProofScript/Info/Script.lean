@@ -5,11 +5,11 @@ import ProofScript.Script.Registry
 open Lean Elab Command
 
 
-namespace ProofScript.Info
+namespace ProofScript
 
 def visibleScriptRegistrations (env : Environment) (moduleName : Name) :
     Except Diagnostic (List ScriptTacticRegistration) := do
-  let order ← (Foundation.ModuleGraph.ofEnvironment env).order moduleName
+  let order ← (ModuleGraph.ofEnvironment env).order moduleName
     |>.mapError fun message => { message }
   return scriptRegistrationsInModules env order
 
@@ -21,13 +21,12 @@ def scriptRegistrationInView (env : Environment) (query : Query) (ruleId : Name)
 
 def resolveScriptTarget (target : TSyntax `ident) : CommandElabM Name := do
   let env ← getEnv
-  let name := removeRoot target.getId.eraseMacroScopes
-  let ruleId := if name.components.length == 1 then env.mainModule ++ name else name
+  let ruleId := removeRoot target.getId.eraseMacroScopes
   match scriptRegistrationInView env { moduleName := env.mainModule } ruleId with
   | .ok registration =>
     addConstInfo target.raw registration.sourceKind
     return ruleId
-  | .error _ => throwErrorAt target m!"unknown script_info registration ID `{ruleId}`; use its full module-qualified ID for imported rules"
+  | .error _ => throwErrorAt target m!"unknown script_info registration ID `{ruleId}`"
 
 /-- Registration IDs have the same editor identity as their source parser declaration.
 Verification mode does not require the ID or its metadata to be valid.
@@ -35,8 +34,7 @@ Verification mode does not require the ID or its metadata to be valid.
 def addScriptTargetInfo (target : TSyntax `ident) : CommandElabM Unit := do
   unless (← getInfoState).enabled do return
   let env ← getEnv
-  let name := removeRoot target.getId.eraseMacroScopes
-  let ruleId := if name.components.length == 1 then env.mainModule ++ name else name
+  let ruleId := removeRoot target.getId.eraseMacroScopes
   if let .ok registration := scriptRegistrationInView env { moduleName := env.mainModule } ruleId then
     addConstInfo target.raw registration.sourceKind
 
@@ -74,16 +72,6 @@ instance : InfoCodec ScriptRenderer := enumCodec #[
   ("none", .automatic), ("strategy", .strategy), ("calc", .calc), ("infer", .infer),
   ("media", .media), ("diagram", .diagram), ("remark", .remark), ("admit", .admit), ("embed", .embed),
   ("unrecorded", .unrecorded)]
-
-def ScriptRenderer.requiredFields : ScriptRenderer → Array String
-  | .automatic | .strategy => #[] -- Branches are supplied by the strategy engine.
-  | .calc | .infer => #["init", "chain"]
-  | .media => #["metadata", "svg", "source"]
-  | .diagram => #["code"]
-  | .remark => #["text"]
-  | .admit => #["reason"]
-  | .embed => #["theorem", "args", "argKinds", "proof", "h", "type"]
-  | .unrecorded => #["name"]
 
 structure ScriptIntroducer where
   tag : String
@@ -215,47 +203,14 @@ instance : InfoSchema ScriptInfo :=
 def scriptSpec : InfoSpec ScriptInfo := {
   kind := "script" }
 
-private def introducerTexts (value : ScriptIntroducer) : Array (JsonPath × String) := #[
-  (#[.key ScriptIntroducer.infoFields.tag.name], value.tag),
-  (#[.key ScriptIntroducer.infoFields.content.name], value.content)]
-
-def ScriptTemplate.texts : ScriptTemplate → Array (JsonPath × String)
-  | .ordinary value => #[
-      (#[.key OrdinaryScriptTemplate.infoFields.tag.name], value.tag),
-      (#[.key OrdinaryScriptTemplate.infoFields.content.name], value.content)]
-  | .strategy value => Id.run do
-    let mut texts := #[(#[.key StrategyScriptTemplate.infoFields.tag.name], value.tag)]
-    if let some intro := value.introducer then
-      texts := texts ++ (introducerTexts intro).map fun (path, text) =>
-        (#[.key StrategyScriptTemplate.infoFields.introducer.name] ++ path, text)
-    for index in [:value.cases.size] do
-      let item := value.cases[index]!
-      let casePath := #[.key StrategyScriptTemplate.infoFields.cases.name, .index index]
-      texts := texts ++ #[(casePath.push (.key ScriptCase.infoFields.tag.name), item.tag),
-        (casePath.push (.key ScriptCase.infoFields.title.name), item.title)]
-      if let some intro := item.introducer then
-        texts := texts ++ (introducerTexts intro).map fun (path, text) =>
-          (casePath ++ #[.key ScriptCase.infoFields.introducer.name] ++ path, text)
-    return texts
-
 def validateScriptContract (registration : ScriptTacticRegistration) (value : ScriptInfo) :
     Except Diagnostic Unit := do
-  if value.renderer == .strategy && !registration.strategy then
+  if value.renderer == .strategy && !registration.config.isStrategy then
     throw { message := "strategy renderer requires a strategy registration", path := #[.key ScriptInfo.infoFields.renderer.name] }
   for index in [:value.template.size] do
     let template := value.template[index]!
-    if template.isStrategy != registration.strategy then
+    if template.isStrategy != registration.config.isStrategy then
       throw { message := "template kind does not match the script registration", path := #[.key ScriptInfo.infoFields.template.name, .index index] }
-    for (path, text) in template.texts do
-      let check := match registration.recordedFields with
-        | some recorded => Recording.validateTemplateText recorded text
-        | none => Recording.templateSlots text *> pure ()
-      check.mapError fun message => {
-          message, path := #[.key ScriptInfo.infoFields.template.name, .index index] ++ path }
-  if let some recorded := registration.recordedFields then
-    for field in value.renderer.requiredFields do
-      unless recorded.any (·.name == field) do
-        throw { message := s!"renderer requires recorded field `{field}`", path := #[.key ScriptInfo.infoFields.renderer.name] }
 
 /-- Callers with an actual invocation's selected registration can validate that exact contract.
 The default registry query below reconstructs module-end registration metadata; Info boundaries clip Info events only.
@@ -266,7 +221,7 @@ def resolveScriptInfoWithRegistration (env : Environment) (query : Query)
     let view ← resolvePartial scriptSpec env query registration.ruleId
     let result ← if view.created then consumeView scriptSpec view else do
       let fallback : ScriptInfo := if registration.ruleId == unrecordedRuleId then { renderer := .unrecorded }
-        else if registration.strategy then { renderer := .strategy } else
+        else if registration.config.isStrategy then { renderer := .strategy } else
         { template := #[.ordinary { lang := "zh", tag := registration.name, content := "" }] }
       pure { value := fallback, provenance := view.provenance, dependencies := scriptSpec.dependencies fallback }
     (validateScriptContract registration result.value).mapError view.attach
@@ -280,4 +235,4 @@ def resolveScriptInfo (env : Environment) (query : Query) (ruleId : Name) :
 def updateScriptInfo (target : TSyntax `ident) (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
   elaborateInfo scriptSpec (← resolveScriptTarget target) fields ref
 
-end ProofScript.Info
+end ProofScript

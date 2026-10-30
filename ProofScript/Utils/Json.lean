@@ -5,23 +5,23 @@ open Lean
 
 namespace InfoJson
 
-scoped instance : ToJson Name where
+scoped instance (priority := high) : ToJson Name where
   toJson name :=
     let rec parts : Name → List Json
-      | .anonymous => []
-      | .str parent text => parts parent ++ [.str text]
-      | .num parent index => parts parent ++ [toJson index]
+    | .anonymous => []
+    | .str parent text => parts parent ++ [.str text]
+    | .num parent index => parts parent ++ [toJson index]
     .arr (parts name).toArray
 
-scoped instance : FromJson Name where
+scoped instance (priority := high) : FromJson Name where
   fromJson? value := do
     let parts ← value.getArr?
-    if parts.isEmpty then throw "expected a nonempty qualified name"
+    if parts.isEmpty then throw "Expected a nonempty qualified name"
     let mut name := Name.anonymous
     for part in parts do
       match part with
       | .str text =>
-        if text.isEmpty then throw "name components must not be empty"
+        if text.isEmpty then throw "Name components must not be empty"
         name := .str name text
       | _ => name := .num name (← fromJson? part)
     return name
@@ -53,19 +53,26 @@ private def levelToJson : Level → Json
 
 scoped instance : ToJson Level := ⟨levelToJson⟩
 
-private def litToJson : Literal → Json
+scoped instance : ToJson Literal where toJson
 | .natVal n =>
     json% { kind: "literal.nat", value: $n }
 | .strVal s =>
     json% { kind: "literal.str", value: $s }
 
-scoped instance : ToJson Literal := ⟨litToJson⟩
+/-- Metadata keys use display names and scalar values retain their JSON types.
+    Syntax values are omitted; fields are ordered by their exported keys. -/
 
-/-- Metadata keys use display names; values use their `reprStr` representation. -/
-private def mdataToJson (data : MData) :=
-  Json.mkObj <| data.entries.map fun (name, val) =>
-    (name.toString, Json.str (reprStr val))
-
-scoped instance : ToJson MData := ⟨mdataToJson⟩
+scoped instance : ToJson MData where
+  toJson data :=
+    let fields := data.entries.filterMap fun (name, value) => do
+      let value ← match value with
+      | .ofString value => some (toJson value)
+      | .ofBool value => some (toJson value)
+      | .ofName value => some (toJson value.toString)
+      | .ofNat value => some (toJson value)
+      | .ofInt value => some (toJson value)
+      | .ofSyntax _ => none
+      return (name.toString, value)
+    Json.mkObj (fields.toArray.qsort fun a b => a.1 < b.1).toList
 
 end ExprJson

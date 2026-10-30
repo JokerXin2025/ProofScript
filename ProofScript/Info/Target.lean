@@ -3,7 +3,7 @@ import ProofScript.Info.JsonSchemas
 import ProofScript.Info.Resolve
 import ProofScript.Info.Elab
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean Elab Command
 
@@ -73,4 +73,4 @@ def updateDeclarationInfo [InfoSchema Record] (spec : InfoSpec Record) (target :
     (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
   elaborateInfo spec (← resolveDeclaration target) fields ref
 
-end ProofScript.Info
+end ProofScript

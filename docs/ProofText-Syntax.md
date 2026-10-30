@@ -1,6 +1,6 @@
 # ProofText Syntax
 
-ProofText is the lightweight markup language parsed inside ProofScript's `@text` command. It
+ProofText is the lightweight markup language parsed inside ProofScript's `#page text` command. It
 provides semantic blocks and inline markup for prose that is exported with a Lean module.
 
 ProofText resembles Typst, but it is a distinct and deliberately small language. In particular,
@@ -8,18 +8,18 @@ ProofText resembles Typst, but it is a distinct and deliberately small language.
 
 This document describes the syntax implemented by the current ProofText parser.
 
-## 1. Using `@text`
+## 1. Using `#page text`
 
 The command takes exactly one Lean string literal:
 
 ```lean
-@text "A paragraph."
+#page text "A paragraph."
 ```
 
 Multiline raw strings are usually the most convenient form:
 
 ````lean
-@text r#"
+#page text r#"
 = Introduction <introduction>
 
 This is *important* text with $x + y$ inline.
@@ -36,21 +36,21 @@ In an ordinary Lean string, a backslash intended for ProofText must itself be es
 commands therefore produce the same ProofText content:
 
 ```lean
-@text "\\*literal asterisk"
-@text r"\*literal asterisk"
+#page text "\\*literal asterisk"
+#page text r"\*literal asterisk"
 ```
 
 Raw Lean strings are recommended for multiline text, LaTeX, and text containing many ProofText
 escapes. Increase the number of `#` characters around a raw string when its content contains the
 current closing sequence.
 
-Each successful `@text` command before `page_end` adds one text component to the current page.
-Components after export are ignored with a warning.
+Each successful `#page text` command before `#page end` adds one text component to the current page.
+A component after `#page end` fails before its body runs, in both verification and page builds.
 
 ## 2. Complete Example
 
 ````lean
-@text r#"
+#page text r#"
 = ProofText Overview <overview>
 
 This paragraph contains *strong text*, _emphasis_, *_strong emphasis_*,
@@ -94,7 +94,7 @@ For example, the following heading and paragraph are parsed at column zero after
 ```lean
 namespace Example
 
-  @text r#"
+  #page text r#"
     = Heading
 
     A paragraph.
@@ -436,7 +436,7 @@ before their bodies are recursively parsed.
 
 ## 7. Errors
 
-The `@text` command fails during elaboration for these malformed forms:
+The `#page text` command fails during elaboration for these malformed forms:
 
 | Condition | Typical diagnostic |
 | --- | --- |
@@ -465,7 +465,7 @@ The current parser does not implement:
 - escape-aware closing-delimiter search;
 - multiple-backtick inline code;
 - URL validation or balanced parentheses in URLs;
-- reference-target validation during `@text` elaboration;
+- reference-target validation during `#page text` elaboration;
 - Markdown hard-break syntax or generated soft/hard-break nodes;
 - images, HTML, horizontal rules, footnotes, or ProofText table syntax.
 

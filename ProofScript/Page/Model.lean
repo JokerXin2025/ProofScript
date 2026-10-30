@@ -1,5 +1,5 @@
 import ProofScript.Foundation.Source
-import ProofScript.Info.State
+import ProofScript.Core.References
 
 open Lean
 
@@ -9,15 +9,13 @@ namespace ProofScript
 abbrev ReferenceKind := String
 
 structure Component where
-  source : Foundation.SourceLocation
+  source : SourceLocation
   kind : String
   value : Json
   /-- Declaration identity for theorem components; omitted from the exported JSON. -/
   declaration : Option Name := none
-  /-- Reference identities are resolved at this component's creation boundary. -/
-  references : Array Name := #[]
-  /-- Internal position in the current module's metadata transaction stream. -/
-  boundary : Info.Boundary := .endOfModule
+  /-- Reference metadata is resolved in the page owner's final module view. -/
+  references : Array RefInfo := #[]
   snapshotId : Option String := none
 deriving Inhabited
 

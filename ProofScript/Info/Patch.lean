@@ -1,6 +1,6 @@
 import ProofScript.Info.Schema
 
-namespace ProofScript.Info
+namespace ProofScript
 
 open Lean
 
@@ -18,14 +18,14 @@ inductive UpdateOperation where
 structure Assignment where
   key : FieldKey
   operation : UpdateOperation
-  source : Foundation.SourceLocation
+  source : SourceLocation
   deriving Inhabited, ToJson, FromJson
 
 abbrev Patch := Array Assignment
 
-/-- Context initialization uses generated typed handles instead of spelling field names. -/
+/-- Typed assignments use generated field handles instead of spelling field names. -/
 def FieldHandle.assignment [InfoCodec Value] (handle : FieldHandle Record Value) (value : Value)
-    (source : Foundation.SourceLocation) : Assignment :=
+    (source : SourceLocation) : Assignment :=
   { key := .builtin handle.name, operation := .set (toJson value), source }
 
 def FieldSpec.mergeJson (field : FieldSpec Record) (previous : Option Json) (update : Json) :
@@ -74,4 +74,4 @@ def applyPatch (schema : InfoSchema Record) (previous : Json) (patch : Patch) : 
       object := object.insert field.name (.obj extra)
   return .obj object
 
-end ProofScript.Info
+end ProofScript

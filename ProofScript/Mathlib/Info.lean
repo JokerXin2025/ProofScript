@@ -3,15 +3,23 @@ import ProofScript.Info.Commands
 
 /-! Mathlib expression and script presentation, separate from tactic registration. -/
 
-def_info Real { kind := const, arguments := [], styles := [
+def_info Real { var_name := "x", parameter_template := some "$#self\\in\\mathbb{R}$", kind := const, styles := [
   { name := "formula", template := "\\mathbb{R}", fixity := atom, precedence := 100 }
 ] }
 
-def_info Set { kind := type, arguments := explicit, styles := [
+def_info Set { kind := type, parameter_template := some "$#self\\subseteq #0$", styles := [
   { name := "formula", template := "\\mathcal{P}(#0)", fixity := application, precedence := 90 }
 ] }
 
-script_info ProofScript.Mathlib.Scripts.«continuity» {
+def_info Set.Icc { kind := operator, styles := [
+  { template := "[#0,#1]", fixity := atom }
+] }
+
+def_info Set.Elem { parameter_template := some "$#self\\in #0$", styles := [
+  { template := "#0", fixity := atom }
+] }
+
+script_info «continuity» {
   template := [{
     lang := "zh", tag := "连续性",
     content := ""
@@ -21,7 +29,7 @@ script_info ProofScript.Mathlib.Scripts.«continuity» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«exact_mod_cast» {
+script_info «exact_mod_cast» {
   template := [{
     lang := "zh", tag := "«exact_mod_cast»",
     content := ""
@@ -31,7 +39,7 @@ script_info ProofScript.Mathlib.Scripts.«exact_mod_cast» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«field» {
+script_info «field» {
   template := [{
     lang := "zh", tag := "域算术",
     content := ""
@@ -41,7 +49,7 @@ script_info ProofScript.Mathlib.Scripts.«field» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«measurability» {
+script_info «measurability» {
   template := [{
     lang := "zh", tag := "可测性",
     content := ""
@@ -51,7 +59,7 @@ script_info ProofScript.Mathlib.Scripts.«measurability» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«positivity» {
+script_info «positivity» {
   template := [{
     lang := "zh", tag := "正性",
     content := ""
@@ -61,7 +69,7 @@ script_info ProofScript.Mathlib.Scripts.«positivity» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«ring» {
+script_info «ring» {
   template := [{
     lang := "zh", tag := "环算术",
     content := ""
@@ -71,7 +79,7 @@ script_info ProofScript.Mathlib.Scripts.«ring» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«tauto» {
+script_info «tauto» {
   template := [{
     lang := "zh", tag := "重言",
     content := ""
@@ -81,7 +89,7 @@ script_info ProofScript.Mathlib.Scripts.«tauto» {
   }]
 }
 
-script_info ProofScript.Mathlib.Scripts.«tauto_set» {
+script_info «tauto_set» {
   template := [{
     lang := "zh", tag := "重言",
     content := ""

@@ -1,6 +1,6 @@
 # ProofText 语法
 
-ProofText 是 ProofScript 的 `@text` 命令内部使用的轻量级标记语言，用于编写随 Lean
+ProofText 是 ProofScript 的 `#page text` 命令内部使用的轻量级标记语言，用于编写随 Lean
 模块一同导出的语义化正文、块级结构和行内格式。
 
 ProofText 与 Typst 有些相似，但它是一门独立且刻意保持精简的语言。例如，`*文本*`
@@ -8,18 +8,18 @@ ProofText 与 Typst 有些相似，但它是一门独立且刻意保持精简的
 
 本文档描述当前 ProofText 解析器实际实现的语法。
 
-## 1. 使用 `@text`
+## 1. 使用 `#page text`
 
 该命令只接受一个 Lean 字符串字面量：
 
 ```lean
-@text "一个段落。"
+#page text "一个段落。"
 ```
 
 多行内容通常最适合使用原始字符串：
 
 ````lean
-@text r#"
+#page text r#"
 = 引言 <introduction>
 
 这是一段包含 *重要内容* 和行内公式 $x + y$ 的文字。
@@ -35,20 +35,20 @@ Lean 会先解码字符串，再由 ProofText 解析其中的内容。因此可�
 产生相同的 ProofText 内容：
 
 ```lean
-@text "\\*字面星号"
-@text r"\*字面星号"
+#page text "\\*字面星号"
+#page text r"\*字面星号"
 ```
 
 对于多行文字、LaTeX 以及包含大量 ProofText 转义符的内容，建议使用 Lean 原始字符串。
 如果内容本身包含当前原始字符串的结束序列，可以增加两侧 `#` 的数量。
 
-每条位于 `page_end` 之前的成功 `@text` 命令都会向当前页面添加一个文本组件。导出
-之后的组件会产生警告并被忽略。
+页面模式下，每条位于 `#page end` 之前的成功 `#page text` 命令都会向当前页面添加一个文本组件。
+`#page end` 之后的组件在普通验证和页面构建两种模式下都会在执行前报错。
 
 ## 2. 完整示例
 
 ````lean
-@text r#"
+#page text r#"
 = ProofText 概览 <overview>
 
 这一段包含 *粗体*、_强调_、*_粗体强调_*、~~删除线~~、__下划线__、
@@ -90,7 +90,7 @@ ProofText 会先归一化缩进，使多行字符串可以与周围的 Lean 代�
 ```lean
 namespace Example
 
-  @text r#"
+  #page text r#"
     = 标题
 
     一个段落。
@@ -419,7 +419,7 @@ ProofText 有四种引用形式：
 
 ## 7. 错误
 
-以下错误形式会使 `@text` 命令在 elaboration 时失败：
+以下错误形式会使 `#page text` 命令在 elaboration 时失败：
 
 | 情形 | 典型诊断信息 |
 | --- | --- |
@@ -447,7 +447,7 @@ ProofText 有四种引用形式：
 - 搜索结束分隔符时识别转义；
 - 使用多个反引号的行内代码；
 - URL 有效性检查或 URL 括号平衡；
-- `@text` elaboration 阶段的引用目标检查；
+- `#page text` elaboration 阶段的引用目标检查；
 - Markdown 硬换行语法或自动生成软换行、硬换行节点；
 - 图片、HTML、水平分隔线、脚注或 ProofText 表格语法。
 

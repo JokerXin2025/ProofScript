@@ -59,12 +59,18 @@ def parseComponentMetadata (stx : Syntax) : Except String ComponentMetadata := d
   | throw "component metadata requires 'title'"
   return { title := titleValue, label, extra }
 
-def sourceLocation (stx : Syntax) : CoreM Foundation.SourceLocation := do
-  return Foundation.SourceLocation.ofSyntax (← getFileName) stx
+def sourceLocation (stx : Syntax) : CoreM SourceLocation := do
+  return SourceLocation.ofSyntax (← getFileName) stx
 
-/-- Adds component data during page builds. Custom commands should wrap their
-    entire construction action in `whenPageBuild` to skip validation, JSON
-    construction, and resource IO during ordinary verification. -/
+/-- Record the module build mode and reject a component after `#page end`
+before running any component elaboration code. -/
+def beginPageComponent : CommandElabM Unit := do
+  discard <| recordModuleBuildMode
+  ofExcept <| ensurePageOpen (← getEnv)
+
+/-- Adds component data during page builds. `page_component` checks the page
+    boundary before the command body; `when_page_build` should guard validation,
+    JSON construction and resource IO within that body. -/
 def addPageComponent (stx : Syntax) (kind : String) (value : Json)
     (labels : Array (ReferenceKind × String) := #[]) : CommandElabM Unit := whenPageBuild do
   let location ← liftCoreM <| sourceLocation stx
@@ -77,7 +83,7 @@ def addPageComponent (stx : Syntax) (kind : String) (value : Json)
     | .ok result => pure result
     | .error message => throwErrorAt stx message
   unless added do
-    logWarningAt stx "page component appears after page_end and was ignored"
+    logWarningAt stx "page component appears after #page end and was ignored"
   setEnv nextEnv
 
 end ProofScript

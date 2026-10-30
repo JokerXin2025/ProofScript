@@ -1,110 +1,98 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proofscript.local/schema/recording-proof-0.1.0.json",
-  "title": "ProofScript recording proof document 0.1.0",
-  "$comment": "This is the production recording format. This schema validates shape only. The decoder must additionally validate contiguous expression IDs e0 through eN-1, reference existence and ownership, acyclicity and topological child order, unique and valid root paths, exact root targets, invocation contract coverage and bindings, and all display path and view-index relationships. Only expressionRoots authorizes entry from proof data into the expression graph; unlisted JSON remains literal data even when it contains $ref or kind. Node children are interpreted only in the fields specified by their constructors. Metadata is stripped during capture, so no mdata node exists.",
+  "$id": "https://proofscript.local/schema/recording-proof-0.4.0.json",
+  "title": "ProofScript recording proof document 0.4.0",
+  "$comment": "This schema validates shape only. The decoder additionally checks contiguous expression IDs, reference ownership and structural postorder, unique valid root paths, exact root targets, and invocation contract coverage and bindings. Only expressionRoots authorizes entry from proof data into the expression graph; unlisted JSON remains literal data. Nodes encode native Lean expressions. Metadata contains only opaque scalar values and one structural expr edge; syntax values and empty metadata wrappers are omitted. Parameter and value recording do not collect literature references; rendering configuration dependencies are resolved separately.",
   "type": "object",
-  "required": ["schemaVersion", "module", "code"],
+  "required": ["schemaVersion", "module", "code", "statement", "expressions", "expressionRoots"],
   "properties": {
-    "schemaVersion": { "const": "0.1.0" },
-    "module": { "type": "string", "minLength": 1 },
-    "code": { "type": "string" },
-    "expressions": { "$ref": "#/$defs/expressions" },
-    "expressionRoots": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/expressionRootPath" },
-      "uniqueItems": true
-    },
-    "proof": {
-      "type": "array",
-      "minItems": 1,
-      "items": { "$ref": "#/$defs/record" }
-    }
+    "schemaVersion": {"const": "0.4.0"},
+    "module": {"type": "string", "minLength": 1},
+    "code": {"type": "string"},
+    "statement": {"$ref": "#/$defs/statement"},
+    "expressions": {"$ref": "#/$defs/expressions"},
+    "expressionRoots": {"type": "array", "items": {"$ref": "#/$defs/expressionRootPath"}, "uniqueItems": true},
+    "proof": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/record"}}
   },
   "dependentRequired": {
+    "statement": ["expressions", "expressionRoots"],
     "proof": ["expressions", "expressionRoots"],
-    "expressions": ["proof", "expressionRoots"],
-    "expressionRoots": ["proof", "expressions"]
+    "expressions": ["statement", "expressionRoots"],
+    "expressionRoots": ["statement", "expressions"]
   },
   "additionalProperties": false,
   "$defs": {
-    "nat": { "type": "integer", "minimum": 0 },
-    "binderInfo": {
-      "enum": ["default", "implicit", "strictImplicit", "instImplicit"]
+    "statement": {
+      "type": "object",
+      "required": ["parameters", "conditions", "conclusion"],
+      "additionalProperties": false,
+      "properties": {
+        "parameters": {"type": "array", "items": {
+          "type": "object", "required": ["variable", "type", "instance"], "additionalProperties": false,
+          "properties": {"variable": {"$ref": "#/$defs/exprRef"}, "type": {"$ref": "#/$defs/exprRef"}, "instance": {"type": "boolean"}}
+        }},
+        "conditions": {"type": "array", "items": {"$ref": "#/$defs/exprRef"}},
+        "conclusion": {"$ref": "#/$defs/exprRef"}
+      }
     },
-    "exprId": { "type": "string", "pattern": "^e(0|[1-9][0-9]*)$" },
+    "nat": {"type": "integer", "minimum": 0},
+    "binderInfo": {"enum": ["default", "implicit", "strictImplicit", "instImplicit"]},
+    "exprId": {"type": "string", "pattern": "^e(0|[1-9][0-9]*)$"},
     "exprRef": {
       "type": "object",
       "required": ["$ref"],
-      "properties": { "$ref": { "$ref": "#/$defs/exprId" } },
+      "properties": {"$ref": {"$ref": "#/$defs/exprId"}},
       "additionalProperties": false
     },
-    "jsonPathPart": {
-      "anyOf": [{ "type": "string" }, { "$ref": "#/$defs/nat" }]
-    },
-    "jsonPath": {
-      "type": "array",
-      "items": { "$ref": "#/$defs/jsonPathPart" }
-    },
+    "jsonPathPart": {"anyOf": [{"type": "string"}, {"$ref": "#/$defs/nat"}]},
+    "jsonPath": {"type": "array", "items": {"$ref": "#/$defs/jsonPathPart"}},
     "expressionRootPath": {
+      "anyOf": [{"$ref": "#/$defs/proofRootPath"}, {"type": "array", "prefixItems": [{"const": "statement"}], "items": {"$ref": "#/$defs/jsonPathPart"}, "minItems": 2}]
+    },
+    "proofRootPath": {
       "type": "array",
-      "prefixItems": [{ "const": "proof" }, { "$ref": "#/$defs/nat" }],
-      "items": { "$ref": "#/$defs/jsonPathPart" },
+      "prefixItems": [{"const": "proof"}, {"$ref": "#/$defs/nat"}],
+      "items": {"$ref": "#/$defs/jsonPathPart"},
       "minItems": 3
     },
     "expressions": {
       "type": "object",
-      "propertyNames": { "$ref": "#/$defs/exprId" },
-      "additionalProperties": { "$ref": "#/$defs/exprNode" }
+      "propertyNames": {"$ref": "#/$defs/exprId"},
+      "additionalProperties": {"$ref": "#/$defs/exprNode"}
     },
     "exprNode": {
       "oneOf": [
         {
           "type": "object",
           "required": ["kind", "index"],
-          "properties": {
-            "kind": { "const": "bvar" },
-            "index": { "$ref": "#/$defs/nat" }
-          },
+          "properties": {"kind": {"const": "bvar"}, "index": {"$ref": "#/$defs/nat"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "id"],
-          "properties": {
-            "kind": { "const": "fvar" },
-            "id": { "type": "string" }
-          },
+          "properties": {"kind": {"const": "fvar"}, "id": {"type": "string"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "id"],
-          "properties": {
-            "kind": { "const": "mvar" },
-            "id": { "type": "string" }
-          },
+          "properties": {"kind": {"const": "mvar"}, "id": {"type": "string"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "level"],
-          "properties": {
-            "kind": { "const": "sort" },
-            "level": { "$ref": "#/$defs/level" }
-          },
+          "properties": {"kind": {"const": "sort"}, "level": {"$ref": "#/$defs/level"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "name", "levels"],
           "properties": {
-            "kind": { "const": "const" },
-            "name": { "type": "string" },
-            "levels": {
-              "type": "array",
-              "items": { "$ref": "#/$defs/level" }
-            }
+            "kind": {"const": "const"},
+            "name": {"type": "string"},
+            "levels": {"type": "array", "items": {"$ref": "#/$defs/level"}}
           },
           "additionalProperties": false
         },
@@ -112,9 +100,9 @@
           "type": "object",
           "required": ["kind", "fn", "arg"],
           "properties": {
-            "kind": { "const": "app" },
-            "fn": { "$ref": "#/$defs/exprRef" },
-            "arg": { "$ref": "#/$defs/exprRef" }
+            "kind": {"const": "app"},
+            "fn": {"$ref": "#/$defs/exprRef"},
+            "arg": {"$ref": "#/$defs/exprRef"}
           },
           "additionalProperties": false
         },
@@ -122,11 +110,11 @@
           "type": "object",
           "required": ["kind", "name", "type", "body", "binderInfo"],
           "properties": {
-            "kind": { "const": "lam" },
-            "name": { "type": "string" },
-            "type": { "$ref": "#/$defs/exprRef" },
-            "body": { "$ref": "#/$defs/exprRef" },
-            "binderInfo": { "$ref": "#/$defs/binderInfo" }
+            "kind": {"const": "lam"},
+            "name": {"type": "string"},
+            "type": {"$ref": "#/$defs/exprRef"},
+            "body": {"$ref": "#/$defs/exprRef"},
+            "binderInfo": {"$ref": "#/$defs/binderInfo"}
           },
           "additionalProperties": false
         },
@@ -134,11 +122,11 @@
           "type": "object",
           "required": ["kind", "name", "type", "body", "binderInfo"],
           "properties": {
-            "kind": { "const": "forall" },
-            "name": { "type": "string" },
-            "type": { "$ref": "#/$defs/exprRef" },
-            "body": { "$ref": "#/$defs/exprRef" },
-            "binderInfo": { "$ref": "#/$defs/binderInfo" }
+            "kind": {"const": "forall"},
+            "name": {"type": "string"},
+            "type": {"$ref": "#/$defs/exprRef"},
+            "body": {"$ref": "#/$defs/exprRef"},
+            "binderInfo": {"$ref": "#/$defs/binderInfo"}
           },
           "additionalProperties": false
         },
@@ -146,21 +134,28 @@
           "type": "object",
           "required": ["kind", "name", "type", "value", "body", "nondep"],
           "properties": {
-            "kind": { "const": "let" },
-            "name": { "type": "string" },
-            "type": { "$ref": "#/$defs/exprRef" },
-            "value": { "$ref": "#/$defs/exprRef" },
-            "body": { "$ref": "#/$defs/exprRef" },
-            "nondep": { "type": "boolean" }
+            "kind": {"const": "let"},
+            "name": {"type": "string"},
+            "type": {"$ref": "#/$defs/exprRef"},
+            "value": {"$ref": "#/$defs/exprRef"},
+            "body": {"$ref": "#/$defs/exprRef"},
+            "nondep": {"type": "boolean"}
           },
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "lit"],
+          "properties": {"kind": {"const": "lit"}, "lit": {"$ref": "#/$defs/literal"}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "data", "expr"],
           "properties": {
-            "kind": { "const": "lit" },
-            "lit": { "$ref": "#/$defs/literal" }
+            "kind": {"const": "mdata"},
+            "data": {"$ref": "#/$defs/metadata"},
+            "expr": {"$ref": "#/$defs/exprRef"}
           },
           "additionalProperties": false
         },
@@ -168,10 +163,10 @@
           "type": "object",
           "required": ["kind", "typeName", "index", "expr"],
           "properties": {
-            "kind": { "const": "proj" },
-            "typeName": { "type": "string" },
-            "index": { "$ref": "#/$defs/nat" },
-            "expr": { "$ref": "#/$defs/exprRef" }
+            "kind": {"const": "proj"},
+            "typeName": {"type": "string"},
+            "index": {"$ref": "#/$defs/nat"},
+            "expr": {"$ref": "#/$defs/exprRef"}
           },
           "additionalProperties": false
         }
@@ -182,15 +177,22 @@
         {
           "type": "object",
           "required": ["kind"],
-          "properties": { "kind": { "const": "level.zero" } },
+          "properties": {"kind": {"const": "level.zero"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "level"],
+          "properties": {"kind": {"const": "level.succ"}, "level": {"$ref": "#/$defs/level"}},
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["kind", "u", "v"],
           "properties": {
-            "kind": { "const": "level.succ" },
-            "level": { "$ref": "#/$defs/level" }
+            "kind": {"const": "level.max"},
+            "u": {"$ref": "#/$defs/level"},
+            "v": {"$ref": "#/$defs/level"}
           },
           "additionalProperties": false
         },
@@ -198,38 +200,22 @@
           "type": "object",
           "required": ["kind", "u", "v"],
           "properties": {
-            "kind": { "const": "level.max" },
-            "u": { "$ref": "#/$defs/level" },
-            "v": { "$ref": "#/$defs/level" }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": ["kind", "u", "v"],
-          "properties": {
-            "kind": { "const": "level.imax" },
-            "u": { "$ref": "#/$defs/level" },
-            "v": { "$ref": "#/$defs/level" }
+            "kind": {"const": "level.imax"},
+            "u": {"$ref": "#/$defs/level"},
+            "v": {"$ref": "#/$defs/level"}
           },
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "name"],
-          "properties": {
-            "kind": { "const": "level.param" },
-            "name": { "type": "string" }
-          },
+          "properties": {"kind": {"const": "level.param"}, "name": {"type": "string"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "id"],
-          "properties": {
-            "kind": { "const": "level.mvar" },
-            "id": { "type": "string" }
-          },
+          "properties": {"kind": {"const": "level.mvar"}, "id": {"type": "string"}},
           "additionalProperties": false
         }
       ]
@@ -239,32 +225,35 @@
         {
           "type": "object",
           "required": ["kind", "value"],
-          "properties": {
-            "kind": { "const": "literal.nat" },
-            "value": { "$ref": "#/$defs/nat" }
-          },
+          "properties": {"kind": {"const": "literal.nat"}, "value": {"$ref": "#/$defs/nat"}},
           "additionalProperties": false
         },
         {
           "type": "object",
           "required": ["kind", "value"],
-          "properties": {
-            "kind": { "const": "literal.str" },
-            "value": { "type": "string" }
-          },
+          "properties": {"kind": {"const": "literal.str"}, "value": {"type": "string"}},
           "additionalProperties": false
         }
       ]
     },
     "record": {
       "type": "object",
-      "required": ["_ruleId"],
+      "required": ["$ruleId"],
       "properties": {
-        "_ruleId": { "type": "string", "minLength": 1 },
-        "branches": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/branch" }
-        }
+        "$ruleId": {"type": "string", "minLength": 1},
+        "$goal_before": {
+          "anyOf": [
+            {"$ref": "#/$defs/exprRef"},
+            {"type": "null"}
+          ]
+        },
+        "$goal_after": {
+          "anyOf": [
+            {"$ref": "#/$defs/exprRef"},
+            {"type": "null"}
+          ]
+        },
+        "$branches": {"type": "array", "items": {"$ref": "#/$defs/branch"}}
       },
       "additionalProperties": true
     },
@@ -272,123 +261,15 @@
       "type": "object",
       "required": ["name", "proof"],
       "properties": {
-        "name": { "type": "string", "minLength": 1 },
-        "proof": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/record" }
-        }
+        "name": {"type": "string", "minLength": 1},
+        "proof": {"type": "array", "items": {"$ref": "#/$defs/record"}}
       },
       "additionalProperties": false
     },
-    "display": {
-      "$comment": "Validate this definition explicitly for a declared display companion; do not discover it by inspecting arbitrary open record JSON. field selects the companion's recorded field. A field view path is relative to that field; an auxiliary view supplies a separately recorded expression root. typeView and valueView are indices in this display object's views array, not expression-node indices. View indices, JSON-path indices, binder indices, projection indices, and source offsets must never receive expression-node rebasing. The decoder validates view ownership and bounds, structural hint paths, root registration for auxiliary expressions, and source-range ordering.",
+    "metadata": {
       "type": "object",
-      "required": ["kind", "field", "views"],
-      "properties": {
-        "kind": { "const": "expression-display-v1" },
-        "field": { "type": "string" },
-        "views": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/displayView" }
-        }
-      },
-      "additionalProperties": false
-    },
-    "displayView": {
-      "type": "object",
-      "required": ["root", "hints"],
-      "properties": {
-        "root": { "$ref": "#/$defs/displayRoot" },
-        "hints": {
-          "type": "array",
-          "items": { "$ref": "#/$defs/displayHint" }
-        }
-      },
-      "additionalProperties": false
-    },
-    "displayRoot": {
-      "oneOf": [
-        {
-          "type": "object",
-          "required": ["kind", "path"],
-          "properties": {
-            "kind": { "const": "field" },
-            "path": { "$ref": "#/$defs/jsonPath" }
-          },
-          "additionalProperties": false
-        },
-        {
-          "type": "object",
-          "required": ["kind", "expression"],
-          "properties": {
-            "kind": { "const": "auxiliary" },
-            "expression": { "$ref": "#/$defs/exprRef" }
-          },
-          "additionalProperties": false
-        }
-      ]
-    },
-    "displayHint": {
-      "type": "object",
-      "required": ["path", "isProp", "declaration", "appBinders", "sourceRange"],
-      "properties": {
-        "path": {
-          "type": "array",
-          "items": { "enum": ["fn", "arg", "type", "body", "value", "expr"] }
-        },
-        "isProp": { "type": ["boolean", "null"] },
-        "declaration": {
-          "anyOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/declarationHint" }
-          ]
-        },
-        "appBinders": {
-          "anyOf": [
-            { "type": "null" },
-            {
-              "type": "array",
-              "items": {
-                "anyOf": [
-                  { "type": "null" },
-                  { "$ref": "#/$defs/binderInfo" }
-                ]
-              }
-            }
-          ]
-        },
-        "sourceRange": {
-          "anyOf": [
-            { "type": "null" },
-            { "$ref": "#/$defs/sourceRange" }
-          ]
-        }
-      },
-      "additionalProperties": false
-    },
-    "declarationHint": {
-      "type": "object",
-      "required": ["name", "typeView", "valueView"],
-      "properties": {
-        "name": { "type": "string" },
-        "typeView": {
-          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/nat" }]
-        },
-        "valueView": {
-          "anyOf": [{ "type": "null" }, { "$ref": "#/$defs/nat" }]
-        }
-      },
-      "additionalProperties": false
-    },
-    "sourceRange": {
-      "type": "object",
-      "required": ["file", "start", "stop"],
-      "properties": {
-        "file": { "type": "string" },
-        "start": { "$ref": "#/$defs/nat" },
-        "stop": { "$ref": "#/$defs/nat" }
-      },
-      "additionalProperties": false
+      "minProperties": 1,
+      "additionalProperties": {"type": ["string", "boolean", "integer"]}
     }
   }
 }

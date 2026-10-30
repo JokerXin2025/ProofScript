@@ -12,13 +12,14 @@ from types import MappingProxyType
 from jsonschema import Draft202012Validator, ValidationError
 
 from PS4HTML.project import PS4HTMLError
-from PS4HTML.recording import PROOF_SCHEMA_VERSION, proof_steps
+from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD, proof_steps
 from PS4HTML.render_rules import validate_record, validate_rules
 
-INFO_VERSION = "5.0.0"
-MANIFEST_VERSION = "5"
-SNAPSHOT_VERSION = "4"
+INFO_VERSION = "9.0.0"
+MANIFEST_VERSION = "9"
+SNAPSHOT_VERSION = "7"
 MODEL_VERSION = "1.0.0"
+CONTRACT_VERSION = "2"
 
 
 def canonical(value):
@@ -55,7 +56,7 @@ def proof_facts_digest(artifact):
     """Match Lean's binding of theorem facts to source content, identity and snapshot."""
     return digest({"schemaVersion": artifact["schemaVersion"], "artifactId": artifact["id"],
                    "snapshotId": artifact["snapshotId"], "contentDigest": artifact["contentDigest"],
-                   "theorem": {key: artifact[key] for key in ("declaration", "projectId", "proofDependencies")}})
+                   "theorem": {key: artifact[key] for key in ("declaration", "declarationKind", "projectId", "proofRefs", "proofDependencies")}})
 
 
 LeanName = tuple[str | int, ...]
@@ -63,10 +64,18 @@ TheoremKey = tuple[str, LeanName]
 
 
 @dataclass(frozen=True)
+class RefInfo:
+    name: LeanName
+    is_dependency: bool
+
+
+@dataclass(frozen=True)
 class TheoremRecord:
     """Validated immutable proof facts; names and project IDs retain their lossless identities."""
     declaration: LeanName
+    declaration_kind: str
     project_id: str
+    proof_refs: tuple[RefInfo, ...]
     proof_dependencies: tuple[LeanName, ...]
     artifact_id: str
     snapshot_id: str
@@ -86,16 +95,23 @@ class InfoBundle:
             self.index = self.read("info/index.json")
             if self.index.get("schemaVersion") != INFO_VERSION or self.index.get("complete") is not True:
                 raise ValueError("Unsupported or incomplete Info bundle; rebuild the cache with Lean")
-            if self.index.get("recordingVersion") != PROOF_SCHEMA_VERSION or self.index.get("contractVersion") != "1":
+            if self.index.get("recordingVersion") != PROOF_SCHEMA_VERSION or self.index.get("contractVersion") != CONTRACT_VERSION:
                 raise ValueError("Unsupported recording/contract version; rebuild with lake build <Library>:ps4html")
             schema = self.read("info/schema/bundle.schema.json")
-            # Fail explicitly for old theorem caches, even when their bundled schema is permissive.
+            # Validate protocol identifiers independently of the schemas shipped in the bundle.
             for artifact in self.index.get("artifacts", []):
                 if artifact.get("schemaVersion") != MANIFEST_VERSION:
                     raise ValueError("Unsupported artifact manifest version; rebuild the cache with Lean")
+                if "boundary" in artifact:
+                    raise ValueError("Artifact manifests do not accept a boundary field")
                 if artifact.get("kind") == "proof" and artifact.get("declaration") is not None:
-                    if any(key not in artifact for key in ("proofDependencies", "proofFactsDigest")):
-                        raise ValueError("Named proof artifact lacks proofDependencies/proofFactsDigest; rebuild the cache with Lean")
+                    if any(key not in artifact for key in ("declarationKind", "proofRefs", "proofDependencies", "proofFactsDigest")):
+                        raise ValueError("Named proof artifact lacks declarationKind/proofRefs/proofDependencies/proofFactsDigest; rebuild the cache with Lean")
+                    refs = artifact["proofRefs"]
+                    if isinstance(refs, list) and any(
+                        not isinstance(ref, dict) or not {"name", "isDependency"} <= ref.keys() for ref in refs
+                    ):
+                        raise ValueError("proofRefs items require name/isDependency; rebuild the cache with Lean")
             Draft202012Validator(schema).validate(self.index)
             listed = set()
             for entry in self.index["files"]:
@@ -122,28 +138,23 @@ class InfoBundle:
                 if not isinstance(document, dict) or not isinstance(document.get("payload"), dict):
                     raise ValueError("Invalid persisted snapshot document")
                 payload = document.get("payload", {})
-                if payload.get("schemaVersion") != SNAPSHOT_VERSION or payload.get("recordingVersion") != PROOF_SCHEMA_VERSION or payload.get("contractVersion") != "1":
+                if payload.get("schemaVersion") != SNAPSHOT_VERSION or payload.get("recordingVersion") != PROOF_SCHEMA_VERSION or payload.get("contractVersion") != CONTRACT_VERSION:
                     raise ValueError("Unsupported persisted snapshot version; rebuild with lake build <Library>:ps4html")
                 for contract in payload.get("contracts", []):
                     if not isinstance(contract, dict) or not isinstance(contract.get("value"), dict):
                         raise ValueError("Invalid invocation contract document")
                     value = contract.get("value", {})
-                    if value.get("contractVersion") != "1" or value.get("recordingVersion") != PROOF_SCHEMA_VERSION:
+                    if value.get("contractVersion") != CONTRACT_VERSION or value.get("recordingVersion") != PROOF_SCHEMA_VERSION:
                         raise ValueError("Unsupported invocation contract version; rebuild with lake build <Library>:ps4html")
+                    if set(value) != {"contractVersion", "recordingVersion", "ruleId", "name", "kind", "continuation"}:
+                        raise ValueError("Invalid invocation contract fields; rebuild with lake build <Library>:ps4html")
                 Draft202012Validator(self.read("info/schema/snapshot.schema.json")).validate(document)
-                payload = document["payload"]
                 if document.get("schemaVersion") != INFO_VERSION or digest(payload) != entry["id"] or document["id"] != entry["id"]:
                     raise ValueError("Snapshot identity/version mismatch")
-                if payload.get("schemaVersion") != SNAPSHOT_VERSION or payload.get("recordingVersion") != PROOF_SCHEMA_VERSION or payload.get("contractVersion") != "1":
-                    raise ValueError("Unsupported persisted snapshot version; rebuild with lake build <Library>:ps4html")
                 query = payload["query"]
+                if not isinstance(query, dict) or set(query) != {"module"}:
+                    raise ValueError("Snapshot query must contain only its owning module")
                 name_key(query["module"])
-                boundary = query.get("boundary")
-                before = boundary.get("before") if isinstance(boundary, dict) else None
-                if (not isinstance(boundary, dict) or set(boundary) != {"before"}
-                        or not isinstance(before, dict) or set(before) != {"sequence"}
-                        or type(before["sequence"]) is not int or before["sequence"] < 0):
-                    raise ValueError("Snapshot requires a concrete nonnegative content boundary")
                 records_by_identity = {}
                 for record in payload["records"]:
                     kind, target = record["identity"]["kind"], record["identity"]["target"]
@@ -157,8 +168,8 @@ class InfoBundle:
                 contracts = {}
                 for contract in payload["contracts"]:
                     value = contract["value"]
-                    if value["contractVersion"] != "1" or value["recordingVersion"] != PROOF_SCHEMA_VERSION or digest(value) != contract["id"]:
-                        raise ValueError("Unsupported or corrupt invocation contract; rebuild with lake build <Library>:ps4html")
+                    if digest(value) != contract["id"]:
+                        raise ValueError("Corrupt invocation contract; rebuild with lake build <Library>:ps4html")
                     if contract["id"] in contracts:
                         raise ValueError("Duplicate invocation contract")
                     contracts[contract["id"]] = value
@@ -180,8 +191,8 @@ class InfoBundle:
             theorems_by_artifact = {}
             declarations = set()
             for artifact in self.index["artifacts"]:
-                if artifact["schemaVersion"] != MANIFEST_VERSION or artifact["snapshotId"] not in self.snapshots:
-                    raise ValueError("Invalid artifact snapshot/version")
+                if artifact["snapshotId"] not in self.snapshots:
+                    raise ValueError("Invalid artifact snapshot")
                 if name_text(artifact["owner"]) != artifact["module"] or artifact["module"] not in self.modules:
                     raise ValueError("Artifact module/owner mismatch")
                 if self.snapshots[artifact["snapshotId"]][0]["query"]["module"] != artifact["owner"]:
@@ -218,21 +229,41 @@ class InfoBundle:
     def _theorem_record(self, artifact):
         declaration = artifact["declaration"]
         if artifact["kind"] != "proof" or declaration is None:
-            if declaration is not None or any(key in artifact for key in ("proofDependencies", "proofFactsDigest")):
+            if declaration is not None or any(key in artifact for key in ("declarationKind", "proofRefs", "proofDependencies", "proofFactsDigest")):
                 raise ValueError("Only named proof artifacts may carry theorem proof facts")
             return None
         source = name_key(declaration)
         if source != name_key(artifact["name"]):
             raise ValueError("Theorem declaration/artifact name mismatch")
+        declaration_kind = artifact["declarationKind"]
+        if declaration_kind not in ("theorem", "lemma"):
+            raise ValueError("Theorem declarationKind must be theorem or lemma")
         project = artifact["projectId"]
         if not isinstance(project, str) or not project:
             raise ValueError("Theorem proof facts require a nonempty projectId")
+        references = artifact["proofRefs"]
+        if not isinstance(references, list):
+            raise ValueError("proofRefs must be an array of references")
+        refs = []
+        names = set()
+        for ref in references:
+            if not isinstance(ref, dict) or set(ref) != {"name", "isDependency"} or type(ref["isDependency"]) is not bool:
+                raise ValueError("Each proofRefs item requires a name and a Boolean isDependency")
+            name = name_key(ref["name"])
+            if name == source or name in names:
+                raise ValueError("Self/duplicate theorem proof reference")
+            names.add(name)
+            refs.append(RefInfo(name, ref["isDependency"]))
+        refs = tuple(refs)
         dependencies = artifact["proofDependencies"]
         if not isinstance(dependencies, list):
             raise ValueError("proofDependencies must be an array of lossless Lean names")
         dependencies = tuple(name_key(name) for name in dependencies)
         if source in dependencies or len(set(dependencies)) != len(dependencies):
             raise ValueError("Self/duplicate theorem proof dependency")
+        automatic = {ref.name for ref in refs if ref.is_dependency}
+        if not set(dependencies) <= automatic:
+            raise ValueError("proofDependencies contains a citation or a name absent from proofRefs")
         if artifact["proofFactsDigest"] != proof_facts_digest(artifact):
             raise ValueError("Theorem proof facts digest mismatch")
         records = self._snapshot_records[artifact["snapshotId"]]
@@ -242,14 +273,22 @@ class InfoBundle:
         project_record = records.get(("project", project))
         if project_record is None or project_record["configured"] is not True:
             raise ValueError("Theorem proof facts reference an unconfigured project")
-        return TheoremRecord(source, project, dependencies, artifact["id"], artifact["snapshotId"],
+        projected = set()
+        for name in automatic:
+            target = records.get(("theorem", name))
+            if target is None:
+                raise ValueError("Automatic proof reference is absent from its frozen snapshot")
+            if target["configured"] is True and target["value"]["project"] == project:
+                projected.add(name)
+        if set(dependencies) != projected:
+            raise ValueError("proofDependencies disagrees with automatic references and their frozen projects")
+        return TheoremRecord(source, declaration_kind, project, refs, dependencies, artifact["id"], artifact["snapshotId"],
                              name_key(artifact["owner"]), artifact["path"])
 
     def _validate_page(self, artifact):
         document = self.read(self.relative(artifact["path"]))
         if document.get("module") != artifact["module"] or not isinstance(document.get("components"), list):
             raise ValueError("Page content disagrees with its artifact module")
-        page_snapshot = self.snapshots[artifact["snapshotId"]][0]
         project = artifact["projectId"]
         if project is not None:
             record = self._snapshot_records[artifact["snapshotId"]].get(("project", project))
@@ -270,11 +309,6 @@ class InfoBundle:
                 from PS4HTML.Rules.computation import validate_computation
                 envelope = data["computation"]
                 validate_computation(envelope.get("value") if isinstance(envelope, dict) else None)
-        if document["components"]:
-            first_snapshot = self.snapshots[document["components"][0]["snapshotId"]][0]
-            if first_snapshot["query"] != page_snapshot["query"]:
-                raise ValueError("Page envelope must use its first component's configuration boundary")
-
     def theorem_component(self, component, module):
         """Bind a displayed theorem to its proof's own view, independently of the page view."""
         data = component.get("data", {})
@@ -287,6 +321,8 @@ class InfoBundle:
         record = self.theorems_by_artifact.get(artifact["id"]) if artifact is not None else None
         if record is None:
             raise ValueError("Theorem page component has no named proof artifact")
+        if tag != record.declaration_kind:
+            raise ValueError("Theorem page component kind disagrees with its proof declarationKind")
         if name_text(list(record.owner)) != module or component.get("snapshotId") != record.snapshot_id:
             raise ValueError("Theorem page reference disagrees with its proof owner/snapshot")
         metadata = self._snapshot_records[record.snapshot_id][("theorem", record.declaration)]["value"]
@@ -339,11 +375,12 @@ class InfoBundle:
         return self.snapshots[snapshot_id][0]
 
     def configuration(self, module=None, snapshot_id=None):
+        """Read rendering rules and naming prefixes only from the selected frozen snapshot."""
         from Lean2TeX.configuration import interpret
         values = {}
         for record in self.snapshot(module, snapshot_id)["records"]:
             kind, target = record["identity"]["kind"], record["identity"]["target"]
-            if kind not in {"definition", "variable", "phrase"}:
+            if kind not in {"definition", "phrase"}:
                 continue
             fields = {key: value for key, value in record["value"].items() if key != "extra"}
             if kind == "definition":
@@ -351,7 +388,7 @@ class InfoBundle:
                 if fields.get("alias") is not None:
                     fields["alias"] = name_text(fields["alias"])
             else:
-                # Literal variable/phrase keys occupy a single Name component.
+                # Literal phrase keys occupy a single Name component.
                 target = ".".join(map(str, target))
             values[(kind, target)] = fields
         return interpret(values)
@@ -383,9 +420,9 @@ class InfoBundle:
                       "color": [color[key] for key in ("tag", "border", "background")]}
             if templates:
                 fields["template"] = templates
-            rule = {"ruleId": rule_id, "strategy": contract["strategy"], "recordedFields": contract["fields"],
+            rule = {"ruleId": rule_id, "kind": contract["kind"],
                     "fields": fields, "extra": info["extra"]}
-            # Reuse the established contract, template and renderer checks at the adapter boundary.
+            # Check presentation metadata here; actual step data is checked below.
             validate_rules({"schemaVersion": PROOF_SCHEMA_VERSION, "module": artifact["module"], "imports": [], "rules": [rule]}, artifact["module"])
             if path in rules:
                 raise ValueError("Duplicate step binding")
@@ -402,13 +439,13 @@ class InfoBundle:
                 for index, step in enumerate(proof_steps(steps)):
                     path = parent + (index,)
                     rule = rules.get(path)
-                    if rule is None or rule["ruleId"] != step["_ruleId"]:
+                    if rule is None or rule["ruleId"] != step[RULE_ID_FIELD]:
                         raise ValueError(f"Missing/mismatched contract at {path}")
                     validate_record(rule, step, resolver=resolver, path=path)
                     seen.add(path)
-                    if rule["strategy"]:
-                        for branch_index, branch in enumerate(step.get("branches", [])):
-                            visit(branch["proof"], path + ("branches", branch_index, "proof"))
+                    if rule["kind"] == "strategy":
+                        for branch_index, branch in enumerate(step.get(BRANCHES_FIELD, [])):
+                            visit(branch["proof"], path + (BRANCHES_FIELD, branch_index, "proof"))
                     embedded = step.get("proof")
                     if rule["fields"].get("renderer") == "embed" and isinstance(embedded, list):
                         visit(embedded, path + ("proof",))

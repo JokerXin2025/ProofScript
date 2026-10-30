@@ -3,8 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
 
-from .expr import flatten_app
+from .expr import flatten_app, unwrap_mdata
 from .configuration import EffectiveConfiguration
 from .macros import MacroRegistry
 from .model import DisplayNode, RenderDiagnostic
@@ -22,11 +23,65 @@ class Expr2TeX:
         self.converter = SemanticConverter(self.registry, self.allocator)
         self.layout = LayoutRenderer(self.registry)
         self.diagnostics: list[RenderDiagnostic] = []
+        self.parameter_templates = {}
 
     @classmethod
     def from_config(cls, config: EffectiveConfiguration) -> Expr2TeX:
         """Create independent per-proof allocation and diagnostic state."""
-        return cls(config.registry, VariableAllocator(list(config.variables)))
+        renderer = cls(config.registry, VariableAllocator(config.variable_prefixes))
+        renderer.parameter_templates = config.parameter_templates
+        return renderer
+
+    def render_parameter(self, variable, type_expr, *, language="zh"):
+        """Render a declaration without changing ordinary expression styles.
+
+        Substitution is single-pass: generated TeX is never parsed as a template.
+        The variable goes through the ordinary fvar renderer, preserving identity.
+        """
+        diagnostics = []
+
+        def render(expr):
+            result = self.render(expr, parent="Formula", language=language)
+            diagnostics.extend(self.diagnostics)
+            return result
+
+        with self.allocator.transaction():
+            name = render(variable)
+            head, args = flatten_app(type_expr)
+            head, _ = unwrap_mdata(head)
+            configured = self.parameter_templates.get(head.get("name")) if head.get("kind") == "const" else None
+            if configured is not None:
+                template, indices = configured
+                values = {"self": name}
+
+                def substitute(match):
+                    key = match.group(1)
+                    if key not in values:
+                        if key == "type":
+                            values[key] = render(type_expr)
+                        else:
+                            index = int(key)
+                            if index >= len(indices) or indices[index] >= len(args):
+                                raise ValueError(f"Parameter template for {head['name']} references missing #{key}")
+                            values[key] = render(args[indices[index]])
+                    return values[key]
+
+                result = re.sub(r"#(self\b|type\b|[0-9]+)", substitute, template)
+            else:
+                structural, _ = unwrap_mdata(type_expr)
+                if structural.get("kind") == "forall":
+                    display = self.convert(type_expr)
+                    diagnostics.extend(self.diagnostics)
+                    if display.metadata.get("isArrow"):
+                        domain = self.render_display(display.children[1], parent="Formula", language=language)
+                        codomain = self.render_display(display.children[2], parent="Formula", language=language)
+                        result = f"${name} \\colon {domain} \\to {codomain}$"
+                    else:
+                        result = f"${name} \\colon {render(type_expr)}$"
+                else:
+                    result = f"${name} \\colon {render(type_expr)}$"
+            self.diagnostics = diagnostics
+            return result
 
     def reset(self) -> None:
         self.allocator.reset()
@@ -63,14 +118,16 @@ class Expr2TeX:
         language: str = "zh",
     ) -> str:
         """Render an expression occurrence using the requested style and language."""
-        display = self.convert(node)
-        return self.render_display(display, style, parent=parent, language=language)
+        with self.allocator.transaction():
+            display = self.convert(node)
+            return self.render_display(display, style, parent=parent, language=language)
 
     def render_relation(self, relation: object) -> str:
         """Render a calc relation through a stable public API."""
         if not isinstance(relation, dict):
             return "" if relation is None else str(relation)
         head, _ = flatten_app(relation)
+        head, _ = unwrap_mdata(head)
         if head.get("kind") == "const":
             return self.registry.rel_symbol(str(head.get("name", "")))
         return self.render(relation)

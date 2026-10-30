@@ -1,11 +1,10 @@
 import ProofScript.Info.Theorem
-import ProofScript.Info.Variable
 import ProofScript.Info.Phrase
 import ProofScript.Info.Definition
 import ProofScript.Info.Script
 import ProofScript.Core.BuildMode
 
-open Lean Elab Command ProofScript Info
+open Lean Elab Command ProofScript
 
 
 elab "project_info" target:(str)? fields:infoFields : command => do
@@ -20,11 +19,6 @@ elab "theorem_info" id:ident fields:(infoFields)? : command => do
     updateTheoremInfo id ((← fields.mapM readFields).getD #[]) (← getRef)
   else
     addDeclarationReferenceInfo id
-
-elab "var_info" target:str fields:infoFields : command => do
-  let pageBuild ← recordModuleBuildMode
-  addInfoFieldInfos (inferInstance : InfoSchema VariableInfo) fields
-  if pageBuild then updateLiteralInfo variableSpec target (← readFields fields) (← getRef)
 
 elab "phrase_info" target:str fields:infoFields : command => do
   let pageBuild ← recordModuleBuildMode
