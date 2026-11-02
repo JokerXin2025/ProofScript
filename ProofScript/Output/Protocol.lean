@@ -79,20 +79,27 @@ def snapshotDocument (snapshot : Snapshot) := json% {
   provenance: $(snapshot.provenance)
 }
 
+private def exportedDefinitionSchema : Json :=
+  let schema := (inferInstance : InfoSchema DefinitionInfo).jsonSchema
+  let properties := (schema.getObjVal? "properties").toOption.getD (json% {})
+    |>.setObjVal! "argument_indices" (arraySchema natSchema)
+  schema.setObjVal! "properties" properties
+
 def modelSchemas := json% {
   project: $((inferInstance : InfoSchema ProjectInfo).jsonSchema),
   "theorem": $((inferInstance : InfoSchema TheoremInfo).jsonSchema),
   script: $((inferInstance : InfoSchema ScriptInfo).jsonSchema),
-  definition: $((inferInstance : InfoSchema DefinitionInfo).jsonSchema),
+  definition: $exportedDefinitionSchema,
   phrase: $((inferInstance : InfoSchema PhraseInfo).jsonSchema)
 }
 
-private def recordSchema [InfoSchema Record] (spec : InfoSpec Record) : Json :=
+private def recordSchema [InfoSchema Record] (spec : InfoSpec Record)
+    (valueSchema : Option Json := none) : Json :=
   let schema : InfoSchema Record := inferInstance
   objectSchema [
     ("identity", objectSchema [("kind", constantSchema spec.kind), ("target", targetSchema spec.kind)] #["kind", "target"]),
     ("schemaId", constantSchema schema.id.toString), ("schemaVersion", constantSchema schema.version),
-    ("configured", boolSchema), ("value", schema.jsonSchema)]
+    ("configured", boolSchema), ("value", valueSchema.getD schema.jsonSchema)]
     #["identity", "schemaId", "schemaVersion", "configured", "value"]
 
 private def contractSchema : Json := objectSchema [
@@ -105,7 +112,7 @@ private def contractSchema : Json := objectSchema [
 def snapshotSchema : Json :=
   let records := json% { oneOf: [
     $(recordSchema projectSpec), $(recordSchema theoremSpec),
-    $(recordSchema scriptSpec), $(recordSchema definitionSpec),
+    $(recordSchema scriptSpec), $(recordSchema definitionSpec (some exportedDefinitionSchema)),
     $(recordSchema phraseSpec)] }
   let payload := objectSchema [
     ("schemaVersion", constantSchema snapshotSchemaVersion),

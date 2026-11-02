@@ -1,5 +1,5 @@
 import ProofScript.Core.References
-import ProofScript.Page.Component.Command
+import ProofScript.Page.Component.Core
 
 open Lean
 open Lean.Elab.Command

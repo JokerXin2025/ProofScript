@@ -9,6 +9,7 @@ from PS4HTML.engine import ERROR, SORRY, ProofEngine, render_module_navigation, 
 from PS4HTML.highlight import highlight_code
 from PS4HTML.project import PS4HTMLError
 from PS4HTML.Rules.proof_text import ProofTextRenderer
+from PS4HTML.Rules.title import TitleRenderer
 from PS4HTML.Rules.media import render_figure, render_latex
 from PS4HTML.Rules.references import render_references
 from PS4HTML.schema import ResourceLoader, SCHEMA_VERSION, PROOF_SCHEMA_VERSION, validate_document
@@ -102,9 +103,11 @@ def build_label_index(pages: list[Page]) -> dict[tuple[str, str], LabelTarget]:
     for page in pages:
         for component in page.components:
             data = component.get("data", {}) if isinstance(component, dict) else {}
-            if "text" in data:
-                value = data.get("text", {}).get("value", {})
-                _collect_heading_labels(value.get("blocks", []), page, labels)
+            if "title" in data:
+                value = data.get("title", {}).get("value", {})
+                label = value.get("label")
+                if isinstance(label, str):
+                    _add_label(labels, "heading", label, page, f"heading-{label}")
             elif "theorem" in data or "lemma" in data:
                 declaration_kind = "theorem" if "theorem" in data else "lemma"
                 value = data.get(declaration_kind, {}).get("value", {})
@@ -119,22 +122,6 @@ def build_label_index(pages: list[Page]) -> dict[tuple[str, str], LabelTarget]:
                 if isinstance(label, str):
                     _add_label(labels, "figure", label, page, f"figure-{label}")
     return labels
-
-
-def _collect_heading_labels(blocks, page, labels):
-    for block in blocks if isinstance(blocks, list) else []:
-        if not isinstance(block, dict):
-            continue
-        if "heading" in block:
-            label = block["heading"].get("label")
-            if isinstance(label, str):
-                _add_label(labels, "heading", label, page, f"heading-{label}")
-        elif "quote" in block:
-            _collect_heading_labels(block["quote"].get("content", []), page, labels)
-        elif "orderedList" in block or "unorderedList" in block:
-            key = "orderedList" if "orderedList" in block else "unorderedList"
-            for item in block[key].get("items", []):
-                _collect_heading_labels(item.get("content", []), page, labels)
 
 
 def _add_label(labels, kind, label, page, anchor):
@@ -153,8 +140,9 @@ def _component_location(page, kind, label):
             value = data[tag].get("value", {})
             if _declaration_name(page.module, value.get("proof"), page.declarations) != label:
                 continue
-        elif kind == "heading" and "text" in data:
-            continue
+        elif kind == "heading" and "title" in data:
+            if data["title"].get("value", {}).get("label") != label:
+                continue
         else:
             continue
         start = component.get("source", {}).get("start", 0)
@@ -288,6 +276,8 @@ class PageRenderer:
         value = envelope.get("value") if isinstance(envelope, dict) else None
         if tag == "text":
             return ProofTextRenderer(self.labels, self.build_root, current_output).render(value)
+        if tag == "title":
+            return TitleRenderer(self.labels, self.build_root, current_output).render(value)
         if tag in {"theorem", "lemma"}:
             return self._theorem(value, component.get("source", {}), page, tag)
         if tag == "latex":

@@ -6,7 +6,7 @@
 
 import Lean
 import Mathlib.Tactic.Linter.UnusedTacticExtension
---===============================================================================--
+
 
 namespace Lean.Elab.Command
 variable {α : Type}
@@ -19,6 +19,17 @@ linter as explicit references. -/
 def withoutUnusedVariableLint (action : CommandElabM α) : CommandElabM α :=
   withScope (x := action) fun scope =>
     { scope with opts := scope.opts.set `linter.unusedVariables false }
+
+
+/-- Allow quiet `#` commands to pass Mathlib's hash-command linter.
+
+This is useful for page commands, which deliberately emit no messages. Adding a
+silent information marker keeps the linter from reporting them when
+`warningAsError` is false, provided the action preserves existing messages. -/
+def allowHashCommandLint (action : CommandElabM α) : CommandElabM α := do
+  logAt (← getRef) "ProofScript page command" .information true
+  action
+
 
 /-- Allow metadata scripts to leave the tactic state unchanged.
 

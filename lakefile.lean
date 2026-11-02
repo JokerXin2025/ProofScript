@@ -13,9 +13,14 @@ require mathlib from git
 lean_lib ProofScript
 
 lean_lib Test where
-  roots := #[`Test.RecorderVersions, `Test.RecorderVersionFixture,
-    `Test.RecorderVersionExtension, `Test.RecorderVersionImport,
-    `Test.PageTheoremMathlib]
+  roots := #[
+    `Test.RecorderVersions,
+    `Test.RecorderVersionImport,
+    `Test.PageTheoremMathlib,
+    `Test.PageTheoremQualified,
+    `Test.RecorderVersionFixture,
+    `Test.RecorderVersionExtension,
+    `Test.PageTitle]
 
 lean_exe proofscriptExport where
   root := `ProofScript.Output.Main

@@ -1,8 +1,9 @@
-
-import ProofScript.Page.Component.Command
+import ProofScript.Script.Command
+import ProofScript.Page.Component.Core
 import ProofScript.Output.Path
+import ProofScript.Info.Commands
 
-open Lean Elab Command
+open Lean
 open ProofScript
 
 
@@ -22,13 +23,11 @@ private def latexPreamble :=
 
 private def cleanSvg (raw : String) : String :=
   let lines := raw.splitOn "\n"
-  let afterStart := lines.dropWhile
-    fun line => !(line.startsWith "<svg")
-  let kept :=
-    match afterStart.findIdx? (fun line => line.startsWith "</svg>") with
+  let afterStart := lines.dropWhile fun line => !(line.startsWith "<svg")
+  String.intercalate "\n" <|
+    match afterStart.findIdx? fun line => line.startsWith "</svg>" with
     | some index => afterStart.take (index + 1)
     | none => afterStart
-  String.intercalate "\n" kept
 
 private def processError (name : String) (output : IO.Process.Output) : String :=
   let details :=
@@ -37,7 +36,7 @@ private def processError (name : String) (output : IO.Process.Output) : String :
   s!"{name} failed with exit code {output.exitCode}:\n{details}"
 
 open IO.FS in
-def compileLatexToSvg (source : String) : IO String := do
+def compileLatexToSvg (source : String) : IO String :=
   withTempDir fun dir => do
     let tex := latexPreamble ++ "\\begin{document}\n" ++ source ++ "\n\\end{document}\n"
     writeFile (dir / "component.tex") tex
@@ -57,21 +56,44 @@ def compileLatexToSvg (source : String) : IO String := do
       throw <| IO.userError (processError "dvisvgm" dvisvgm)
     cleanSvg <$> readFile (dir / "component.svg")
 
-private def addLatexComponent (metadataStx : Syntax)
-                              (codeStx : TSyntax `str)
-                              : CommandElabM Unit := do
-  let metadata ←  match parseComponentMetadata metadataStx with
-                  | .ok metadata => pure metadata
-                  | .error message => throwErrorAt metadataStx message
-  let svg ← liftIO <| compileLatexToSvg codeStx.getString
-  let svg ← liftIO <| writeTextResource "svg" "svg" "image/svg+xml" svg
-  let labels := match metadata.label with
-                | some label => #[("figure", label)]
-                | none => #[]
-  let value : LatexComponent := { metadata, source := codeStx.getString, svg }
-  addPageComponent codeStx.raw "latex" (toJson value) labels
+script_elab «latex» (kind := metadata)
+"latex" metadata:componentMeta code:str =>
+  addComponentMetadataInfo metadata.raw
+
+script_recorder «latex» => do
+  record_goal "$goal_before"
+  let metadata ←
+    match parseComponentMetadata metadata.raw with
+    | .ok value => pure value
+    | .error message => throwErrorAt metadata message
+  let svg ←
+    writeTextResource "svg" "svg" "image/svg+xml" <| ←
+      compileLatexToSvg code.getString
+  record_value "metadata" (toJson metadata)
+  record_value "language" "latex"
+  record_value "source" code.getString
+  record_value "svg" svg
+  execute
+  record_goal "$goal_after"
+
+script_info «latex» {
+  renderer := «media»
+}
 
 page_component "latex" metadata:componentMeta code:str => do
   addComponentMetadataInfo metadata.raw
-  when_page_build
-    addLatexComponent metadata.raw code
+  when_page_build do
+    match parseComponentMetadata metadata.raw with
+    | .ok metadata =>
+        let svg ← writeTextResource "svg" "svg" "image/svg+xml" <|
+          ← compileLatexToSvg code.getString
+        let value : LatexComponent := {
+          metadata := metadata
+          source := code.getString
+          svg := svg
+        }
+        addPageComponent code.raw "latex" (toJson value) <|
+          match metadata.label with
+          | some label => #[("figure", label)]
+          | none => #[]
+    | .error message => throwErrorAt metadata.raw message

@@ -5,122 +5,185 @@ import ProofScript.Info.Theorem
 import ProofScript.Script.Script
 import ProofScript.Script.Recording
 import Batteries.Tactic.Init
-import ProofScript.Page.Component.Core
-import ProofScript.Page.Component.Latex
 import ProofScript.Core.BuildMode
 import ProofScript.Info.Commands
 
+import ProofScript.Page.Command
+import ProofScript.Extensions.Title
+import ProofScript.Extensions.ProofText
+
+import ProofScript.Builtin.Scripts.Assumption
+import ProofScript.Builtin.Scripts.Change
+import ProofScript.Builtin.Scripts.Congr
+import ProofScript.Builtin.Scripts.Contradiction
+import ProofScript.Builtin.Scripts.Decide
+import ProofScript.Builtin.Scripts.Exfalso
+import ProofScript.Builtin.Scripts.Exists
+import ProofScript.Builtin.Scripts.LeftRight
+import ProofScript.Builtin.Scripts.Omega
+import ProofScript.Builtin.Scripts.QuotInduction
+import ProofScript.Builtin.Scripts.Rewrite
+import ProofScript.Builtin.Scripts.Rfl
+import ProofScript.Builtin.Scripts.Symm
+import ProofScript.Builtin.Scripts.Trivial
+import ProofScript.Builtin.Scripts.Unfold
+
+
+#page sub title (label := "BuiltinScripts") "Built-in Tactics"
+
+#page text r#"
+These are provided as *built-in tactics*:
++ *«assumption»*
+  - Lean syntax: `"assumption"`
++ *«change»*
+  - Lean syntax: `"change" eq:term loc:(location)?`
+  - clear: `eq`, `loc`
++ *«congr»*
+  - Lean syntax: `"congr" num:(ppSpace num)?`
+  - clear: `num`
++ *«contradiction»*
+  - Lean syntax: `"contradiction"`
++ *«decide»*
+  - Lean syntax: `"decide" config:optConfig`
+  - clear: `config`
++ *«nativeDecide»*
+  - Lean syntax: `"native_decide" config:optConfig`
+  - clear: `config`
++ *«exfalso»*
+  - Lean syntax: `"exfalso"`
++ *«exists»*
+  - Lean syntax: `"exists " data:term`
+  - clear: `data`
++ *«existsWith»*
+  - Lean syntax: `"exists " data:term "with" cond:term`
+  - clear: `data`, `cond`
++ *«left»*
+  - Lean syntax: `"left"`
++ *«right»*
+  - Lean syntax: `"right"`
++ *«omega»*
+  - Lean syntax: `"omega" config:optConfig`
+  - clear: `config`
++ *«bvOmega»*
+  - Lean syntax: `"bv_omega"`
++ *«quotInduction»*
+  - Lean syntax: `"quot_induction" q:term "with" a:ident`
++ *«rewrite»*
+  - Lean syntax: `"rewrite" config:optConfig rules:rwRuleSeq loc:(location)?`
+  - clear: `config`, `rules`, `loc`
++ *«rw»*
+  - Lean syntax: `"rw" config:optConfig rules:rwRuleSeq loc:(location)?`
+  - clear: `config`, `rules`, `loc`
++ *«rwPos»*
+  - Lean syntax: `"rw_pos" h:term loc:(location)?`
+  - clear: `h`, `loc`
++ *«rwNeg»*
+  - Lean syntax: `"rw_neg" h:term loc:(location)?`
+  - clear: `h`, `loc`
++ *«rfl»*
+  - Lean syntax: `"rfl"`
++ *«rfl'»*
+  - Lean syntax: `"rfl'"`
++ *«eqRefl»*
+  - Lean syntax: `"eq_refl"`
++ *«applyRfl»*
+  - Lean syntax: `"apply_rfl"`
++ *«acRfl»*
+  - Lean syntax: `"ac_rfl"`
++ *«symm»*
+  - Lean syntax: `"symm" loc:(location)?`
+  - clear: `loc`
++ *«symmSaturate»*
+  - Lean syntax: `"symm_saturate"`
++ *«trivial»*
+  - Lean syntax: `"trivial"`
++ *«unfold»*
+  - Lean syntax: `"unfold" defs:(ppSpace colGt ident)+ loc:(location)?`
+  - clear: `defs`, `loc`
+"#
+
+
+#page sub title (label := "RestrictedScripts") "Restricted Native Tactics"
+
+#page text r#"
+These Lean native tactics are supported but restricted:
++ *«exists»*
+  - origin Lean syntax: `"exists " es:term,+`
+  - restriction: Only one parameter can be provided at a time
+"#
+
+
+#page sub title (label := "UnsupportedScripts") "Unsupported Native Tactics"
+
+#page text r#"
+These Lean native tactics are *not supported*:
++ *«allGoals»*
+  - Lean syntax: `"all_goals " tacticSeq`
+  - reason: For metaprogramming only
++ *«anyGoals»*
+  - Lean syntax: `"any_goals " tacticSeq`
+  - reason: For metaprogramming only
++ *«dbgTrace»*
+  - Lean syntax: `"dbg_trace " str`
+  - reason: For debugging purposes only
++ *«done»*
+  - Lean syntax: `"done"`
+  - reason: For metaprogramming only
++ *«fail»*
+  - Lean syntax: `"fail" (ppSpace str)?`
+  - reason: For metaprogramming only
++ *«failIfSuccess»*
+  - Lean syntax: `"fail_if_success " tacticSeq`
+  - reason: For metaprogramming only
++ *«first»*
+  - Lean syntax: `"first " withPosition((ppDedent(ppLine) colGe "| " tacticSeq)+)`
+  - reason: For metaprogramming only
++ *«focus»*
+  - Lean syntax: `"focus " tacticSeq`
+  - reason: For metaprogramming only
++ *«repeat»*
+  - Lean syntax: `"repeat " tacticSeq`
+  - reason: For metaprogramming only
++ *«repeat'»*
+  - Lean syntax: `"repeat' " tacticSeq`
+  - reason: For metaprogramming only
++ *«rotateLeft»*
+  - Lean syntax: `"rotate_left" (ppSpace num)?`
+  - reason: No corresponding semantics
++ *«rotateRight»*
+  - Lean syntax: `"rotate_right" (ppSpace num)?`
+  - reason: No corresponding semantics
++ *«skip»*
+  - Lean syntax: `"skip"`
+  - reason: For metaprogramming only
++ *«sleep»*
+  - Lean syntax: `"sleep " num`
+  - reason: For debugging purposes only
++ *«traceMessage»*
+  - Lean syntax: `"trace " str`
+  - reason: For debugging purposes only
++ *«traceState»*
+  - Lean syntax: `"trace_state"`
+  - reason: For debugging purposes only
++ *«try»*
+  - Lean syntax: `"try " t:tacticSeq`
+  - reason: For metaprogramming only
++ *«withReducible»*
+  - Lean syntax: `"with_reducible " tacticSeq`
+  - reason: For metaprogramming only
++ *«withReducibleAndInstances»*
+  - Lean syntax: `"with_reducible_and_instances " tacticSeq`
+  - reason: For metaprogramming only
++ *«withUnfoldingAll»*
+  - Lean syntax: `"with_unfolding_all " tacticSeq`
+  - reason: For metaprogramming only
++ *«withUnfoldingNone»*
+  - Lean syntax: `"with_unfolding_none " tacticSeq`
+  - reason: For metaprogramming only
+"#
+
 open Lean Meta Parser Elab Tactic
 open ProofScript
-
-script_macro «assumption»
-"assumption" => `(tactic| assumption)
-
-script_info «assumption» {
-  template := [{
-    lang := "zh", tag := "已知条件",
-    content := "由已知条件给出了证明"
-  }, {
-    lang := "en", tag := "«assumption»",
-    content := ""
-  }]
-}
-example : True := by
-  try symm
-  trivial
-
-script_macro «change»
-"change" equation:term loc:(location)? => `(tactic|
-  change $equation $[$loc:location]?
-)
-
-script_info «change» {
-  template := [{
-    lang := "zh", tag := "改写目标",
-    content := "待证目标即 ${equation_before}"
-  }, {
-    lang := "en", tag := "«change»",
-    content := ""
-  }]
-}
-
-script_macro «contradiction»
-"contradiction" => `(tactic| contradiction)
-
-script_info «contradiction» {
-  template := [{
-    lang := "zh", tag := "矛盾",
-    content := ""
-  }, {
-    lang := "en", tag := "contra",
-    content := ""
-  }]
-}
-
-script_macro «exfalso»
-"exfalso" => `(tactic| exfalso)
-
-script_info «exfalso» {
-  template := [{
-    lang := "zh", tag := "归假",
-    content := "矛盾蕴涵任何目标"
-  }, {
-    lang := "en", tag := "exfalso",
-    content := ""
-  }]
-}
-
-script_macro «omega»
-"omega" => `(tactic| omega)
-
-script_info «omega» {
-  template := [{
-    lang := "zh", tag := "整数算术",
-    content := ""
-  }, {
-    lang := "en", tag := "«omega»",
-    content := ""
-  }]
-}
-
-script_macro «rfl»
-"rfl" => `(tactic| rfl)
-
-script_info «rfl» {
-  template := [{
-    lang := "zh", tag := "自反性",
-    content := ""
-  }, {
-    lang := "en", tag := "refl",
-    content := ""
-  }]
-}
-
-script_macro «symm»
-"symm" loc:(location)? => `(tactic| symm $[$loc:location]?)
-
-script_info «symm» {
-  template := [{
-    lang := "zh", tag := "对称性",
-    content := ""
-  }, {
-    lang := "en", tag := "«symm»",
-    content := ""
-  }]
-}
-
-script_macro «trivial»
-"trivial" => `(tactic| trivial)
-
-script_info «trivial» {
-  template := [{
-    lang := "zh", tag := "显然",
-    content := ""
-  }, {
-    lang := "en", tag := "«trivial»",
-    content := ""
-  }]
-}
 
 script_macro «simp» (clear := [config, args])
 "simp" config:optConfig args:simpArgs loc:(location)? =>
@@ -135,36 +198,6 @@ script_info «simp» {
     content := ""
   }, {
     lang := "en", tag := "«simp»",
-    content := ""
-  }]
-}
-
-script_macro «rw» (clear := [config, rules])
-"rw" config:optConfig rules:rwRuleSeq loc:(location)? => `(tactic|
-  rw $config:optConfig $rules:rwRuleSeq $[$loc:location]?
-)
-
-script_info «rw» {
-  template := [{
-    lang := "zh", tag := "代换",
-    content := ""
-  }, {
-    lang := "en", tag := "«rw»",
-    content := ""
-  }]
-}
-
-script_macro «unfold»
-"unfold" definitions:(colGt ident)+ => `(tactic|
-  unfold $definitions*
-)
-
-script_info «unfold» {
-  template := [{
-    lang := "zh", tag := "展开定义",
-    content := ""
-  }, {
-    lang := "en", tag := "«unfold»",
     content := ""
   }]
 }
@@ -236,7 +269,7 @@ script_recorder «let» => do
     let typeSource ← match type with
       | some type => trustedSyntaxSource? type.raw[1]
       | none => pure none
-    record_value "name" h.getId.eraseMacroScopes.toString
+    record_param "name" h
     record_value "type" (← recordExpression declaration.type typeSource)
     let value ← recordExpression declaration.value (← trustedSyntaxSource? term.raw)
     record_value "value" value
@@ -340,42 +373,6 @@ script_info «intro» {
     content := ""
   }, {
     lang := "en", tag := "«intro»",
-    content := ""
-  }]
-}
-
-script_macro «left»
-"left" => `(tactic| focus
-  first
-  | guard_target =~ (_ ∨ _)
-  | fail "`left` can only be used with propositions connected by `∨`"
-  left
-)
-
-script_info «left» {
-  template := [{
-    lang := "zh", tag := "确定目标",
-    content := ""
-  }, {
-    lang := "en", tag := "«left»",
-    content := ""
-  }]
-}
-
-script_macro «right»
-"right" => `(tactic| focus
-  first
-  | guard_target =~ (_ ∨ _)
-  | fail "`right` can only be used with propositions connected by `∨`"
-  right
-)
-
-script_info «right» {
-  template := [{
-    lang := "zh", tag := "确定目标",
-    content := ""
-  }, {
-    lang := "en", tag := "«right»",
     content := ""
   }]
 }
@@ -598,21 +595,6 @@ script_info «apply» {
   }]
 }
 
-script_macro quot_induction (intro := [a])
-"quot_induction" q:term "with" a:ident => `(tactic|
-  refine Quot.inductionOn $q:term (fun $a:ident => ?_)
-)
-
-script_info «quot_induction» {
-  template := [{
-    lang := "zh", tag := "商归纳",
-    content := ""
-  }, {
-    lang := "en", tag := "By quotient induction,",
-    content := ""
-  }]
-}
-
 /-! ## Script-Strategy -/
 
 /-! ### Assertions -/
@@ -766,13 +748,19 @@ script_info «witness» {
 
 /-! ### Goal Decomposition: Conjunction -/
 
-script_macro «split_and» (kind := strategy)
-"split_and" => `(tactic| focus
-  first
-  | guard_target =~ (_ ∧ _)
-  | fail "`split_and` can only be used with `∧` propositions"
-  apply And.intro
-)
+script_elab «split_and» (kind := strategy)
+"split_and" => do
+  evalTactic <| ← `(tactic| focus
+    first
+    | guard_target =~ (_ ∧ _)
+    | fail "`split_and` can only be used with `∧` propositions"
+    apply And.intro
+  )
+  match ← getGoals with
+  | [left, right] =>
+    left.setTag `left
+    right.setTag `right
+  | _ => throwError "`split_and` expected two subgoals"
 
 script_info «split_and» {
   template := [{
@@ -988,8 +976,12 @@ script_recorder «contra» => do
   record_goal "$goal_before"
   execute
   withRollback do
-    record_param "h" h
-    record_value "hypothesis" (← recordValueFrom "hypothesis" (expressionType h.raw))
+    let goal ← getMainGoal
+    goal.withContext do
+      let some localDecl := (← getLCtx).findFromUserName? h.getId
+        | throwError "contra did not introduce `{h.getId}`"
+      let hypothesis ← recordValueFrom "hypothesis" <| recordExpression localDecl.type
+      record_value "hypothesis" hypothesis
 
 script_info «contra» {
   color := (some "#a33b45", some "#ddb0b4", some "#fcf2f2"),
@@ -1140,32 +1132,6 @@ script_macro «svg» (kind := metadata, clear := [code])
 
 script_info «svg» {
   renderer := «diagram»
-}
-
-/-! LaTeX (Compiled to SVG) -/
-
-script_elab «latex» (kind := metadata)
-"latex" _metadata:componentMeta _code:str =>
-  addComponentMetadataInfo _metadata.raw
-
-script_recorder «latex» => do
-  record_goal "$goal_before"
-  let metadata ←
-    match parseComponentMetadata _metadata.raw with
-    | .ok value => pure value
-    | .error message => throwErrorAt _metadata message
-  let svg ←
-    writeTextResource "svg" "svg" "image/svg+xml" <| ←
-      compileLatexToSvg _code.getString
-  record_value "metadata" (toJson metadata)
-  record_value "language" "latex"
-  record_value "source" _code.getString
-  record_value "svg" svg
-  execute
-  record_goal "$goal_after"
-
-script_info «latex» {
-  renderer := «media»
 }
 
 /-! Informal Proof -/
@@ -1491,3 +1457,6 @@ script_info «infer» {
 }
 
 macro "infer" steps:inferSteps : term => `(term| script infer $steps:inferSteps)
+
+
+#page end

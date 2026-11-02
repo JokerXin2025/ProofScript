@@ -1,26 +1,19 @@
 import html
-import os
 import re
 from pathlib import Path
 from string import Template
-from urllib.parse import urlparse, quote as quote_url_path
 
 from PS4HTML.highlight import highlight_code
+from PS4HTML.Rules.inline_text import InlineTextRenderer
 
 
 LANGUAGE_CLASS = re.compile(r"[^A-Za-z0-9_+.-]")
-SAFE_LINK_SCHEMES = {"", "http", "https", "mailto"}
 TEMPLATE_PROOF_TEXT = Template(
     (Path(__file__).absolute().parent.parent / "Templates" / "proof_text.html").read_text()
 )
 
 
-class ProofTextRenderer:
-    def __init__(self, labels, build_root: Path, current_output: Path):
-        self.labels = labels
-        self.build_root = build_root
-        self.current_output = current_output
-
+class ProofTextRenderer(InlineTextRenderer):
     def render(self, value) -> str:
         blocks = value.get("blocks", []) if isinstance(value, dict) else []
         source = value.get("source", "") if isinstance(value, dict) else ""
@@ -45,14 +38,6 @@ class ProofTextRenderer:
 
         if tag == "paragraph":
             return f'<p>{self._inlines(value.get("content", []))}</p>'
-        if tag == "heading":
-            level = value.get("level")
-            if not isinstance(level, int) or isinstance(level, bool):
-                level = 1
-            level = min(4, max(1, level))
-            label = value.get("label")
-            anchor = f' id="heading-{html.escape(label, quote = True)}"' if isinstance(label, str) else ""
-            return f'<h{level}{anchor}>{self._inlines(value.get("content", []))}</h{level}>'
         if tag == "code":
             language = value.get("language")
             source = value.get("source", "")
@@ -95,71 +80,3 @@ class ProofTextRenderer:
             )
             rendered.append(f'<li{item_value}>{self._blocks(item.get("content", []))}</li>')
         return f'<{element}{start_attr}>{"".join(rendered)}</{element}>'
-
-    def _inlines(self, inlines) -> str:
-        if not isinstance(inlines, list):
-            return self._unsupported("inlines")
-        return "".join(self._inline(inline) for inline in inlines)
-
-    def _inline(self, inline) -> str:
-        if not isinstance(inline, dict) or len(inline) != 1:
-            return self._unsupported("inline")
-        tag, value = next(iter(inline.items()))
-        if not isinstance(value, dict):
-            return self._unsupported(tag)
-
-        if tag == "text":
-            return f'<span class="proof-text-literal">{html.escape(str(value.get("value", "")))}</span>'
-        if tag == "code":
-            return f'<code>{html.escape(str(value.get("value", "")))}</code>'
-        containers = {
-            "strong": ("strong",),
-            "emphasis": ("em",),
-            "strongEmphasis": ("strong", "em"),
-            "strike": ("s",),
-            "underline": ("u",),
-            "highlight": ("mark",),
-            "superscript": ("sup",),
-            "subscript": ("sub",),
-        }
-        if tag in containers:
-            content = self._inlines(value.get("content", []))
-            for element in reversed(containers[tag]):
-                content = f'<{element}>{content}</{element}>'
-            return content
-        if tag == "math":
-            return f'${html.escape(str(value.get("latex", "")))}$'
-        if tag == "link":
-            return self._link(value)
-        if tag == "reference":
-            return self._reference(value)
-        if tag == "softBreak":
-            return "\n"
-        if tag == "hardBreak":
-            return "<br>"
-        return self._unsupported(tag)
-
-    def _link(self, value) -> str:
-        url = value.get("url", "")
-        url = url if isinstance(url, str) else ""
-        if urlparse(url).scheme.lower() not in SAFE_LINK_SCHEMES:
-            url = "#"
-        content = self._inlines(value.get("content", []))
-        return f'<a href="{html.escape(url, quote = True)}">{content}</a>'
-
-    def _reference(self, value) -> str:
-        kind = value.get("kind")
-        label = value.get("label")
-        target = self.labels.get((kind, label))
-        text = html.escape(label if isinstance(label, str) else "")
-        if target is None:
-            title = html.escape(f"Unresolved {kind} reference", quote = True)
-            return f'<span class="unresolved-reference" title="{title}">{text}</span>'
-        target_file = self.build_root / target.output_path
-        current_dir = (self.build_root / self.current_output).parent
-        href = f'{quote_url_path(os.path.relpath(target_file, current_dir))}#{quote_url_path(target.anchor)}'
-        return f'<a class="page-reference reference-{html.escape(str(kind), quote = True)}" href="{html.escape(href, quote = True)}">{text}</a>'
-
-    @staticmethod
-    def _unsupported(tag) -> str:
-        return f'<span class="unsupported-inline">Unsupported {html.escape(str(tag))}</span>'

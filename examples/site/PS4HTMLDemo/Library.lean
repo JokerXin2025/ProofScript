@@ -12,9 +12,9 @@ project_info "PS4HTMLDemo" {
 
 namespace PS4HTMLDemo.Library
 
-#page text r#"
-= 参考定理库 <library>
+#page title (label := "library") "参考定理库"
 
+#page text r#"
 本模块提供主展示页面所引用的基础结果。定理元数据会跨模块保存在环境中，
 同项目的自动证明引用会进入依赖图，也会进入页面的参考文献暂存区。
 手动 `cite` 仅补充文献；`#page references` 消费暂存区后，定理的持久化引用仍保留。

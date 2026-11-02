@@ -1,4 +1,4 @@
-import ProofScript.Page.Component.Command
+import ProofScript.Page.Component.Core
 import Lean.Data.Json
 import ProofScript.Output.Path
 import ProofScript.Page.Model

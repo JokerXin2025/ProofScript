@@ -83,10 +83,21 @@ private def autoRecordingError (name : String)
         let available ← Elab.Command.withScope
             (fun scope => { scope with openDecls := OpenDecl.simple `ProofScript.ParamRecorder [] :: scope.openDecls }) do
           Lean.Elab.Command.liftTermElabM do
-            let type ← Lean.Elab.Term.elabTerm type none
-            match ← Lean.Meta.trySynthInstance type with
-            | .some _ => return true
-            | _ => return false
+            -- `RecordValue` readers for syntax parameters are scoped instances.
+            -- The generated recorder opens this scope at the call site, so the
+            -- declaration-time availability check must activate it as well.
+            -- `withScope` only changes command-level `openDecls`; bracket the
+            -- environment activation explicitly so it cannot leak to later
+            -- commands in this module.
+            Lean.pushScope
+            try
+              Lean.activateScoped `ProofScript.ParamRecorder
+              let type ← Lean.Elab.Term.elabTerm type none
+              match ← Lean.Meta.trySynthInstance type with
+              | .some _ => return true
+              | _ => return false
+            finally
+              Lean.popScope
         unless available do
           return some s!"[script recorder] '{name}': 参数 '{id.getId}' 缺少 RecordValue 实例；请提供该实际类型的实例或定义 script_recorder"
     | _ => pure ()

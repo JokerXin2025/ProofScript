@@ -2,13 +2,29 @@ import ProofScript.Script.Script
 import ProofScript.Script.ScriptDB
 import ProofScript.Output.Path
 import ProofScript.Page.State
-import ProofScript.Page.Component.Command
+import ProofScript.Page.Component.Core
 import ProofScript.Info.Declaration
 import ProofScript.Core.BuildMode
 
 open Lean Parser Elab Command Tactic
 
 namespace ProofScript
+
+
+/-! The theorem body may elaborate inside the declaration's namespace prefix.
+    Reattach the helper's relative name to the part of the current namespace
+    that is outside that prefix. -/
+private def resolveHelperName (helper : TSyntax `ident) (currentNamespace : Name) : Name :=
+  let helperId := helper.getId
+  let helperComponents := helperId.eraseMacroScopes.components
+  let helperPrefix := helperComponents.dropLast
+  let namespaceComponents := currentNamespace.eraseMacroScopes.components
+  let maximum := Nat.min helperPrefix.length namespaceComponents.length
+  let overlap := (List.range (maximum + 1)).foldl (init := 0) fun best size =>
+    if helperPrefix.take size |>.isSuffixOf namespaceComponents then size else best
+  let base := (namespaceComponents.take (namespaceComponents.length - overlap)).foldl
+    Name.append Name.anonymous
+  base ++ helperId
 
 
 private partial def findScriptTacticAtom? (stx : Syntax) : Option Syntax :=
@@ -55,13 +71,15 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
           pure none
       | _ => throwErrorAt proof "expected a `script` or `by` proof"
     let declaration := (← getCurrNamespace) ++ name.getId
-    let helperName := (← getCurrNamespace) ++ helper.getId
+    let helperName := resolveHelperName helper (← getCurrNamespace)
     let before ← getEnv
     if before.contains declaration || before.contains helperName then
       throwErrorAt name "declaration name is already in use"
     let source ← getRef
     let check (body : TSyntax `term) : CommandElabM Unit := do
-      elabCommand (← `(command| def $helper $[$binders]* : $type := $body))
+      -- `abbrev` keeps the checked proof as a definition while avoiding the
+      -- `defProp` warning for this generated proposition-valued helper.
+      elabCommand (← `(command| abbrev $helper $[$binders]* : $type := $body))
       if (← get).messages.hasErrors then throwAbortCommand
       let some (.defnInfo definition) := (← getEnv).find? helperName
         | throwAbortCommand
@@ -143,14 +161,14 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
 
 elab "script_theorem_impl " name:ident helper:ident binders:bracketedBinder*
     ":" type:term ":=" proof:term : command =>
-  elabDeclaration .«theorem» name helper binders type proof
+  allowHashCommandLint <| elabDeclaration .«theorem» name helper binders type proof
 
 elab "script_lemma_impl " name:ident helper:ident binders:bracketedBinder*
     ":" type:term ":=" proof:term : command =>
-  elabDeclaration .«lemma» name helper binders type proof
+  allowHashCommandLint <| elabDeclaration .«lemma» name helper binders type proof
 
 elab "scriptProof% " helper:ident : term <= expectedType => do
-  let helperName := (← getCurrNamespace) ++ helper.getId
+  let helperName := resolveHelperName helper (← getCurrNamespace)
   unless ((← getEnv).find? helperName).any (fun info => match info with
       | .defnInfo _ => true
       | _ => false) do
@@ -175,51 +193,25 @@ elab "scriptProof% " helper:ident : term <= expectedType => do
     value := mkApp value argument.toExpr
   return value
 
-private def elaboratePageDeclaration (kind : RecordedDeclarationKind)
-    (doc? : Option Syntax) (name : TSyntax `ident)
-    (binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinder))
-    (type proof : TSyntax `term) : CommandElabM Unit := do
-  let helper := mkIdent <| ← liftMacroM <| Macro.addMacroScope (name.getId.appendBefore "scriptcheck_")
-  let implementation ← if kind == .«theorem» then
-    `(command| script_theorem_impl $name $helper $[$binders]* : $type := $proof)
-  else
-    `(command| script_lemma_impl $name $helper $[$binders]* : $type := $proof)
-  let declaration ← liftMacroM do
-    match doc? with
-    | some doc =>
-        let doc : TSyntax ``docComment := ⟨doc⟩
-        `(command| $doc:docComment theorem $name $[$binders]* : $type := scriptProof% $helper)
-    | none =>
-        `(command| theorem $name $[$binders]* : $type := scriptProof% $helper)
+
+macro doc?:(docComment)? "#page" "theorem"
+    name:ident binders:bracketedBinder* ":" type:term ":=" proof:term : command => do
+  let helper := mkIdent <| ← Macro.addMacroScope (name.getId.appendBefore "scriptcheck_")
+  let implementation ← `(command| script_theorem_impl $name $helper $[$binders]* : $type := $proof)
+  let declaration ← `(command| $[$doc?:docComment]? theorem $name $[$binders]* : $type := scriptProof% $helper)
   let info := SourceInfo.fromRef (← getRef) (canonical := true)
-  let implementation : TSyntax `command := ⟨implementation.raw.setInfo info⟩
-  let declaration : TSyntax `command := ⟨declaration.raw.setInfo info
-    |>.modifyArg 1 (·.setInfo info)⟩
-  elabCommand implementation
-  elabCommand declaration
+  let implementation := implementation.raw.setInfo info
+  let declaration := declaration.raw.setInfo info |>.modifyArg 1 (·.setInfo info)
+  return ⟨mkNullNode #[implementation, declaration]⟩
 
-page_component "theorem"
-    name:ident binders:bracketedBinder* ":" type:term ":=" proof:term => do
-  elaboratePageDeclaration .«theorem» none name binders type proof
-
-page_component "theorem" doc:docComment
-    name:ident binders:bracketedBinder* ":" type:term ":=" proof:term => do
-  elaboratePageDeclaration .«theorem» (some doc.raw) name binders type proof
-
-page_component "lemma"
-    name:ident binders:bracketedBinder* ":" type:term ":=" proof:term => do
-  elaboratePageDeclaration .«lemma» none name binders type proof
-
-page_component "lemma" doc:docComment
-    name:ident binders:bracketedBinder* ":" type:term ":=" proof:term => do
-  elaboratePageDeclaration .«lemma» (some doc.raw) name binders type proof
-
-macro doc:docComment "#page" "theorem"
+macro doc?:(docComment)? "#page" "lemma"
     name:ident binders:bracketedBinder* ":" type:term ":=" proof:term : command => do
-  return (← `(command| #page theorem $doc:docComment $name $[$binders]* : $type := $proof))
-
-macro doc:docComment "#page" "lemma"
-    name:ident binders:bracketedBinder* ":" type:term ":=" proof:term : command => do
-  return (← `(command| #page lemma $doc:docComment $name $[$binders]* : $type := $proof))
+  let helper := mkIdent <| ← Macro.addMacroScope (name.getId.appendBefore "scriptcheck_")
+  let implementation ← `(command| script_lemma_impl $name $helper $[$binders]* : $type := $proof)
+  let declaration ← `(command| $[$doc?:docComment]? theorem $name $[$binders]* : $type := scriptProof% $helper)
+  let info := SourceInfo.fromRef (← getRef) (canonical := true)
+  let implementation := implementation.raw.setInfo info
+  let declaration := declaration.raw.setInfo info |>.modifyArg 1 (·.setInfo info)
+  return ⟨mkNullNode #[implementation, declaration]⟩
 
 end ProofScript

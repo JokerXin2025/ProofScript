@@ -200,8 +200,7 @@ instance : InfoSchema ScriptInfo :=
           relatedPaths := #[#[.key ScriptInfo.infoFields.renderer.name]] }
         throw error }
 
-def scriptSpec : InfoSpec ScriptInfo := {
-  kind := "script" }
+def scriptSpec : InfoSpec ScriptInfo := { kind := "script" }
 
 def validateScriptContract (registration : ScriptTacticRegistration) (value : ScriptInfo) :
     Except Diagnostic Unit := do

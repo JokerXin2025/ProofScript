@@ -4,7 +4,10 @@ ProofText is the lightweight markup language parsed inside ProofScript's `#page 
 provides semantic blocks and inline markup for prose that is exported with a Lean module.
 
 ProofText resembles Typst, but it is a distinct and deliberately small language. In particular,
-`*text*` means strong text, headings begin with `=`, and unordered list items begin with `+`.
+`*text*` means strong text, and unordered list items begin with `-`.
+
+Headings are separate [title components](Title-Component.md), written with `#page title` and
+`#page sub title`. ProofText has no heading blocks; `@<label>` refers to a title component.
 
 This document describes the syntax implemented by the current ProofText parser.
 
@@ -19,9 +22,8 @@ The command takes exactly one Lean string literal:
 Multiline raw strings are usually the most convenient form:
 
 ````lean
+#page title (label := "introduction") "Introduction"
 #page text r#"
-= Introduction <introduction>
-
 This is *important* text with $x + y$ inline.
 "#
 ````
@@ -50,9 +52,8 @@ A component after `#page end` fails before its body runs, in both verification a
 ## 2. Complete Example
 
 ````lean
+#page title (label := "overview") "ProofText Overview"
 #page text r#"
-= ProofText Overview <overview>
-
 This paragraph contains *strong text*, _emphasis_, *_strong emphasis_*,
 ~~struck text~~, __underlined text__, ==highlighted text==, x^2^, a~n~,
 `inline code`, $x + y$, and [a link](https://example.com).
@@ -89,15 +90,15 @@ code:
 - Blank lines separate blocks and do not create output nodes.
 - An empty or whitespace-only string is valid and produces no blocks.
 
-For example, the following heading and paragraph are parsed at column zero after normalization:
+For example, the following paragraphs are parsed at column zero after normalization:
 
 ```lean
 namespace Example
 
   #page text r#"
-    = Heading
+    A first paragraph.
 
-    A paragraph.
+    Another paragraph.
   "#
 
 end Example
@@ -124,44 +125,10 @@ Source newlines inside a paragraph are preserved as newline characters. They are
 spaces, and the current parser does not generate separate soft-break or hard-break nodes.
 
 A paragraph ends at a blank line or before another recognized block. Inline syntax is parsed
-across the complete paragraph.
+across the complete paragraph. Lines beginning with `=` have no special block meaning; normal
+inline rules still apply, including `==...==` highlighting.
 
-### 4.2 Headings
-
-Headings have one through four `=` characters followed by one literal space:
-
-```text
-= Level 1
-== Level 2
-=== Level 3
-==== Level 4
-```
-
-Heading text supports all inline syntax. Leading and trailing ASCII whitespace in the heading body
-is removed.
-
-An optional reference label may appear at the end:
-
-```text
-== Main Result <main-result>
-```
-
-Labels must start with a letter and then contain only letters, digits, hyphens, or underscores:
-
-```text
-[A-Za-z][A-Za-z0-9_-]*
-```
-
-Examples of valid labels are `overview`, `chapter-2`, `result_1`, and `A`. Spaces, dots, and a
-leading digit or punctuation mark are not allowed.
-
-Heading labels are registered when the command is elaborated. Reusing a heading label in the same
-page/module is an error. A heading reference uses `@<label>` as described in Section 5.7.
-
-A line beginning with `=` in block position is an error if it has more than six `=` characters,
-omits the required space, or ends with a malformed label.
-
-### 4.3 Unordered Lists
+### 4.2 Unordered Lists
 
 Consecutive lines beginning with `- ` form an unordered list:
 
@@ -170,12 +137,25 @@ Consecutive lines beginning with `- ` form an unordered list:
 - Second item with *strong text*
 ```
 
-Each item is one line and is parsed as one paragraph with inline markup. Multiline items,
-continuation lines, and nested lists are not supported.
+Each item line is parsed as one paragraph with inline markup. A nested list is introduced by
+indenting its marker relative to the parent item; the indentation can be any positive number of
+ASCII spaces. Nested lists may use either list kind and may continue to arbitrary depth:
+
+```text
+- A parent item
+  + An ordered child
+    - An unordered grandchild
+- Another parent item
+```
+
+The nested list becomes another block in its parent item's `content` array. A list marker at the
+same indentation as its siblings continues that list when it has the same kind; changing between
+`-` and ordered markers starts a separate list block. Non-list continuation lines and blank lines
+still end the current list, as before.
 
 The marker `*` does not create an unordered list.
 
-### 4.4 Ordered Lists
+### 4.3 Ordered Lists
 
 An automatically numbered ordered item begins with `+ `:
 
@@ -194,10 +174,10 @@ ordinal:
 ```
 
 Each ordered list item has `ordinal : null | Nat` in JSON. The `+ ` form produces `null`, while
-`n. ` preserves the explicit number. Every item is a single inline-parsed line; multiline and
-nested items are not supported.
+`n. ` preserves the explicit number. An ordered item can contain arbitrarily nested unordered or
+ordered lists using the same indentation rule described above.
 
-### 4.5 Block Quotes
+### 4.4 Block Quotes
 
 Consecutive lines beginning with `> ` form a quote:
 
@@ -207,11 +187,11 @@ Consecutive lines beginning with `> ` form a quote:
 ```
 
 After one `> ` prefix is removed from every line, the quote body is parsed recursively as complete
-ProofText. It may therefore contain paragraphs, headings, lists, code blocks, display math, and
+ProofText. It may therefore contain paragraphs, lists, code blocks, display math, and
 nested quotes. For example:
 
 ```text
-> == A Heading in a Quote
+> A paragraph in a quote.
 > 
 > + A quoted list item
 > + Another item
@@ -220,7 +200,7 @@ nested quotes. For example:
 Every physical line belonging to the outer quote must have the `> ` prefix. An unmarked blank line
 ends the quote. A line containing only `>` is not a quote marker because the space is required.
 
-### 4.6 Display Math
+### 4.5 Display Math
 
 A display-math block is enclosed by lines equal to `$$`:
 
@@ -236,7 +216,7 @@ later `$$` line closes the block. A missing closing line is an error.
 
 For inline mathematics, use `$...$` instead.
 
-### 4.7 Fenced Code Blocks
+### 4.6 Fenced Code Blocks
 
 A code block starts with three backticks and ends at the next line beginning with three backticks:
 
@@ -354,7 +334,7 @@ an error.
 
 ### 5.6 Labels
 
-Heading and figure labels use the following form:
+Title-component and figure labels use the following form:
 
 ```text
 [A-Za-z][A-Za-z0-9_-]*
@@ -373,11 +353,11 @@ case-sensitive. Examples:
 
 ### 5.7 References
 
-ProofText has four reference forms:
+ProofText has three reference forms:
 
 | Syntax | Target kind |
 | --- | --- |
-| `@<label>` | Heading |
+| `@<label>` | Independent title component |
 | `@thm:Lean.DeclarationName` | Theorem (fully qualified Lean declaration name) |
 | `@fig:label` | Figure or TikZ component |
 
@@ -388,7 +368,8 @@ See @<introduction> and @thm:Paper.Main.mainResult.
 See @fig:overview-diagram.
 ```
 
-Heading references have a closing `>`. Figure references consume letters, digits, hyphens and
+Title references have a closing `>` and resolve the `(label := "...")` of a `#page title`
+component, including forward and cross-page references. Figure references consume letters, digits, hyphens and
 underscores. Theorem references also accept dots for qualified Lean declaration names; trailing
 dots are treated as punctuation. Thus `@thm:Paper.Main.result.` refers to `Paper.Main.result`.
 
@@ -407,11 +388,11 @@ At the start of a block line, the effective order is:
 1. Blank line.
 2. Fenced code block beginning with three backticks.
 3. Display math when the line equals `$$`.
-4. Heading, including rejection of malformed block-position lines beginning with `=`.
-5. Unordered list item beginning with `- `.
-6. Ordered list item beginning with `+ ` or decimal digits and `. `.
-7. Quote line beginning with `> `.
-8. Paragraph.
+4. Unordered list item beginning with `- ` at the current block indentation.
+5. Ordered list item beginning with `+ ` or decimal digits and `. ` at the current block
+   indentation.
+6. Quote line beginning with `> `.
+7. Paragraph.
 
 At an inline position, the order is:
 
@@ -450,8 +431,6 @@ The `#page text` command fails during elaboration for these malformed forms:
 | Invalid label after `@thm:` or `@fig:` | `invalid reference after '...'` |
 | Unclosed fenced code block | `unclosed code block` |
 | Unclosed display math | `unclosed display math` |
-| Malformed heading in block position | `invalid heading or heading label; labels must match ...` |
-| Duplicate heading label | `duplicate heading label '...'` |
 
 Diagnostics currently point to the complete Lean string literal rather than an exact offset inside
 the ProofText payload.
@@ -460,7 +439,7 @@ the ProofText payload.
 
 The current parser does not implement:
 
-- multiline or nested list items;
+- multiline list items or continuation lines;
 - balanced or same-delimiter inline nesting;
 - escape-aware closing-delimiter search;
 - multiple-backtick inline code;
@@ -476,8 +455,6 @@ The current parser does not implement:
 | Construct | Syntax |
 | --- | --- |
 | Paragraph | Consecutive ordinary nonblank lines |
-| Heading | `={1,6} Title` |
-| Labeled heading | `={1,6} Title <label>` |
 | Unordered item | `- text` |
 | Automatic ordered item | `+ text` |
 | Forced-ordinal ordered item | `n. text` |

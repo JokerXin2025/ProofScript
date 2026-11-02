@@ -7,7 +7,6 @@ import Mathlib
   component transaction at the same time.
 -/
 set_option proofScript.pageBuild true
-set_option linter.defProp false
 
 open scoped BigOperators
 open Lean Elab Command ProofScript

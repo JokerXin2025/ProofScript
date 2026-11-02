@@ -3,8 +3,9 @@ import ProofScript.Builtin.Script
 import ProofScript.Builtin.Config
 import ProofScript.Mathlib.Info
 import ProofScript.Page.Command
-import ProofScript.Page.Component.ProofText
-import ProofScript.Page.Component.Latex
-import ProofScript.Page.Component.Figure
+import ProofScript.Extensions.ProofText
+import ProofScript.Extensions.Title
+import ProofScript.Extensions.LaTeX
+import ProofScript.Extensions.Figure
 import ProofScript.Page.Component.References
 import ProofScript.Page.Component.Computation

@@ -37,10 +37,14 @@ private def recordValue {α : Type} [step : RecordingStep] [RecordValue α]
   let recorded ← recordValueFromContext field value context
   step.recordValue field recorded
 
-private def recordGoal (target : Option MVarId := none) : TacticM RecordedValue := do
+private def recordGoal (target : Option MVarId := none)
+    : TacticM RecordedValue := do
   match target.or (← getGoals).head? with
   | none => return .plain .null
   | some goal => goal.withContext <| recordExpression (← goal.getType)
+
+private def executeRecorderPredecessor [RecorderPredecessor] : TacticM Unit :=
+  RecorderPredecessor.run
 
 /-- Record the current value of a script parameter in a named goal. -/
 macro "record_param "

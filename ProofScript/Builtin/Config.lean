@@ -111,6 +111,5 @@ def_info Membership.mem { kind := relation, styles := [
 def_info Inter.inter { kind := operator, styles := [
   { name := "formula", template := "#0\\cap #1", fixity := «infix», precedence := 70, associativity := left }
 ] }
-
-def_info Int { var_name := "n", parameter_template := some "$#self\\in\\mathbb{Z}$" }
+ 
 def_info Rat { var_name := "q", parameter_template := some "$#self\\in\\mathbb{Q}$" }

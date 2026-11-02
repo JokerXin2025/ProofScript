@@ -4,9 +4,9 @@ set_option linter.defProp false
 
 open PS4HTMLDemo.Library
 
-#page text r#"
-= PS4HTML 页面组件总览 <overview>
+#page title (label := "overview") "PS4HTML 页面组件总览"
 
+#page text r#"
 这个项目完全由 *ProofScript* 源码生成。PS4HTML 读取模块页面 JSON 和独立证明树，
 再构建最终 HTML。这里同时展示 _斜体_、*_粗斜体_*、~~删除线~~、
 __下划线__、==高亮文本==、上标 x^2^、下标 a~n~、`inline code`，
@@ -17,17 +17,21 @@ __下划线__、==高亮文本==、上标 x^2^、下标 a~n~、`inline code`，
 @<lists>、参考跨模块定理 @thm:PS4HTMLDemo.Library.andLeft，以及页面图片 @fig:component-preview。
 
 源码中的普通换行会保留在同一个语义段落中，空行则开始一个新的段落。
+"#
 
-== 二级标题 <typography>
+#page sub title (label := "typography") "二级标题"
 
-=== 三级标题
+#page sub sub title "三级标题"
 
-==== 四级标题
+#page sub sub sub title "四级标题"
 
+#page text r#"
 不同级别的标题共同组成文档层次，带标签的标题可以成为跨页面引用目标。
+"#
 
-== 列表系统 <lists>
+#page sub title (label := "lists") "列表系统"
 
+#page text r#"
 无序列表使用实心圆点：
 
 - 页面组件保持 Lean 源码中的顺序
@@ -40,9 +44,11 @@ __下划线__、==高亮文本==、上标 x^2^、下标 a~n~、`inline code`，
 + 然后 ProofScript 写出页面和证明树 JSON
 5. 这一项被强制指定为第五项
 + 下一项自然延续为第六项
+"#
 
-== 引用、公式与代码 <rich-blocks>
+#page sub title (label := "rich-blocks") "引用、公式与代码"
 
+#page text r#"
 > 形式化证明不仅应当能够被内核检查，也应当能够被人自然地阅读。
 > PS4HTML 的目标是让证明结构、数学表达和项目元数据在同一个页面中协同工作。
 
@@ -88,9 +94,9 @@ theorem_info galleryResult {
   tags := ["demo", "cross-module"]
 }
 
-#page text r#"
-== 大型证明树展示 <large-proof>
+#page sub title (label := "large-proof") "大型证明树展示"
 
+#page text r#"
 下面的定理展示一个较大的组合单调性证明。我们从五个自然数之间的递增链出发，
 依次把这条链送入三个单调函数，并证明原函数、二层复合、三层复合以及任意平移后的
 结果仍然保持次序。证明以 `infer` 构造可复用的传递闭包，再用 `calc` 展开每一层
@@ -144,9 +150,9 @@ theorem_info iteratedMonotoneChain {
 
 #page references
 
-#page text r#"
-== 组件顺序 <component-order>
+#page sub title (label := "component-order") "组件顺序"
 
+#page text r#"
 参考文献之后仍然可以继续插入 ProofText。这个段落证明 PS4HTML 严格保持
 `components` 数组的源文件顺序，而不是把参考文献强制移动到页面末尾。
 "#

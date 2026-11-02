@@ -82,7 +82,7 @@ Wasm 构建只处理目标页面引用的 pending 计算，不为导入模块的
 
 ## 页面与交互
 
-- ProofText 标题、段落、列表、引用、字体、代码、公式和链接。
+- 独立的 `#page title` / `#page sub title` 标题组件，以及 ProofText 段落、列表、引用、字体、代码、公式和链接。
 - theorem/lemma 结构化证明、源码卡片、源码翻转、分支展开与缩进控制。
 - 正常渲染、`sorryAx`、JSON/结构错误状态；未记录步骤显示红色“未导出数据”提示。
 - ProjectInfo、跨页标签、文献、模块与定理依赖导航。

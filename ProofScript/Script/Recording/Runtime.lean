@@ -85,10 +85,6 @@ def currentRecordingConfig : TacticM (Option ScriptRecordingConfig) := do
   | none => return (← selectedRecordingContract).map fun contract =>
       { kind := contract.kind, continuation := contract.continuation }
 
-/-- Execute the predecessor call bound by the generated recorder body. -/
-def executeRecorderPredecessor [predecessor : RecorderPredecessor] : TacticM Unit :=
-  predecessor.run
-
 
 /-- A scoped recording destination. Its storage position is deliberately private. -/
 class RecordingStep where

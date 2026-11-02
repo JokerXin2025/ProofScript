@@ -4,9 +4,9 @@ project_info "PS4HTMLDemo" {}
 
 namespace PS4HTMLDemo.Dependencies
 
-#page text r#"
-= 高等数学定理依赖导航 <calculus-dependency-navigation>
+#page title (label := "calculus-dependency-navigation") "高等数学定理依赖导航"
 
+#page text r#"
 本页用本科高等数学中的典型结果展示依赖导航。声明采用轻量命题接口，
 名称及 `apply` 调用只表达课程层面的依赖，不是这些分析定理的完整形式化陈述。
 
@@ -219,9 +219,9 @@ theorem_info powerSeriesExpansion {name := "函数的幂级数展开"}
 
 #page references
 
-#page text r#"
-= 手动引用与自动依赖 <manual-citations>
+#page title (label := "manual-citations") "手动引用与自动依赖"
 
+#page text r#"
 下面的证明关闭自动引用收集，但仍可用 `cite` 补充文献。恒等 lemma 出现在
 这一节的参考文献中，而不会成为该定理的导航依赖。参考文献显示后会清空暂存区，
 前面定理已经保存的依赖不受影响。
