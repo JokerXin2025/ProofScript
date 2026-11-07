@@ -6,7 +6,7 @@ import Mathlib
   exercises the proof recorder, the native theorem declaration, and the page
   component transaction at the same time.
 -/
-set_option proofScript.pageBuild true
+set_option pageBuild true
 
 open scoped BigOperators
 open Lean Elab Command ProofScript

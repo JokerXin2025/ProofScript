@@ -7,10 +7,10 @@ script_macro «rfl»
 
 script_info «rfl» {
   template := [{
-    lang := "zh", tag := "自反性",
+    lang := zh, tag := "自反性",
     content := ""
   }, {
-    lang := "en", tag := "refl",
+    lang := en, tag := "refl",
     content := ""
   }]
 }

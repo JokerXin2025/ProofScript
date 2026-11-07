@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="${html_language}" data-default-language="${default_language}" data-project-base-url="${project_base_url}">
+<html lang="${html_language}" data-default-language="${default_language}" data-project-base-url="${project_base_url}" data-project-id="${project_id}">
 
 <head>
 
@@ -31,9 +31,15 @@
     <script defer src="${asset_root}js/equation_size.js"></script>
     <script defer src="${asset_root}js/code-flip.js"></script>
     <script defer src="${asset_root}js/references.js"></script>
+    <script defer src="${asset_root}js/expression-tooltip.js"></script>
     <script defer src="${asset_root}js/lean2tex.js"></script>
+    <script defer src="${asset_root}js/render-tree.js"></script>
+    <script defer src="${asset_root}js/navigation-state.js"></script>
     <script defer src="${asset_root}js/proof-indent.js"></script>
+    <script defer src="${asset_root}js/page-splitter.js"></script>
     <script defer src="${asset_root}js/language-switcher.js"></script>
+    <script defer src="${asset_root}js/template-switcher.js"></script>
+    <script defer src="${asset_root}js/display-options.js"></script>
     <script defer src="${asset_root}js/theorem-dependencies.js"></script>
     <script defer src="${asset_root}js/computation.js?v=5"></script>
     <script defer src="${asset_root}js/fibonacci-computation.js?v=5"></script>
@@ -60,12 +66,15 @@
 
     <div class="page-layout">
 ${navigation}
+        <div class="page-splitter" role="separator" tabindex="0" aria-label="${resize_sidebar}" aria-orientation="vertical" aria-controls="main-content" aria-valuemin="240" aria-valuenow="320"></div>
         <main id="main-content" class="proof-container">
 
 ${contents}
 
         </main>
     </div>
+
+${interaction_data}
 
 <script>
 window.addEventListener('load', function(){

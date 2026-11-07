@@ -14,13 +14,17 @@ lean_lib ProofScript
 
 lean_lib Test where
   roots := #[
+    `Test.CalcRecorder,
+    `Test.Cite,
     `Test.RecorderVersions,
     `Test.RecorderVersionImport,
     `Test.PageTheoremMathlib,
     `Test.PageTheoremQualified,
     `Test.RecorderVersionFixture,
     `Test.RecorderVersionExtension,
-    `Test.PageTitle]
+    `Test.PageTitle,
+    `Test.PageTheoremExpressionInteractions,
+    `Test.PageTheoremExpressionBoundaries]
 
 lean_exe proofscriptExport where
   root := `ProofScript.Output.Main
@@ -74,13 +78,14 @@ def remapWorkspace (ws : Workspace) (sources : NameSet) (buildRoot : FilePath) :
       obtain ⟨old, hold, rfl⟩ := Array.mem_map.mp hp
       simpa [packages] using ws.depIdxs_packages old hold i hi }
 
-def pageOptions (ws : Workspace) (sources : NameSet) (original : NameMap LeanOptions) : NameMap LeanOptions :=
+def pageOptions (ws : Workspace) (sources : NameSet)
+    (original : NameMap LeanOptions) : NameMap LeanOptions :=
   ws.packages.foldl (init := original) fun options pkg =>
     if sources.contains pkg.keyName then
       options.insert pkg.baseName ((options.find? pkg.baseName |>.getD {}) ++
         -- Foundations may be compiled before the module that registers this option.
         -- Lean's weak option name still participates in Lake's setup-options trace.
-        LeanOptions.ofArray #[⟨`weak.proofScript.pageBuild, .ofBool true⟩])
+        LeanOptions.ofArray #[⟨`weak.pageBuild, .ofBool true⟩])
     else options
 
 def buildRoot (ws : Workspace) (lib : LeanLib) : FilePath :=
@@ -104,6 +109,10 @@ def PageTarget.name : PageTarget → Name
 def PageTarget.kind : PageTarget → String
   | .library _ => "library"
   | .module _ => "module"
+
+def PageTarget.lib : PageTarget → LeanLib
+  | .library lib => lib
+  | .module mod => mod.lib
 
 def PageTarget.buildRoot (ws : Workspace) : PageTarget → FilePath
   | .library lib => ProofScriptPageBuild.buildRoot ws lib
@@ -192,12 +201,24 @@ def moduleClosure (mods : Array Lake.Module) : FetchM (Array Lake.Module) := do
         result := result.push dep
   return result
 
-def sessionManifest (session : Session) (ws : Workspace) (sources : NameSet)
-    (owners modules : Array Lake.Module) : Json :=
+def sessionManifest (session : Session) (ws : Workspace) (selection : PageTarget)
+    (sources : NameSet) (owners libraryModules modules : Array Lake.Module) : Json :=
+  let selected := selection.lib
+  let project := json% { "package": $(selected.pkg.baseName.toString), library: $(selected.name.toString) }
   session.value
     |>.setObjVal! "buildMode" (.str "page")
-    |>.setObjVal! "pageBuildVersion" (toJson (1 : Nat))
     |>.setObjVal! "owners" (toJson (owners.map (·.name.toString)))
+    |>.setObjVal! "selectedProject" project
+    |>.setObjVal! "projects" (.arr (ws.root.leanLibs.map fun lib => json% {
+      "package": $(lib.pkg.baseName.toString), library: $(lib.name.toString) }))
+    |>.setObjVal! "projectRoots" (toJson (selected.roots.map (·.toString)))
+    |>.setObjVal! "libraryModules" (toJson (libraryModules.map (·.name.toString)))
+    |>.setObjVal! "moduleProjects" (.arr (owners.map fun mod => json% {
+      module: $(mod.name.toString), "package": $(selected.pkg.baseName.toString),
+      library: $(selected.name.toString) }))
+    |>.setObjVal! "closureProjects" (.arr (modules.map fun mod => json% {
+      module: $(mod.name.toString), "package": $(mod.lib.pkg.baseName.toString),
+      library: $(mod.lib.name.toString) }))
     |>.setObjVal! "sourcePackages" (toJson (ws.packages.filterMap fun pkg =>
       if sources.contains pkg.keyName then some pkg.baseName.toString else none))
     |>.setObjVal! "modules" (.arr (modules.map fun mod => json% {
@@ -217,15 +238,25 @@ def buildInputs (selection : PageTarget) : FetchM (Job Unit) := do
     let (owners, inputJob) ← selection.inputs workspace
     let some exporter ← findLeanExe? `proofscriptExport | error "ProofScript Info exporter not found"
     let exporterJob ← exporter.fetch
-    let modules ← moduleClosure owners
-    (inputJob.mix exporterJob).mapM fun _ => do
+    let selectedLib ← mappedLibrary workspace selection.lib
+    let libraryModules ← (← selectedLib.modules.fetch).await
+    -- All library modules must be elaborated: project_info may be introduced by a macro
+    -- in a root that is not imported by the selected module.
+    let metadataModules := match selection with
+      | .library _ => #[]
+      | .module _ => libraryModules.filter fun mod => !owners.any (·.name == mod.name)
+    let mut jobs := inputJob
+    for mod in metadataModules do
+      jobs := (jobs.mix (← mod.leanArts.fetch)).map (fun _ => ())
+    let modules ← moduleClosure (owners ++ metadataModules)
+    (jobs.mix exporterJob).mapM fun _ => do
+      IO.FS.writeFile session.file (sessionManifest session workspace selection sources owners libraryModules modules).pretty
       proc {
         cmd := exporter.file.toString
         args := #[session.exportRoot.toString] ++ owners.map (·.name.toString)
         cwd := workspace.root.dir
         env := (← getAugmentedEnv).push ("PROOF_SCRIPT_OUTPUT_ROOT", some session.exportRoot.toString)
       }
-      IO.FS.writeFile session.file (sessionManifest session workspace sources owners modules).pretty
 
 /-- Hand off publication to Python without first building the ordinary Lean artifacts. -/
 def buildSite (selection : PageTarget) : FetchM (Job FilePath) := do
@@ -236,7 +267,7 @@ def buildSite (selection : PageTarget) : FetchM (Job FilePath) := do
   Job.async do
     let relative := match selection with
       | .library _ => FilePath.mk selection.name.toString
-      | .module _ => FilePath.mk ".modules" / selection.name.toString
+      | .module mod => FilePath.mk mod.lib.name.toString
     let output := root.dir / ".PS4HTML" / "build" / selection.pkg.baseName.toString / relative / "index.html"
     let python := (← IO.getEnv "PS4HTML_PYTHON").getD "python3"
     let backend := (← getWorkspace).packages.findSome? fun p =>

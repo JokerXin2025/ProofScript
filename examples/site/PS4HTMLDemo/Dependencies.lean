@@ -1,7 +1,5 @@
 import PS4HTMLDemo.Library
 
-project_info "PS4HTMLDemo" {}
-
 namespace PS4HTMLDemo.Dependencies
 
 #page title (label := "calculus-dependency-navigation") "高等数学定理依赖导航"
@@ -229,7 +227,7 @@ theorem_info powerSeriesExpansion {name := "函数的幂级数展开"}
 
 set_option dependencyCollection false in
 #page theorem manualCitation (P : Prop) (h : P) : P := script
-  cite (PS4HTMLDemo.Library.identityLemma P h)
+  cite PS4HTMLDemo.Library.identityLemma
   exact h
 
 theorem_info manualCitation { name := "关闭自动收集后的手动引用" }

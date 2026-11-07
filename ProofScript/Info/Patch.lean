@@ -10,23 +10,16 @@ inductive FieldKey where
   | extra (name : String)
   deriving Inhabited, Repr, BEq, ToJson, FromJson
 
-inductive UpdateOperation where
-  | set (value : Json)
-  | reset
-  deriving Inhabited, ToJson, FromJson
-
 structure Assignment where
   key : FieldKey
-  operation : UpdateOperation
-  source : SourceLocation
+  value : Json
   deriving Inhabited, ToJson, FromJson
 
 abbrev Patch := Array Assignment
 
 /-- Typed assignments use generated field handles instead of spelling field names. -/
-def FieldHandle.assignment [InfoCodec Value] (handle : FieldHandle Record Value) (value : Value)
-    (source : SourceLocation) : Assignment :=
-  { key := .builtin handle.name, operation := .set (toJson value), source }
+def FieldHandle.assignment [InfoCodec Value] (handle : FieldHandle Record Value) (value : Value) : Assignment :=
+  { key := .builtin handle.name, value := toJson value }
 
 def FieldSpec.mergeJson (field : FieldSpec Record) (previous : Option Json) (update : Json) :
     Except Diagnostic Json := do
@@ -55,22 +48,16 @@ def applyPatch (schema : InfoSchema Record) (previous : Json) (patch : Patch) : 
     match assignment.key with
     | .builtin name =>
       let some field := schema.fields.find? (fun field => field.name == name && !field.handle.isExtra)
-        | throw { message := s!"unknown builtin field `{name}`", source := some assignment.source }
-      match assignment.operation with
-      | .reset => object := object.erase name
-      | .set value =>
-        let value ← (field.mergeJson (object.get? name) value).mapError fun error =>
-          { (Diagnostic.atField name error) with source := some assignment.source }
-        object := object.insert name value
+        | throw { message := s!"unknown builtin field `{name}`" }
+      let value ← (field.mergeJson (object.get? name) assignment.value).mapError (Diagnostic.atField name)
+      object := object.insert name value
     | .extra key =>
       let some field := schema.extraField?
-        | throw { message := "this schema does not support extension fields", source := some assignment.source }
+        | throw { message := "this schema does not support extension fields" }
       let mut extra ← match (object.get? field.name).or field.defaultJson with
         | some value => value.getObj?.mapError fun message => { message }
         | none => pure {}
-      match assignment.operation with
-      | .reset => extra := extra.erase key
-      | .set value => extra := extra.insert key value
+      extra := extra.insert key assignment.value
       object := object.insert field.name (.obj extra)
   return .obj object
 

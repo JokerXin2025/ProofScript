@@ -1,15 +1,44 @@
 import ProofScript.Info.Derive
 import ProofScript.Info.Target
 import ProofScript.Script.Registry
+import ProofScript.Core.Language
+import ProofScript.Core.Color
 
 open Lean Elab Command
 
 
 namespace ProofScript
 
+instance : InfoCodec Language where
+  parse stx := do
+    if stx.raw.isOfKind ``Lean.Parser.Term.app then
+      let args := stx.raw[1].getArgs
+      if stx.raw[0].isIdent && stx.raw[0].getId.eraseMacroScopes.toString == "Language.custom" &&
+          args.size == 3 then
+        return .custom (← InfoCodec.parse (⟨args[0]!⟩ : TSyntax `term))
+          (← InfoCodec.parse (⟨args[1]!⟩ : TSyntax `term))
+          (← InfoCodec.parse (⟨args[2]!⟩ : TSyntax `term))
+      throwErrorAt stx "expected Language.custom with three string literals"
+    match stx with
+    | `(term| $name:ident) =>
+      let identifier := name.getId.eraseMacroScopes
+      let constructor := ``Language ++ Name.mkSimple identifier.getString!
+      unless identifier == .str .anonymous identifier.getString! &&
+          (← getEnv).contains constructor do
+        throwErrorAt stx m!"unknown language constructor `{identifier}`"
+      -- Configuration persists only the language code, not the constructor's names.
+      let code := identifier.getString!.replace "_" "-"
+      return .custom code code code
+    | _ => throwErrorAt stx "expected a Language constructor"
+  decode value := do
+    let code ← decodeJson value
+    if code.isEmpty then throw { message := "template language must not be empty" }
+    return .custom code code code
+  jsonSchema := InfoJson.nonemptyStringSchema
+
 def visibleScriptRegistrations (env : Environment) (moduleName : Name) :
     Except Diagnostic (List ScriptTacticRegistration) := do
-  let order ← (ModuleGraph.ofEnvironment env).order moduleName
+  let order ← (ModuleGraph.ofEnvironment env).modulesInDependencyOrder moduleName
     |>.mapError fun message => { message }
   return scriptRegistrationsInModules env order
 
@@ -28,32 +57,51 @@ def resolveScriptTarget (target : TSyntax `ident) : CommandElabM Name := do
     return ruleId
   | .error _ => throwErrorAt target m!"unknown script_info registration ID `{ruleId}`"
 
-/-- Registration IDs have the same editor identity as their source parser declaration.
-Verification mode does not require the ID or its metadata to be valid.
--/
-def addScriptTargetInfo (target : TSyntax `ident) : CommandElabM Unit := do
-  unless (← getInfoState).enabled do return
-  let env ← getEnv
-  let ruleId := removeRoot target.getId.eraseMacroScopes
-  if let .ok registration := scriptRegistrationInView env { moduleName := env.mainModule } ruleId then
-    addConstInfo target.raw registration.sourceKind
+private def colorByte (value : String) : Except String UInt8 := do
+  let some high := value.toList[0]? | throw "expected a hexadecimal CSS color"
+  let some low := value.toList[1]? | throw "expected a hexadecimal CSS color"
+  let digit (c : Char) : Except String Nat :=
+    if c >= '0' && c <= '9' then pure (c.toNat - '0'.toNat)
+    else if c >= 'a' && c <= 'f' then pure (c.toNat - 'a'.toNat + 10)
+    else if c >= 'A' && c <= 'F' then pure (c.toNat - 'A'.toNat + 10)
+    else throw "expected a hexadecimal CSS color"
+  return UInt8.ofNat ((← digit high) * 16 + (← digit low))
 
-structure HexColor where
-  value : String
-  deriving Inhabited, Repr, BEq
+private def colorFromString (value : String) : Except String RGBA := do
+  let chars := value.toList
+  unless chars.head? == some '#' && (chars.length == 7 || chars.length == 9) do
+    throw "expected a hexadecimal CSS color (#RRGGBB or #RRGGBBAA)"
+  let digits := chars.drop 1
+  let red ← colorByte (String.ofList (digits.take 2))
+  let green ← colorByte (String.ofList (digits.drop 2 |>.take 2))
+  let blue ← colorByte (String.ofList (digits.drop 4 |>.take 2))
+  let alpha ← if chars.length == 9 then
+    some <$> colorByte (String.ofList (digits.drop 6 |>.take 2)) else pure none
+  return ⟨red, green, blue, alpha⟩
 
-def HexColor.ofString (value : String) : Except String HexColor :=
-  let digits := value.toList.drop 1
-  if value.startsWith "#" && [3, 4, 6, 8].contains digits.length && digits.all Char.isHexDigit then
-    .ok ⟨value⟩
-  else .error "expected a hexadecimal CSS color (#RGB, #RGBA, #RRGGBB or #RRGGBBAA)"
-
-instance : InfoCodec HexColor := checkedCodec HexColor.ofString (·.value)
+instance : InfoCodec RGBA where
+  parse stx := do
+    match stx with
+    | `(term| ($red:term, $green:term, $blue:term)) =>
+      return ((← InfoCodec.parse red : Nat), (← InfoCodec.parse green : Nat),
+        (← InfoCodec.parse blue : Nat))
+    | `(term| ($red:term, $green:term, $blue:term, $alpha:term)) =>
+      return ((← InfoCodec.parse red : Nat), (← InfoCodec.parse green : Nat),
+        (← InfoCodec.parse blue : Nat), (← InfoCodec.parse alpha : Nat))
+    | `(term| $text:str) =>
+      match colorFromString text.getString with
+      | .ok color => return color
+      | .error message => throwErrorAt stx message
+    | _ => throwErrorAt stx "expected (red, green, blue) or (red, green, blue, alpha)"
+  decode value := do
+    let text ← decodeJson value
+    (colorFromString text).mapError fun message => { message }
+  jsonSchema := json% { type: "string", pattern: "^#[0-9a-fA-F]{6}([0-9a-fA-F]{2})?$" }
 
 structure ScriptColor where
-  tag : Option HexColor := none
-  border : Option HexColor := none
-  background : Option HexColor := none
+  tag : Option RGBA := none
+  border : Option RGBA := none
+  background : Option RGBA := none
   deriving Inhabited, InfoSchema
 
 instance (priority := high) : InfoCodec ScriptColor :=
@@ -93,20 +141,20 @@ instance : InfoSchema ScriptCase :=
       if name.isEmpty then .error "case name must not be empty" else .ok ()] }
 
 structure OrdinaryScriptTemplate where
-  lang : String
+  lang : Language
   tag : String
   content : String
   deriving Inhabited, InfoSchema
 
-private def nonemptyLanguage (language : String) : Except String Unit :=
-  if language.isEmpty then .error "template language must not be empty" else .ok ()
+private def nonemptyLanguage (language : Language) : Except String Unit :=
+  if language.code.isEmpty then .error "template language must not be empty" else .ok ()
 
 instance : InfoSchema OrdinaryScriptTemplate :=
   (inferInstance : InfoSchema OrdinaryScriptTemplate).withOverrides! {
     fields := #[OrdinaryScriptTemplate.infoFields.lang.withValidation nonemptyLanguage] }
 
 structure StrategyScriptTemplate where
-  lang : String
+  lang : Language
   tag : String
   inline : Bool := false
   introducer : Option ScriptIntroducer := none
@@ -124,8 +172,7 @@ instance : InfoSchema StrategyScriptTemplate :=
         if value.cases.size != 1 then
           let error : Diagnostic := {
             message := "inline requires exactly one case"
-            path := #[.key StrategyScriptTemplate.infoFields.inline.name]
-            relatedPaths := #[#[.key StrategyScriptTemplate.infoFields.cases.name]] }
+            path := #[.key StrategyScriptTemplate.infoFields.inline.name] }
           throw error
         if value.cases[0]!.tag != "" || value.cases[0]!.title != "" then
           throw { message := "inline case must have empty tag and title", path := #[.key StrategyScriptTemplate.infoFields.cases.name] } }
@@ -136,8 +183,8 @@ inductive ScriptTemplate where
   deriving Inhabited
 
 def ScriptTemplate.lang : ScriptTemplate → String
-  | .ordinary value => value.lang
-  | .strategy value => value.lang
+  | .ordinary value => value.lang.code
+  | .strategy value => value.lang.code
 
 def ScriptTemplate.isStrategy : ScriptTemplate → Bool
   | .ordinary _ => false
@@ -190,15 +237,14 @@ structure ScriptInfo where
   deriving Inhabited, InfoSchema
 
 instance : InfoSchema ScriptInfo :=
-  (inferInstance : InfoSchema ScriptInfo).withOverrides! {
+  { (inferInstance : InfoSchema ScriptInfo).withOverrides! {
     fields := #[ScriptInfo.infoFields.template.withMerge (keyedArray ScriptTemplate.lang)]
     validateRecord := fun value => do
       if value.renderer == .automatic && value.template.isEmpty then
         let error : Diagnostic := {
           message := "automatic script rendering requires a template"
-          path := #[.key ScriptInfo.infoFields.template.name]
-          relatedPaths := #[#[.key ScriptInfo.infoFields.renderer.name]] }
-        throw error }
+          path := #[.key ScriptInfo.infoFields.template.name] }
+        throw error } with version := "2.0.0" }
 
 def scriptSpec : InfoSpec ScriptInfo := { kind := "script" }
 
@@ -221,8 +267,8 @@ def resolveScriptInfoWithRegistration (env : Environment) (query : Query)
     let result ← if view.created then consumeView scriptSpec view else do
       let fallback : ScriptInfo := if registration.ruleId == unrecordedRuleId then { renderer := .unrecorded }
         else if registration.config.isStrategy then { renderer := .strategy } else
-        { template := #[.ordinary { lang := "zh", tag := registration.name, content := "" }] }
-      pure { value := fallback, provenance := view.provenance, dependencies := scriptSpec.dependencies fallback }
+        { template := #[.ordinary { lang := .zh, tag := registration.name, content := "" }] }
+      pure { value := fallback, dependencies := scriptSpec.dependencies fallback }
     (validateScriptContract registration result.value).mapError view.attach
     return result : Except Diagnostic (ResolvedInfo ScriptInfo)).mapError fun error =>
       { error with kind := some scriptSpec.kind, target := some registration.ruleId.toString }
@@ -230,8 +276,5 @@ def resolveScriptInfoWithRegistration (env : Environment) (query : Query)
 def resolveScriptInfo (env : Environment) (query : Query) (ruleId : Name) :
     Except Diagnostic (ResolvedInfo ScriptInfo) := do
   resolveScriptInfoWithRegistration env query (← scriptRegistrationInView env query ruleId)
-
-def updateScriptInfo (target : TSyntax `ident) (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
-  elaborateInfo scriptSpec (← resolveScriptTarget target) fields ref
 
 end ProofScript

@@ -9,10 +9,10 @@ script_macro «decide» (clear := [config])
 
 script_info «decide» {
   template := [{
-    lang := "zh", tag := "判定",
+    lang := zh, tag := "判定",
     content := ""
   }, {
-    lang := "en", tag := "decide",
+    lang := en, tag := "decide",
     content := ""
   }]
 }

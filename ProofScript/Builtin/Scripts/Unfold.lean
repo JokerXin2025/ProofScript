@@ -11,10 +11,10 @@ script_macro «unfold» (clear := [defs, loc])
 
 script_info «unfold» {
   template := [{
-    lang := "zh", tag := "展开定义",
+    lang := zh, tag := "展开定义",
     content := ""
   }, {
-    lang := "en", tag := "unfold",
+    lang := en, tag := "unfold",
     content := ""
   }]
 }

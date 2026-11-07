@@ -12,12 +12,12 @@ def render_statement(statement, engine):
     for parameter in statement["parameters"]:
         # Keep class assumptions without exposing implementation instance names.
         if parameter["instance"]:
-            instance_conditions.append(f"<li>{html.escape(engine.tex(parameter['type']))}</li>")
+            instance_conditions.append(f'<li><span class="ps-fit-viewport"><span class="ps-fit-content">{html.escape(engine.tex(parameter["type"]))}</span></span></li>')
             continue
         text = engine.renderer.render_parameter(parameter["variable"], parameter["type"], language=engine.language)
         engine.diagnostics.extend(engine.renderer.diagnostics_dict())
-        parameters.append(f"<span>{html.escape(text)}</span>")
-    conditions = [f"<li>{html.escape(engine.tex(condition))}</li>" for condition in statement["conditions"]]
+        parameters.append(f'<span><span class="ps-fit-viewport"><span class="ps-fit-content">{html.escape(text)}</span></span></span>')
+    conditions = [f'<li><span class="ps-fit-viewport"><span class="ps-fit-content">{html.escape(engine.tex(condition))}</span></span></li>' for condition in statement["conditions"]]
     conditions = instance_conditions + conditions
     conclusion = html.escape(engine.tex(statement["conclusion"]))
     zh = engine.language == "zh"
@@ -27,5 +27,5 @@ def render_statement(statement, engine):
                       + "".join(conditions) + '</ul>') if conditions else ""
     return (f'<div class="theorem-statement" data-language="{engine.language}" aria-label="{"定理表述" if zh else "Theorem statement"}">'
             + parameter_html + '<div class="statement-implication">' + condition_html
-            + f'<div class="statement-conclusion">{conclusion}</div></div></div>'
+             + f'<div class="statement-conclusion"><span class="ps-fit-viewport"><span class="ps-fit-content">{conclusion}</span></span></div></div></div>'
             + f'<h3 class="statement-proof-divider">{"证明" if zh else "Proof"}</h3>')

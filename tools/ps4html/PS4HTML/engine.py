@@ -4,10 +4,13 @@ from urllib.parse import quote as quote_url_path
 from textwrap import indent
 import os
 import html
+import json
+import re
 from contextvars import ContextVar
 from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
-from PS4HTML.i18n import normalize_language, tr
+from Lean2TeX.interactions import ExpressionInteractions
+from PS4HTML.i18n import SUPPORTED_LANGUAGES, TRANSLATIONS, normalize_language, tr
 from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, UNRECORDED_RULE_ID, proof_steps
 from PS4HTML.schema import Expression
 
@@ -66,13 +69,12 @@ def render_annotation(sort, icon, content):
         content = content
     )
 
-def render_proof(proof_state, title, content, file_name, lines_count, code, anchor = "", language="zh", default_language="zh", theorem_id="", statement=""):
+def render_proof(proof_state, title, content, lines_count, code, anchor = "", language="zh", default_language="zh", theorem_id="", statement=""):
     return TEMPLATE_PROOF.substitute(
         proof_state = proof_state,
         title = html.escape(title),
         content = indent(content, "        "),
         statement = statement,
-        file_name = html.escape(str(file_name)),
         lines_count = lines_count,
         code = code,
         anchor = html.escape(anchor, quote = True),
@@ -85,10 +87,28 @@ def render_proof(proof_state, title, content, file_name, lines_count, code, anch
         lines_label = tr("proof.lines", language),
     )
 
-def render_page(title, contents, index_href, navigation = "", default_language="zh"):
+def render_page(title, contents, index_href, navigation = "", default_language="zh", interactions=None,
+                project_id=""):
     language = normalize_language(default_language)
     index_path = Path(index_href)
-    project_base_url = (index_path.parent.as_posix().rstrip("/") + "/") if index_path.parent.as_posix() != "." else "./"
+    project_base_url = index_path.parent.as_posix().rstrip("/") + "/" if index_path.parent.as_posix() != "." else "./"
+    interaction_data = ""
+    if interactions is not None:
+        contents = interactions.uniquify(contents)
+        interactions.retain_visible(contents)
+        interaction_payload = interactions.as_dict()
+        interaction_payload["ui"] = {
+            lang: {key.removeprefix("expression."): tr(key, lang)
+                   for key in TRANSLATIONS[lang] if key.startswith("expression.")}
+            for lang in SUPPORTED_LANGUAGES
+        }
+        payload = json.dumps(interaction_payload, ensure_ascii=False, separators=(",", ":"))
+        payload = payload.replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026")
+        interaction_data = f'<script type="application/json" id="ps-expression-data">{payload}</script>'
+        contents = re.sub(r"\[\[PS4HTML-(ROOT|ENDROOT)-(r[0-9]+)\]\]", lambda match: (
+            f'<span data-ps-render-root="{match[2]}">' if match[1] == "ROOT" else "</span>"
+        ) if match[2] in interactions.render_roots else match[0], contents)
+        contents = interactions.materialize_text(contents)
     return TEMPLATE_PAGE.substitute(
         asset_root = html.escape(project_base_url + "assets/", quote=True),
         title = html.escape(title),
@@ -98,12 +118,16 @@ def render_page(title, contents, index_href, navigation = "", default_language="
         default_language = default_language,
         html_language = "zh-CN" if language == "zh" else "en",
         project_base_url = html.escape(project_base_url, quote=True),
+        project_id = html.escape(project_id, quote=True),
         mobile_title = tr("page.mobile_title", language),
         mobile_desc = tr("page.mobile_desc", language),
+        resize_sidebar = tr("page.resize_sidebar", language),
+        interaction_data = interaction_data,
     )
 
 
-def render_index(pages, default_language="zh", module_contents="", theorem_navigation="", project_info=None):
+def render_index(pages, default_language="zh", module_contents="", theorem_navigation="", project_info=None,
+                 project_id=""):
     roots = sorted({page.module.split(".")[0] for page in pages})
     root_module = roots[0] if len(roots) == 1 else None
     items = _render_project_index_tree(pages, root_module)
@@ -121,7 +145,8 @@ def render_index(pages, default_language="zh", module_contents="", theorem_navig
     navigation = render_module_navigation(
         pages, Path("index.html"), root_module, "index.html", default_language, theorem_navigation, project_info
     )
-    return render_page(title, contents, "index.html", navigation, default_language)
+    return render_page(title, contents, "index.html", navigation, default_language,
+                       project_id=project_id)
 
 
 def _render_project_index_tree(pages, root_module):
@@ -209,6 +234,7 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
     <div class="module-sidebar-heading">
       <span>{html.escape(project_title)}</span>
     </div>
+    <div class="sidebar-display-controls">
     <div class="language-switcher">
       <button class="language-button" type="button" aria-haspopup="true" aria-expanded="false" title="{html.escape(tr("language.switch", language), quote=True)}">
         <i class="codicon codicon-globe" aria-hidden="true"></i>
@@ -217,6 +243,18 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
         <button type="button" role="menuitemradio" data-language="zh"><span class="language-node-mark" aria-hidden="true"></span>{html.escape(tr("language.zh", language))}</button>
         <button type="button" role="menuitemradio" data-language="en"><span class="language-node-mark" aria-hidden="true"></span>{html.escape(tr("language.en", language))}</button>
       </div>
+    </div>
+    <div class="display-options">
+      <button class="display-options-button" type="button" aria-haspopup="true" aria-expanded="false" aria-label="{html.escape(tr("display_options.label", language), quote=True)}" title="{html.escape(tr("display_options.label", language), quote=True)}">
+        <i class="codicon codicon-settings" aria-hidden="true"></i>
+      </button>
+      <div class="display-options-menu" role="menu" aria-label="{html.escape(tr("display_options.label", language), quote=True)}">
+        <label class="display-option" role="menuitemcheckbox" data-display-option="wrappers">
+          <span class="display-option-mark" aria-hidden="true"></span>
+          <span class="display-option-text" data-display-option-text="wrappers" data-label-zh="{html.escape(tr('display_options.wrappers', 'zh'), quote=True)}" data-label-en="{html.escape(tr('display_options.wrappers', 'en'), quote=True)}">{html.escape(tr("display_options.wrappers", language))}</span>
+        </label>
+      </div>
+    </div>
     </div>
     {path_html}
     <nav class="module-directory-scroll" aria-label="{html.escape(tr("page.nearby_modules", language), quote=True)}">
@@ -286,6 +324,7 @@ class ProofEngine:
         # The page supplies a proof-module snapshot; direct callers may pass an
         # empty configuration when no Lean export tree is involved.
         self.renderer = Expr2TeX.from_config(lean2tex_config) if lean2tex_config is not None else Expr2TeX()
+        self.renderer.language_panel = self.language
         self.diagnostics = []
 
     def tex(self, node):
@@ -367,7 +406,7 @@ class ProofEngine:
     def validate(steps):
         proof_steps(steps)
 
-    def make(self, title, file_name, lines_count, code, anchor = "", state = None, language=None, default_language="zh", theorem_id="", statement=None):
+    def make(self, title, lines_count, code, anchor = "", state = None, language=None, default_language="zh", theorem_id="", statement=None):
         previous_language = self.language
         if language is not None:
             self.language = normalize_language(language)
@@ -390,7 +429,6 @@ class ProofEngine:
             proof_state = proof_state,
             title = title,
             content = content,
-            file_name = file_name,
             lines_count = lines_count,
             code = code,
             anchor = anchor,

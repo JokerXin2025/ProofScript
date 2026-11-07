@@ -1,64 +1,32 @@
+/-
+    ProofScript.Core.BuildMode
+    Released under Apache 2.0 license as described in the file LICENSE.
+    Authors: JokerXin
+-/
+
 import Lean
+
+open Lean
+
 
 namespace ProofScript
 
-open Lean Elab Command
-
-initialize pageBuild : Lean.Option Bool ← Lean.Option.register `proofScript.pageBuild {
-  defValue := false
-  descr := "ProofScript's page-build mode"
+/-- Lean option: page-build mode. -/
+register_option pageBuild : Bool := {
+  defValue := false,
+  descr := "page-build mode"
 }
 
-/-- Version of the persistent module build-mode marker. -/
-def schemaModeVersion : Nat := 1
+section
+variable {m : Type → Type} [Monad m] [MonadOptions m]
 
-/-- Modules using page commands record the context that produced their Lean artifacts. -/
-structure ModuleBuildMode where
-  owner : Name
-  pageBuild : Bool
-  version : Nat := schemaModeVersion
-  deriving Inhabited, Repr, BEq
+/-- Return the value of option `pageBuild`. -/
+def pageBuild? : m Bool := return pageBuild.get (← getOptions)
 
-private initialize moduleBuildModeExt :
-    SimplePersistentEnvExtension ModuleBuildMode (NameMap ModuleBuildMode) ←
-  registerSimplePersistentEnvExtension {
-    name := `ProofScript.moduleBuildMode
-    addEntryFn := fun state mode => state.insert mode.owner mode
-    addImportedFn := fun modules => modules.foldl
-      (fun state entries => entries.foldl
-        (fun state mode => state.insert mode.owner mode) state) {}
-  }
+/-- Run an action when the option `pageBuild` is on. -/
+def whenPageBuild (action : m Unit) : m Unit := do
+  if ← pageBuild? then action
 
-def moduleBuildMode? (env : Environment) (owner : Name) : Option ModuleBuildMode :=
-  (moduleBuildModeExt.getState env).find? owner
-
-def pageBuildEnabled {m : Type → Type} [Monad m] [MonadOptions m] : m Bool :=
-  return (← getOptions).getBool `proofScript.pageBuild false
-
-/-- Lock page commands in a module to one build mode, including skipped commands. -/
-def recordModuleBuildMode : CommandElabM Bool := do
-  let enabled ← pageBuildEnabled
-  let env ← getEnv
-  let owner := env.mainModule
-  if let some previous := moduleBuildMode? env owner then
-    unless previous.version == schemaModeVersion do
-      throwError "ProofScript build-mode version mismatch in module `{owner}`; rebuild the module"
-    unless previous.pageBuild == enabled do
-      throwError "cannot change `proofScript.pageBuild` within module `{owner}`"
-  else
-    setEnv <| moduleBuildModeExt.addEntry env { owner, pageBuild := enabled }
-  return enabled
-
-/-- Run a page command only in page builds, after checking the module's mode. -/
-def whenPageBuild (action : CommandElabM Unit) : CommandElabM Unit := do
-  if ← recordModuleBuildMode then action
-
-/-- Export may consume unmarked configuration modules, but never verification artifacts. -/
-def validateModuleBuildMode (env : Environment) (owner : Name) : Except String Unit := do
-  let some mode := moduleBuildMode? env owner | return
-  unless mode.version == schemaModeVersion do
-    throw s!"ProofScript build-mode version mismatch for module `{owner}`; rebuild its page artifacts"
-  unless mode.pageBuild do
-    throw s!"module `{owner}` was compiled without `proofScript.pageBuild`; rebuild it through the page build target"
+end
 
 end ProofScript

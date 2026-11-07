@@ -7,10 +7,10 @@ script_macro «congr» (clear := [num])
 
 script_info «congr» {
   template := [{
-    lang := "zh", tag := "同余性",
+    lang := zh, tag := "同余性",
     content := ""
   }, {
-    lang := "en", tag := "congr",
+    lang := en, tag := "congr",
     content := ""
   }]
 }

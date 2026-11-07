@@ -12,13 +12,16 @@ from types import MappingProxyType
 from jsonschema import Draft202012Validator, ValidationError
 
 from PS4HTML.project import PS4HTMLError
+from PS4HTML.large_json import loads as load_large_json
 from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD, proof_steps
 from PS4HTML.render_rules import validate_record, validate_rules
 
-INFO_VERSION = "9.0.0"
-MANIFEST_VERSION = "9"
-SNAPSHOT_VERSION = "7"
+INFO_VERSION = "12.0.0"
+MANIFEST_VERSION = "10"
+SNAPSHOT_VERSION = "9"
 MODEL_VERSION = "1.0.0"
+DEFINITION_MODEL_VERSION = "8.0.0"
+SCRIPT_MODEL_VERSION = "2.0.0"
 CONTRACT_VERSION = "2"
 
 
@@ -32,11 +35,18 @@ def canonical(value):
         return (text.rstrip("0").rstrip(".") if "." in text else text) if value else "0"
     if isinstance(value, float):
         return canonical(Decimal(str(value)))
+    if type(value) is int:
+        from Lean2TeX.numerals import signed_decimal_digits
+        return signed_decimal_digits(value)
     return json.dumps(value, ensure_ascii=False, separators=(",", ":"), allow_nan=False)
 
 
 def digest(value):
     return hashlib.sha256(canonical(value).encode("utf-8")).hexdigest()
+
+
+def project_id(package, library):
+    return canonical({"package": package, "library": library})
 
 
 def name_key(parts):
@@ -97,6 +107,12 @@ class InfoBundle:
                 raise ValueError("Unsupported or incomplete Info bundle; rebuild the cache with Lean")
             if self.index.get("recordingVersion") != PROOF_SCHEMA_VERSION or self.index.get("contractVersion") != CONTRACT_VERSION:
                 raise ValueError("Unsupported recording/contract version; rebuild with lake build <Library>:ps4html")
+            self.project = self.index["project"]
+            if self.project["schemaVersion"] != INFO_VERSION:
+                raise ValueError("Unsupported project record version")
+            if not isinstance(self.project["package"], str) or not isinstance(self.project["library"], str):
+                raise ValueError("Invalid Lake project identity")
+            self.project_id = project_id(self.project["package"], self.project["library"])
             schema = self.read("info/schema/bundle.schema.json")
             # Validate protocol identifiers independently of the schemas shipped in the bundle.
             for artifact in self.index.get("artifacts", []):
@@ -121,7 +137,13 @@ class InfoBundle:
                 actual = hashlib.sha256(self.file_path(entry["path"]).read_bytes()).hexdigest() if "sha256" in entry else digest(self.read(entry["path"]))
                 if actual != entry.get("sha256", entry.get("digest")):
                     raise ValueError(f"Bundle content digest mismatch: {entry['path']}")
+            project_path = f"projects/{hashlib.sha256(self.project_id.encode('utf-8')).hexdigest()}.json"
+            if {path for path in listed if path.startswith("projects/")} != {project_path}:
+                raise ValueError("Completed bundle must contain exactly its selected project record")
             required = {"info/schema/bundle.schema.json", "info/schema/snapshot.schema.json", "info/schema/models.json"}
+            required.add(project_path)
+            if self.read(project_path) != self.project:
+                raise ValueError("Project record disagrees with completed bundle")
             required.update(entry["events"] for entry in self.index["modules"])
             required.update(entry["path"] for entry in self.index["snapshots"])
             required.update(self.relative(entry["path"]) for entry in self.index["artifacts"])
@@ -159,12 +181,18 @@ class InfoBundle:
                 for record in payload["records"]:
                     kind, target = record["identity"]["kind"], record["identity"]["target"]
                     identity = (kind, target if kind == "project" else name_key(target))
-                    if identity in records_by_identity or kind not in self.schemas or record["schemaVersion"] != MODEL_VERSION:
+                    expected_version = (DEFINITION_MODEL_VERSION if kind == "definition" else
+                                        SCRIPT_MODEL_VERSION if kind == "script" else MODEL_VERSION)
+                    if identity in records_by_identity or kind not in self.schemas or record["schemaVersion"] != expected_version:
                         raise ValueError("Invalid/duplicate snapshot record schema")
                     if record["schemaId"] != self.schemas[kind]["title"]:
                         raise ValueError("Snapshot record schema identity mismatch")
                     records_by_identity[identity] = record
                     Draft202012Validator(self.schemas[kind]).validate(record["value"])
+                    if kind == "theorem" and record.get("projectId") is not None and not isinstance(record["projectId"], str):
+                        raise ValueError("Invalid frozen theorem project identity")
+                    if kind == "project" and target != self.project_id:
+                        raise ValueError("Snapshot contains a project outside the selected library")
                 contracts = {}
                 for contract in payload["contracts"]:
                     value = contract["value"]
@@ -241,6 +269,8 @@ class InfoBundle:
         project = artifact["projectId"]
         if not isinstance(project, str) or not project:
             raise ValueError("Theorem proof facts require a nonempty projectId")
+        if project != self.project_id:
+            raise ValueError("Named proof belongs to another Lake library")
         references = artifact["proofRefs"]
         if not isinstance(references, list):
             raise ValueError("proofRefs must be an array of references")
@@ -268,17 +298,17 @@ class InfoBundle:
             raise ValueError("Theorem proof facts digest mismatch")
         records = self._snapshot_records[artifact["snapshotId"]]
         metadata = records.get(("theorem", source))
-        if metadata is None or metadata["configured"] is not True or metadata["value"]["project"] != project:
-            raise ValueError("Theorem proof facts disagree with frozen project metadata")
+        if metadata is None or metadata["configured"] is not True or metadata.get("projectId") != project:
+            raise ValueError("Theorem proof facts disagree with their defining Lake project")
         project_record = records.get(("project", project))
         if project_record is None or project_record["configured"] is not True:
-            raise ValueError("Theorem proof facts reference an unconfigured project")
+            raise ValueError("Theorem proof facts reference a missing Lake project")
         projected = set()
         for name in automatic:
             target = records.get(("theorem", name))
             if target is None:
                 raise ValueError("Automatic proof reference is absent from its frozen snapshot")
-            if target["configured"] is True and target["value"]["project"] == project:
+            if target["configured"] is True and target.get("projectId") == project:
                 projected.add(name)
         if set(dependencies) != projected:
             raise ValueError("proofDependencies disagrees with automatic references and their frozen projects")
@@ -290,10 +320,11 @@ class InfoBundle:
         if document.get("module") != artifact["module"] or not isinstance(document.get("components"), list):
             raise ValueError("Page content disagrees with its artifact module")
         project = artifact["projectId"]
-        if project is not None:
-            record = self._snapshot_records[artifact["snapshotId"]].get(("project", project))
-            if record is None or record["configured"] is not True:
-                raise ValueError("Page project disagrees with its envelope snapshot")
+        if project != self.project_id:
+            raise ValueError("Page belongs to another Lake library")
+        record = self._snapshot_records[artifact["snapshotId"]].get(("project", project))
+        if record is None or record["configured"] is not True:
+            raise ValueError("Page project disagrees with its envelope snapshot")
         for component in document["components"]:
             if not isinstance(component, dict) or not isinstance(component.get("snapshotId"), str):
                 raise ValueError("Page component lacks its configuration snapshot")
@@ -340,7 +371,7 @@ class InfoBundle:
     def read(self, relative):
         if relative not in self.documents:
             path = self.file_path(relative)
-            self.documents[relative] = json.loads(path.read_text(encoding="utf-8"), parse_float=Decimal)
+            self.documents[relative] = load_large_json(path.read_text(encoding="utf-8"), parse_float=Decimal)
         return self.documents[relative]
 
     @staticmethod
@@ -380,16 +411,14 @@ class InfoBundle:
         values = {}
         for record in self.snapshot(module, snapshot_id)["records"]:
             kind, target = record["identity"]["kind"], record["identity"]["target"]
-            if kind not in {"definition", "phrase"}:
+            if kind != "definition":
                 continue
             fields = {key: value for key, value in record["value"].items() if key != "extra"}
             if kind == "definition":
                 target = name_text(target)
-                if fields.get("alias") is not None:
-                    fields["alias"] = name_text(fields["alias"])
-            else:
-                # Literal phrase keys occupy a single Name component.
-                target = ".".join(map(str, target))
+                alias_info = fields["alias_info"]
+                if alias_info["target"] is not None:
+                    fields["alias_info"] = {"target": name_text(alias_info["target"])}
             values[(kind, target)] = fields
         return interpret(values)
 

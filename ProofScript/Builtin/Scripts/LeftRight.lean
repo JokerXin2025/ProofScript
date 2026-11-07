@@ -12,10 +12,10 @@ script_macro «left»
 
 script_info «left» {
   template := [{
-    lang := "zh", tag := "明确目标",
+    lang := zh, tag := "明确目标",
     content := ""
   }, {
-    lang := "en", tag := "",
+    lang := en, tag := "",
     content := ""
   }]
 }
@@ -30,10 +30,10 @@ script_macro «right»
 
 script_info «right» {
   template := [{
-    lang := "zh", tag := "明确目标",
+    lang := zh, tag := "明确目标",
     content := ""
   }, {
-    lang := "en", tag := "",
+    lang := en, tag := "",
     content := ""
   }]
 }

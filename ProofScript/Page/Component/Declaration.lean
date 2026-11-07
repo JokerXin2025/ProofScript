@@ -58,11 +58,12 @@ elab "_record_theorem_statement" : tactic => withMainContext do
 private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyntax `ident)
     (binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinder))
     (type proof : TSyntax `term) : CommandElabM Unit := do
-  beginPageComponent
+  -- After the page closes, the native theorem checks the original proof.
+  if (getPageState (← getEnv)).closed then return
   let saved ← get
   modify fun state => { state with messages := {} }
   try
-    let pageBuild ← recordModuleBuildMode
+    let pageBuild ← pageBuild?
     let statements? ← match proof with
       | `(term| script $statements:scriptStmts) => pure (some statements)
       | `(term| by $sequence:tacticSeq) => do
@@ -130,9 +131,8 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
     if messages.reportedPlusUnreported.any (fun message => message.data.hasTag (· == `hasSorry)) then
       modifyEnv fun env => sorryProofsExt.modifyState env (·.insert helperName)
     if let some (document, artifact) := prepared? then
-      let location := SourceLocation.ofSyntax (← getFileName) name.raw
       let dependencies ← withRef name <| liftTermElabM <|
-        registerDeclarationFacts before declaration kind location citations (proofSource := some helperName)
+        registerDeclarationFacts before declaration kind citations (proofSource := some helperName)
       if let some statements := statements? then
         modifyEnv fun env => registerScript env declaration type.raw (scriptStmtsToArray statements)
       match registerProofArtifact (← getEnv) artifact with
@@ -143,7 +143,7 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
       let proofRef ← liftIO <| resourceReferencePath proofPath
       let sorryAx := (← collectAxioms helperName).contains ``sorryAx
       let component : Component := {
-        source := location, kind := toString kind, declaration := some declaration
+        kind := toString kind, declaration := some declaration
         value := json% { proof: $(proofRef.toString), sorryAx: $sorryAx } }
       let (env, added) ← match addComponent (← getEnv) component with
         | .ok result => pure result
@@ -167,7 +167,9 @@ elab "script_lemma_impl " name:ident helper:ident binders:bracketedBinder*
     ":" type:term ":=" proof:term : command =>
   allowHashCommandLint <| elabDeclaration .«lemma» name helper binders type proof
 
-elab "scriptProof% " helper:ident : term <= expectedType => do
+elab "scriptProof% " helper:ident " := " proof:term : term <= expectedType => do
+  if (getPageState (← getEnv)).closed then
+    return ← Term.elabTermEnsuringType proof (some expectedType)
   let helperName := resolveHelperName helper (← getCurrNamespace)
   unless ((← getEnv).find? helperName).any (fun info => match info with
       | .defnInfo _ => true
@@ -194,11 +196,13 @@ elab "scriptProof% " helper:ident : term <= expectedType => do
   return value
 
 
+/- Expose the native theorem through macro expansion so Lean's language server
+   retains its declaration snapshots and goals-accomplished marker. -/
 macro doc?:(docComment)? "#page" "theorem"
     name:ident binders:bracketedBinder* ":" type:term ":=" proof:term : command => do
   let helper := mkIdent <| ← Macro.addMacroScope (name.getId.appendBefore "scriptcheck_")
   let implementation ← `(command| script_theorem_impl $name $helper $[$binders]* : $type := $proof)
-  let declaration ← `(command| $[$doc?:docComment]? theorem $name $[$binders]* : $type := scriptProof% $helper)
+  let declaration ← `(command| $[$doc?:docComment]? theorem $name $[$binders]* : $type := scriptProof% $helper := $proof)
   let info := SourceInfo.fromRef (← getRef) (canonical := true)
   let implementation := implementation.raw.setInfo info
   let declaration := declaration.raw.setInfo info |>.modifyArg 1 (·.setInfo info)
@@ -208,7 +212,7 @@ macro doc?:(docComment)? "#page" "lemma"
     name:ident binders:bracketedBinder* ":" type:term ":=" proof:term : command => do
   let helper := mkIdent <| ← Macro.addMacroScope (name.getId.appendBefore "scriptcheck_")
   let implementation ← `(command| script_lemma_impl $name $helper $[$binders]* : $type := $proof)
-  let declaration ← `(command| $[$doc?:docComment]? theorem $name $[$binders]* : $type := scriptProof% $helper)
+  let declaration ← `(command| $[$doc?:docComment]? theorem $name $[$binders]* : $type := scriptProof% $helper := $proof)
   let info := SourceInfo.fromRef (← getRef) (canonical := true)
   let implementation := implementation.raw.setInfo info
   let declaration := declaration.raw.setInfo info |>.modifyArg 1 (·.setInfo info)

@@ -66,7 +66,7 @@ To render the existing ProofScript JSON without compiling Lean again:
 ps4html make --cache
 ```
 
-The theorem library includes an ordinary Lean theorem with explicit `theorem_info.project`,
+The theorem library includes an ordinary Lean theorem with automatically derived library ownership,
 a recorded lemma using it, and a theorem on the Dependencies page using that lemma. The
 ordinary theorem remains an unlinked dependency node; the exported lemma has a reverse link
 to the other page. Navigation uses automatic references in the final proof, filtered by the
@@ -93,12 +93,12 @@ mouse position. Hash navigation alone does not select a theorem.
 
 Each proof and page component uses the final metadata of its owner module and all transitive
 imports, including local Info commands after the proof or `#page end`. The standalone
-`theorem_info` command configures theorem titles, tags and project ownership after the
+`theorem_info` command configures theorem titles and tags after the
 declaration exists. Native doc comments remain available to Lean and the editor.
 `#page end` closes page content collection. Downstream overrides affect
 downstream content while reused upstream proofs retain their upstream snapshots.
-Pages with multiple candidate projects have no default page `projectId`; each named proof must
-select its own project explicitly. The last `project_info` does not choose a page-wide default.
+Pages and named proofs belong to their defining module's Lake library. The single
+`project_info` for that library supplies the shared publication metadata.
 
 Ordinary `lake build` and IDE checking synchronously check each proof in an internal `def`
 and publish a native theorem that references it, without recording or exporting pages. The `:ps4html` target
@@ -106,8 +106,8 @@ automatically enables recording and page export, using `.lake/ps4html/PS4HTMLDem
 for user-source Lean artifacts. It preserves the ordinary verification cache; the computation
 bundler uses the isolated workspace's C and setup paths supplied by Lake.
 
-Info bundles use protocol `9.0.0`, theorem manifest `9`, and snapshot payload `7`. Proof steps
-use the recording protocol `0.3.0` with `$ruleId`, `$goal_before`, `$goal_after`, and
+Info bundles use protocol `11.0.0`, theorem manifest `10`, and snapshot payload `9`. Proof steps
+use the recording protocol `0.4.0` with `$ruleId`, `$goal_before`, `$goal_after`, and
 `$branches` as framework fields. To migrate older exports, rebuild with
 `lake build PS4HTMLDemo:ps4html`; `--cache` never upgrades exports or invokes Lean. If an old
 installation used real directories at the build/input release-link paths, archive that

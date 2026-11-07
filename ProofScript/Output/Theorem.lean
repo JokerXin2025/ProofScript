@@ -15,7 +15,7 @@ structure TheoremExport where
   proofRefs : Array RefInfo
   /-- Automatic references restricted to the frozen source project, for theorem navigation. -/
   proofDependencies : Array Name
-  deriving Inhabited, Repr, BEq, ToJson
+  deriving Inhabited, ToJson
 
 private def validateName (name : Name) : Except String Unit := do
   -- Use the same component validation as the wire codec, including quoted dots and numeric parts.
@@ -40,7 +40,7 @@ def TheoremExport.validate (value : TheoremExport) : Except String Unit := do
       throw s!"proofDependencies[{index}]: missing automatic reference in proofRefs"
     seen := seen.insert name
 
-/-- Normalize facts at their creation boundary; decoding rejects invalid facts instead of repairing them. -/
+/-- Normalize and validate facts at their creation boundary. -/
 def TheoremExport.create (declaration : Name) (declarationKind : RecordedDeclarationKind)
     (projectId : String) (refs : Array RefInfo) (dependencies : Array Name) :
     Except String TheoremExport := do
@@ -55,24 +55,5 @@ def TheoremExport.create (declaration : Name) (declarationKind : RecordedDeclara
     proofDependencies := names.toArray.qsort Name.lt }
   value.validate
   return value
-
-instance : FromJson TheoremExport where
-  fromJson? json := do
-    let fields ← json.getObj?
-    for (key, _) in fields.toList do
-      unless #["declaration", "declarationKind", "projectId", "proofRefs", "proofDependencies"].contains key do
-        throw s!"unknown theorem export field `{key}`"
-    let refs ← match json.getObjVal? "proofRefs" with
-      | .ok refs => fromJson? refs
-      | .error _ => throw "missing proofRefs; rebuild the defining module"
-    let value := {
-      declaration := ← json.getObjValAs? Name "declaration"
-      declarationKind := ← json.getObjValAs? RecordedDeclarationKind "declarationKind"
-      projectId := ← json.getObjValAs? String "projectId"
-      proofRefs := refs
-      proofDependencies := ← json.getObjValAs? (Array Name) "proofDependencies"
-      : TheoremExport }
-    value.validate
-    return value
 
 end ProofScript

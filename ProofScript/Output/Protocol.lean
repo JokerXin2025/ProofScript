@@ -9,7 +9,7 @@ open InfoJson (qualifiedNameSchema objectSchema stringSchema boolSchema natSchem
   nullableSchema constantSchema targetSchema referenceSchema theoremExportSchema)
 open scoped InfoJson
 
-def infoProtocolVersion : String := "9.0.0"
+def infoProtocolVersion : String := "12.0.0"
 
 /-- File names use the digest of the lossless name, independently of display spelling. -/
 def moduleId (name : Name) : String := (toJson name).sha256
@@ -50,16 +50,16 @@ def Artifact.exportJson (artifact : Artifact) (snapshot : Snapshot)
       throw "theorem proof facts disagree with their artifact identity or snapshot"
     let some source := snapshot.find? theoremSpec.kind (.inl value.declaration)
       | throw "theorem proof facts have no source metadata in their snapshot"
-    unless source.configured && (source.value.getObjValAs? (Option String) "project").toOption == some (some value.projectId) do
-      throw "theorem proof facts disagree with their frozen project metadata"
+    unless source.configured && source.projectId == some value.projectId do
+      throw "theorem proof facts disagree with their defining Lake project"
     unless (snapshot.find? projectSpec.kind (.inr value.projectId)).any (·.configured) do
-      throw "theorem proof facts reference an unconfigured project"
+      throw "theorem proof facts reference a missing Lake project"
     let mut dependencies := #[]
     for ref in value.proofRefs do
       unless ref.isDependency do continue
       let some target := snapshot.find? theoremSpec.kind (.inl ref.name)
         | throw "automatic reference is absent from its export snapshot"
-      if target.configured && (target.value.getObjValAs? (Option String) "project").toOption == some (some value.projectId) then
+      if target.configured && target.projectId == some value.projectId then
         dependencies := dependencies.push ref.name
     unless dependencies == value.proofDependencies do
       throw "proofDependencies disagree with automatic references and their frozen projects"
@@ -75,32 +75,41 @@ def Artifact.exportJson (artifact : Artifact) (snapshot : Snapshot)
 def snapshotDocument (snapshot : Snapshot) := json% {
   schemaVersion: $infoProtocolVersion,
   id: $(snapshot.id),
-  payload: $(snapshot.payload),
-  provenance: $(snapshot.provenance)
+  payload: $(snapshot.payload)
 }
 
 private def exportedDefinitionSchema : Json :=
   let schema := (inferInstance : InfoSchema DefinitionInfo).jsonSchema
   let properties := (schema.getObjVal? "properties").toOption.getD (json% {})
     |>.setObjVal! "argument_indices" (arraySchema natSchema)
+    |>.setObjVal! "parameter_argument_indices" (arraySchema natSchema)
+    |>.setObjVal! "declaration" (objectSchema [
+      ("kind", stringSchema), ("type", stringSchema),
+      ("levelParams", arraySchema stringSchema),
+      ("unsafe", boolSchema), ("partial", boolSchema)]
+      #["kind", "type", "levelParams", "unsafe", "partial"])
   schema.setObjVal! "properties" properties
 
 def modelSchemas := json% {
   project: $((inferInstance : InfoSchema ProjectInfo).jsonSchema),
   "theorem": $((inferInstance : InfoSchema TheoremInfo).jsonSchema),
   script: $((inferInstance : InfoSchema ScriptInfo).jsonSchema),
-  definition: $exportedDefinitionSchema,
-  phrase: $((inferInstance : InfoSchema PhraseInfo).jsonSchema)
+  definition: $exportedDefinitionSchema
 }
 
 private def recordSchema [InfoSchema Record] (spec : InfoSpec Record)
     (valueSchema : Option Json := none) : Json :=
   let schema : InfoSchema Record := inferInstance
-  objectSchema [
+  let base := objectSchema [
     ("identity", objectSchema [("kind", constantSchema spec.kind), ("target", targetSchema spec.kind)] #["kind", "target"]),
     ("schemaId", constantSchema schema.id.toString), ("schemaVersion", constantSchema schema.version),
     ("configured", boolSchema), ("value", valueSchema.getD schema.jsonSchema)]
     #["identity", "schemaId", "schemaVersion", "configured", "value"]
+  if spec.kind == theoremSpec.kind then
+    base.setObjVal! "properties" ((base.getObjVal? "properties").toOption.getD (json% {})
+      |>.setObjVal! "projectId" (nullableSchema (targetSchema "project")))
+      |>.setObjVal! "required" (toJson (#["identity", "schemaId", "schemaVersion", "configured", "value", "projectId"]))
+  else base
 
 private def contractSchema : Json := objectSchema [
   ("contractVersion", constantSchema recordingContractVersion), ("recordingVersion", constantSchema recordingProtocolVersion),
@@ -112,8 +121,7 @@ private def contractSchema : Json := objectSchema [
 def snapshotSchema : Json :=
   let records := json% { oneOf: [
     $(recordSchema projectSpec), $(recordSchema theoremSpec),
-    $(recordSchema scriptSpec), $(recordSchema definitionSpec (some exportedDefinitionSchema)),
-    $(recordSchema phraseSpec)] }
+    $(recordSchema scriptSpec), $(recordSchema definitionSpec (some exportedDefinitionSchema))] }
   let payload := objectSchema [
     ("schemaVersion", constantSchema snapshotSchemaVersion),
     ("recordingVersion", constantSchema recordingProtocolVersion), ("contractVersion", constantSchema recordingContractVersion),
@@ -122,11 +130,11 @@ def snapshotSchema : Json :=
     ("contracts", arraySchema (objectSchema [("id", digestSchema), ("value", contractSchema)] #["id", "value"]))]
     #["schemaVersion", "recordingVersion", "contractVersion", "query", "records", "contracts"]
   (objectSchema [("schemaVersion", constantSchema infoProtocolVersion), ("id", digestSchema),
-    ("payload", payload), ("provenance", arraySchema (json% { type: "object" }))]
-    #["schemaVersion", "id", "payload", "provenance"]).setObjVal! "$schema" (json% "https://json-schema.org/draft/2020-12/schema")
+    ("payload", payload)]
+    #["schemaVersion", "id", "payload"]).setObjVal! "$schema" (json% "https://json-schema.org/draft/2020-12/schema")
 
 private def dependencySchema : Json :=
-  let variants := #["project", "theorem", "definition", "script", "phrase"].map fun kind =>
+  let variants := #["project", "theorem", "definition", "script"].map fun kind =>
     objectSchema [
       ("kind", constantSchema kind), ("target", targetSchema kind),
       ("required", boolSchema)] #["kind", "target", "required"]
@@ -165,13 +173,18 @@ def protocolSchema : Json :=
   (objectSchema [
     ("schemaVersion", constantSchema infoProtocolVersion), ("recordingVersion", constantSchema recordingProtocolVersion),
     ("contractVersion", constantSchema recordingContractVersion), ("complete", json% { const: true }),
+    ("project", objectSchema [
+      ("schemaVersion", constantSchema infoProtocolVersion),
+      ("package", InfoJson.nonemptyStringSchema), ("library", InfoJson.nonemptyStringSchema),
+      ("metadata", (inferInstance : InfoSchema ProjectInfo).jsonSchema)]
+      #["schemaVersion", "package", "library", "metadata"]),
     ("modules", arraySchema (objectSchema [
       ("name", qualifiedNameSchema), ("module", stringSchema), ("events", stringSchema),
       ("defaultSnapshot", nullableSchema digestSchema)] #["name", "module", "events", "defaultSnapshot"])),
     ("artifacts", arraySchema artifactSchema),
     ("snapshots", arraySchema (objectSchema [("id", digestSchema), ("path", stringSchema)] #["id", "path"])),
     ("files", arraySchema file)]
-    #["schemaVersion", "recordingVersion", "contractVersion", "complete", "modules", "artifacts", "snapshots", "files"])
+    #["schemaVersion", "recordingVersion", "contractVersion", "complete", "project", "modules", "artifacts", "snapshots", "files"])
     |>.setObjVal! "$schema" (json% "https://json-schema.org/draft/2020-12/schema")
     |>.setObjVal! "title" (json% "ProofScript completed Info bundle")
 

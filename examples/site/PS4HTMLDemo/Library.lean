@@ -1,6 +1,6 @@
 import ProofScript
 
-project_info "PS4HTMLDemo" {
+project_info {
   title := "PS4HTML 完整组件展示",
   authors := ["PS4HTML Contributors"],
   description := "一个由 ProofScript 编写并由 PS4HTML 生成的交互式形式化数学展示项目。",
@@ -31,7 +31,7 @@ theorem_info andLeft {
 
 -- Ordinary Lean theorems need explicit project ownership to enter the project graph.
 theorem ordinaryIdentity (P : Prop) (h : P) : P := h
-theorem_info ordinaryIdentity { project := "PS4HTMLDemo", name := "普通 Lean 恒等定理" }
+theorem_info ordinaryIdentity { name := "普通 Lean 恒等定理" }
 
 #page lemma identityLemma (P : Prop) (h : P) : P := script
   apply (ordinaryIdentity P)

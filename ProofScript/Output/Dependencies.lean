@@ -70,9 +70,6 @@ where
     if kind == "const" then
       let name ← printedName env (← value.getObjValAs? String "name")
       dependencies := add dependencies { kind := "definition", target := name }
-      if name == `Exists then dependencies := add dependencies { kind := "phrase", target := `exists }
-    if kind == "forall" then
-      dependencies := add dependencies { kind := "phrase", target := `forall }
     let fields : Array String := match kind with
       | "app" => #["fn", "arg"]
       | "lam" | "forall" => #["type", "body"]

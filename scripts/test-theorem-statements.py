@@ -28,10 +28,14 @@ def main():
         source = work / "Statement.lean"
         source.write_text('''import ProofScript
 import ProofScript.Info.Snapshot
-def_info Real { parameter_template := some "$#self\\\\in\\\\mathbb{R}$", styles := [{ template := "\\\\mathbb{R}" }] }
-def_info Set { parameter_template := some "$#self\\\\subseteq #0$", styles := [{ template := "\\\\mathcal{P}(#0)" }] }
-def_info Set.Icc { styles := [{ template := "[#0,#1]" }] }
-def_info Set.Elem { parameter_template := some "$#self\\\\in #0$", styles := [{ template := "#0" }] }
+import ProofScript.Output.Protocol
+decl_info Real { parameter_template := some "$#self\\\\in\\\\mathbb{R}$",
+  concept_info := { templates := [{ label := "formula", content := "\\\\mathbb{R}" }] } }
+decl_info Set { parameter_template := some "$#self\\\\subseteq #0$",
+  concept_info := { templates := [{ label := "formula", content := "\\\\mathcal{P}(#0)" }] } }
+decl_info Set.Icc { concept_info := { templates := [{ label := "formula", content := "[#0,#1]" }] } }
+decl_info Set.Elem { parameter_template := some "$#self\\\\in #0$",
+  concept_info := { templates := [{ label := "formula", content := "#0" }] } }
 namespace Statement
 #page theorem identity (n : Nat) (h : n = n) : n = n := script
   trivial
@@ -47,14 +51,22 @@ open Lean Elab Command ProofScript in
 run_cmd do
   let deps := #[`Nat, `Real, `Set, `Set.Icc, `Set.Elem, `Eq].map fun name =>
     { kind := "definition", target := Sum.inl name : RenderDependency }
-  let snapshot ← match freezeSnapshot (← getEnv) { moduleName := ← getMainModule } deps #[] with
+  let moduleName ← getMainModule
+  let project : ProjectKey := { package := "Statement", library := "Statement" }
+  let registry : ProjectRegistry := {
+    selected := project, projects := #[project], roots := #[moduleName]
+    libraryModules := #[moduleName], modules := #[(moduleName, project)]
+    closure := #[(moduleName, project)], libraryOleas := #[] }
+  let snapshot ← match freezeSnapshot (← getEnv) registry {} { moduleName } deps #[] with
     | .ok value => pure value
     | .error error => throwError error.render
   liftIO <| IO.FS.writeFile SNAPSHOT snapshot.payload.pretty
-'''.replace('SNAPSHOT', json.dumps(str(work / 'snapshot.json'))))
+  liftIO <| IO.FS.writeFile MODEL_SCHEMAS modelSchemas.pretty
+'''.replace('SNAPSHOT', json.dumps(str(work / 'snapshot.json')))
+   .replace('MODEL_SCHEMAS', json.dumps(str(work / 'models.json'))))
         env = dict(os.environ, PROOF_SCRIPT_OUTPUT_ROOT=str(work / "output"))
         subprocess.run(["lake", "env", "lean", f"--root={work}",
-                        "-DproofScript.pageBuild=true", str(source)], cwd=ROOT, env=env, check=True)
+                         "-DpageBuild=true", str(source)], cwd=ROOT, env=env, check=True)
         proofs = list((work / "output").rglob("*.json"))
         documents = [data for path in proofs if "statement" in (data := json.loads(path.read_text()))]
         schema = json.loads((ROOT / 'docs/schema/recording-proof.schema.json').read_text())
@@ -62,6 +74,31 @@ run_cmd do
             Draft202012Validator(schema).validate(data)
         document = next(data for data in documents if 'identity' in data['code'])
         resolver = validate_document(document)
+        metadata = [node['data'] for node in document['expressions'].values()
+                    if node['kind'] == 'mdata']
+        assert all(not key.startswith('ProofScript.source') for item in metadata for key in item), metadata
+        assert any(item.get('ProofScript.variableType') == 'ℕ' and
+                   'ProofScript.userName' in item for item in metadata), metadata
+        assert any(item.get('ProofScript.declarationKind') and
+                   item.get('ProofScript.declarationType') for item in metadata), metadata
+        assert any(item.get('ProofScript.levelParams') is not None and
+                   type(item.get('ProofScript.declarationUnsafe')) is bool for item in metadata), metadata
+        assert any(item.get('ProofScript.exprType') and
+                   item.get('ProofScript.exprText') for item in metadata), metadata
+        variable = resolver.resolve_at(('statement', 'parameters', 0, 'variable'))
+        display = ProofEngine([], expression_resolver=resolver, lean2tex_config=
+                              EffectiveConfiguration(MacroRegistry(), {}, {})).renderer.convert(variable)
+        assert display.metadata['variableType'] == 'ℕ', display.metadata
+        assert display.metadata['variableKind'] == 'parameter', display.metadata
+        const_node = next(ref for ref, value in document['expressions'].items()
+                          if value['kind'] == 'mdata' and
+                          value['data'].get('ProofScript.declarationKind') == 'inductive' and
+                          document['expressions'][value['expr']['$ref']].get('name') == 'Nat')
+        const_display = ProofEngine([], expression_resolver=resolver, lean2tex_config=
+                                    EffectiveConfiguration(MacroRegistry(), {}, {})).renderer.convert(
+                                        resolver.node({'$ref': const_node}))
+        assert const_display.metadata['declaration']['type'] == 'Type', const_display.metadata
+        assert const_display.metadata['declaration']['kind'] == 'inductive', const_display.metadata
         config = EffectiveConfiguration(MacroRegistry(), {}, {"Nat": (r"$#self\in\mathbb{N}$", [])})
         engine = ProofEngine(document["proof"], expression_resolver=resolver, lean2tex_config=config)
         text = render_statement(document["statement"], engine)
@@ -72,7 +109,8 @@ run_cmd do
         statement = resolver.resolve(document["statement"])
         ordinary = engine.tex(statement["parameters"][0]["variable"])
         assert refs[0] in ordinary and "mathbb" not in ordinary
-        rendered = render_proof("", "Identity", "proof", "Statement.lean", 4, "", statement=text)
+        rendered = render_proof("", "Identity", "proof", 4, "", statement=text)
+        assert '<span>Lean</span>' in rendered
         assert rendered.index('proof-flip-front') < rendered.index('theorem-statement') < rendered.index('proof-children')
         # Real recorded goal occurrences use the same fvar IDs as the header.
         proof_text = "".join(engine.tex(resolver.node(document["proof"][path[1]][path[2]]))
@@ -84,8 +122,16 @@ run_cmd do
         function = engine.renderer.render_parameter(statement["parameters"][0]["variable"], fn_type)
         assert r"\to" in function and r"\implies" not in function
         records = json.loads((work / "snapshot.json").read_text())["records"]
-        values = {(record['identity']['kind'], name_text(record['identity']['target'])): record['value'] for record in records}
+        definition_schema = json.loads((work / 'models.json').read_text())['definition']
+        for record in records:
+            if record['identity']['kind'] == 'definition':
+                Draft202012Validator(definition_schema).validate(record['value'])
+        values = {(record['identity']['kind'], name_text(record['identity']['target'])): record['value']
+                  for record in records if record['identity']['kind'] == 'definition'}
+        assert values[('definition', 'Real')]['declaration']['kind'], values[('definition', 'Real')]
+        assert values[('definition', 'Real')]['declaration']['type'], values[('definition', 'Real')]
         real_config = interpret(values)
+        assert real_config.registry.declarations['Real']['type'] == values[('definition', 'Real')]['declaration']['type']
         interval = next(data for data in documents if 'interval' in data['code'])
         interval_engine = ProofEngine(interval['proof'], expression_resolver=validate_document(interval), lean2tex_config=real_config)
         interval_html = render_statement(interval['statement'], interval_engine)
@@ -103,8 +149,9 @@ run_cmd do
             assert native['statement']['parameters']
             native_resolver = validate_document(native)
             native_engine = ProofEngine([], expression_resolver=native_resolver, lean2tex_config=real_config)
-            native_html = _render_code_only_declaration('theorem', 'Native', 'native', 'rfl', 1, 'native',
+            native_html = _render_code_only_declaration('Native', 'native', 'rfl', 1, 'native',
                                                        render_statement(native['statement'], native_engine))
+            assert '<span>Lean</span>' in native_html
             assert native_html.index('theorem-statement') < native_html.index('proof-source-card')
         assert len([data for data in documents if "proof" not in data]) == 2
         for source in documents:

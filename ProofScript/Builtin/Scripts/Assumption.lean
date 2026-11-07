@@ -7,10 +7,10 @@ script_macro «assumption»
 
 script_info «assumption» {
   template := [{
-    lang := "zh", tag := "已知",
+    lang := zh, tag := "已知",
     content := "目标已经作为假设给出"
   }, {
-    lang := "en", tag := "given",
+    lang := en, tag := "given",
     content := "The goal is already given as an assumption"
   }]
 }

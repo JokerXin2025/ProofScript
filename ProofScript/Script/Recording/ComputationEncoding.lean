@@ -9,14 +9,11 @@ open Lean Elab Tactic
 
 /-- Read computation provenance in the declaration's current context. The function
     and implementation retain native expressions independently of proof sessions
-    and execution bundles. Only the caller's syntax can supply a root source. -/
+    and execution bundles. -/
 def recordComputationFunction (declaration : Name) (type : String)
-    (implementation : Expr) (source : Option Syntax := none) : TacticM RecordedValue :=
+    (implementation : Expr) : TacticM RecordedValue :=
   recordValueFrom "function" do
-    let source ← match source with
-      | some raw => trustedSyntaxSource? raw
-      | none => pure none
-    let expression ← recordExpression (← mkConstWithLevelParams declaration) source
+    let expression ← recordExpression (← mkConstWithLevelParams declaration)
     let implementation ← recordExpression implementation
     return .object [
       ("declaration", .plain (toJson declaration.toString)), ("type", .plain (toJson type)),

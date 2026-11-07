@@ -13,10 +13,10 @@ script_macro «exists» (clear := [data])
 
 script_info «exists» {
   template := [{
-    lang := "zh", tag := "选取对象",
+    lang := zh, tag := "选取对象",
     content := ""
   }, {
-    lang := "en", tag := "choose",
+    lang := en, tag := "choose",
     content := ""
   }]
 }
@@ -32,10 +32,10 @@ script_macro «existsWith»  (clear := [data, cond])
 
 script_info «existsWith» {
   template := [{
-    lang := "zh", tag := "选取对象",
+    lang := zh, tag := "选取对象",
     content := ""
   }, {
-    lang := "en", tag := "choose",
+    lang := en, tag := "choose",
     content := ""
   }]
 }

@@ -6,9 +6,6 @@ ProofText 是 ProofScript 的 `#page text` 命令内部使用的轻量级标记�
 ProofText 与 Typst 有些相似，但它是一门独立且刻意保持精简的语言。例如，`*文本*`
 表示粗体，无序列表项以 `-` 开头。
 
-标题由独立的[标题组件](Title-Component-zh.md)提供，使用 `#page title`、`#page sub title` 等命令。
-ProofText 不再提供标题块；`@<label>` 引用的是标题组件。
-
 本文档描述当前 ProofText 解析器实际实现的语法。
 
 ## 1. 使用 `#page text`

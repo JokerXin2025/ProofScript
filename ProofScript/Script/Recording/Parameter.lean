@@ -9,7 +9,7 @@ namespace ProofScript
 /-- Elaborate and read an expression in the current recording context. -/
 def expression (raw : Syntax) : TacticM RecordedValue := do
   let action : TacticM RecordedValue := do
-    recordExpression (← elabTerm raw none) (← trustedSyntaxSource? raw)
+    recordExpression (← elabTerm raw none)
   if (← getUnsolvedGoals).isEmpty then
     action
   else

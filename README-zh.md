@@ -14,7 +14,7 @@ python3 -m pip install -e ./tools/ps4html
 在用户 Lean 项目中配置 ProofScript 依赖、执行 `lake update` 后，运行 `lake build MyLibrary:ps4html`（将 `MyLibrary` 替换为实际库名），输出为
 `.PS4HTML/build/index.html`；`ps4html serve` 提供本地预览。完整示例位于 [`examples/site/`](examples/site/)，
 其中计算页面另需 Node、Emscripten 和匹配的 Lean/Wasm runtime。
-统一 Info 导出协议为 `9.0.0`，artifact manifest 版本为 `9`，snapshot payload 版本为 `7`，录制协议使用 `0.3.0`。每个 script 步骤对应一个对象，框架字段使用 `$ruleId`、`$goal_before`、`$goal_after` 和 `$branches`；配置及实际契约通过产物清单关联。旧缓存需重新运行 Lake facet 构建，详见[统一配置与导出说明](#统一-info-配置)。
+统一 Info 导出协议为 `12.0.0`，artifact manifest 版本为 `10`，snapshot payload 版本为 `9`，录制协议使用 `0.3.0`。每个 script 步骤对应一个对象，框架字段使用 `$ruleId`、`$goal_before`、`$goal_after` 和 `$branches`；配置及实际契约通过产物清单关联。旧缓存需重新运行 Lake facet 构建，详见[统一配置与导出说明](#统一-info-配置)。
 详细使用说明见 [PS4HTML 文档](tools/ps4html/README.md)。
 
 普通 `lake build` 和 IDE 默认只检查证明。`#page theorem` / `#page lemma` 生成原生 Lean theorem，
@@ -122,7 +122,7 @@ theorem implicationChain
 | :- | :- | :- |
 | `intro x₁ ... xₙ` | 依次引入证明项或普通变量 | `intro` | 至少一个标识符；目标为 `… → False` 时仍需使用 `contra` |
 | `let x := value` / `let x : T := value` | 引入局部定义，并在该步骤记录类型和值 | `let` | 提供类型注解时，值必须具有该类型 |
-| `provide ⟨h⟩` | 在 `witness.data` 中提供见证，或为存在目标提供见证 | `exact` / `exists` | 不是一般的 `exact`，只能用于这两种上下文 |
+| `provide t` | 为当前目标提供数据，或为存在目标提供见证 | `exact` / `exists` | 提供项的类型不能是命题 |
 | `apply t` | 应用形如 `P → Q` 或 `P ↔ Q` 的命题，留下一个前提目标 | `apply` / `Iff.mp` / `Iff.mpr` | 最外层必须是蕴含或等价，且只能产生一个目标 |
 | `funext x` | 将函数等式化为逐点等式 | `funext` | 等式两侧必须是同定义域函数 |
 | `obtain_exist ⟨x, hx⟩ := h` | 解构局部存在性假设 | `cases` | `h` 必须证明存在命题 |
@@ -319,7 +319,7 @@ example (P Q : Prop) (hP : P) : TwoPremises P Q := script
 | `svg "code"` | 插入原始 SVG 元数据 |
 | `latex (title := "...", ...) "source"` | 编译并记录任意 LaTeX 源码及 SVG |
 | `admit "reason"` | 使用 `sorry` 暂时闭合目标并记录原因 |
-| `cite proof` | 从命题的证明中收集证明常量引用，不改变当前目标 |
+| `cite theorem` | 引用指定名称的定理，不改变当前目标 |
 
 ##### 非正式证明
 
@@ -403,10 +403,10 @@ theorem divisibility_chain {a b c d e : ℕ}
 
 ### Mathlib 脚本策略
 
-`import ProofScript` 通过 `ProofScript.Mathlib.Info` 加载 Mathlib 策略及其展示配置模块；展示配置只在页面构建中登记。只需 tactic 实现与注册时可以导入：
+`import ProofScript` 加载 Mathlib 策略包装及其展示配置；展示配置只在页面构建中登记。直接导入脚本定义可以使用：
 
 ```lean
-import ProofScript.Mathlib.Scripts
+import ProofScript.Builtin.Scripts
 ```
 
 基础策略的 `ProofScript.Builtin.Script` 集中提供执行、注册、记录器与页面展示配置；公共 `ProofScript` 入口导入全部默认配置模块，其中的 Info 命令只在页面模式生效。模块职责见[统一 Info 配置](#统一-info-配置)。当前包装按字母顺序包括：
@@ -441,7 +441,7 @@ norm_num only [Nat.add_zero Nat.zero_add] at *
 
 支持位置参数的策略可使用 `at h`、`at h₁ h₂`、`at *`、`at ⊢` 和
 `at h₁ h₂ ⊢`。配置对象、自定义 discharger、任意 tactic block 以及仅输出建议的 `?`
-变体没有包装。支持的语法参见 [Mathlib 策略定义](ProofScript/Mathlib/Scripts.lean)。
+变体没有包装。支持的语法参见 [Mathlib 策略定义](ProofScript/Builtin/Scripts.lean)。
 
 ### 自定义脚本策略
 
@@ -540,7 +540,7 @@ record_value "evidence" saved
 
 这段代码保留执行前读取的值，再在执行后写入。文献引用通过独立于录制值的路径收集。
 
-`RecordedValue` 是纯数据，有普通 JSON、原生 `Lean.Expr`、数组和对象四种形式。`RecordedValue.expression expr` 原样保存表达式及其已有元数据，不查询上下文。默认 `Expr` 转换调用 `recordExpression`，实例化已赋值的表达式及 universe 元变量，再沿原结构始终将自由变量名称、命名类型描述和可获得的可信源码位置添加为原生标量 `MData`。完整声明类型、局部定义值及应用 binder 描述不再收集。容器组合元素的转换结果；已有 `RecordedValue` 原样通过。
+`RecordedValue` 是纯数据，有普通 JSON、原生 `Lean.Expr`、数组和对象四种形式。`RecordedValue.expression expr` 原样保存表达式及其已有元数据，不查询上下文。默认 `Expr` 转换调用 `recordExpression`，实例化已赋值的表达式及 universe 元变量，再沿原结构始终将自由变量名称和命名类型描述添加为原生标量 `MData`。完整声明类型、局部定义值及应用 binder 描述不再收集。容器组合元素的转换结果；已有 `RecordedValue` 原样通过。
 
 录制格式为 `0.3.0`。`recordedProofJson` 在最终证明导出时统一分配节点编号，输出节点表及显式 `expressionRoots`；其他独立数据主体使用相同的纯编码入口 `encodeOwner`。标量元数据导出为 `mdata.data`，唯一结构子项为 `mdata.expr`；语法值及空包装不导出。PS4HTML 仅从根清单进入表达式图，普通 JSON 保持用户数据语义。渲染配置依赖沿原生表达式结构和有效的命名类型注解解析，不展开声明；录制参数和值不写入文献引用暂存区。结构见[证明 JSON Schema](docs/schema/recording-proof.schema.json)。旧缓存须重新运行 `lake build MyLibrary:ps4html`，`ps4html make --cache` 不迁移旧数据。
 
@@ -560,9 +560,9 @@ scoped instance : RecordValue Evidence where
 end ProofScript.ValueRecorder
 ```
 
-自行提供表达式和原生 `MData` 时，直接返回 `RecordedValue.expression expr`。`record_value "term" expr` 使用默认 `Expr` 实例，`record_value "term" (RecordedValue.expression expr)` 保留给定表达式。默认读取器添加 `ProofScript.userName`、`ProofScript.type` 及可获得的 `ProofScript.sourceFile/sourceStart/sourceStop`。命名类型描述是自由变量和绑定节点上的字符串；其中 `decl:<声明名>` 还会冻结该声明的 `def_info` 以供命名，不增加文献引用。所有标量元数据（包括自定义键）始终导出，没有启用开关。嵌套同名键由外层优先；源码范围只属于对应出现位置，不继承给结构子项。专用 `let` recorder 在引入定义时输出 `name`、`type`、`value`，后续变量引用不复制这些字段或生成声明悬停提示。
+自行提供表达式和原生 `MData` 时，直接返回 `RecordedValue.expression expr`。`record_value "term" expr` 使用默认 `Expr` 实例，`record_value "term" (RecordedValue.expression expr)` 保留给定表达式。默认读取器添加 `ProofScript.userName` 和 `ProofScript.type`。命名类型描述是自由变量和绑定节点上的字符串；其中 `decl:<声明名>` 还会冻结该声明的 `decl_info` 以供命名，不增加文献引用。所有标量元数据（包括自定义键）始终导出，没有启用开关。嵌套同名键由外层优先。专用 `let` recorder 在引入定义时输出 `name`、`type`、`value`，后续变量引用不复制这些字段或生成声明悬停提示。
 
-`def_info.auto_arity := true` 在 Lean 冻结配置时按声明的原生 binder 转成数字索引，渲染器只消费这些索引。使用 `auto_arity := false` 时，模板索引直接对应完整的原始应用参数。动态 `#*` 模板不再支持。
+`decl_info.concept_info.auto_arity := true` 在 Lean 冻结配置时按声明的原生 binder 转成数字索引。使用 `auto_arity := false` 时，概念模板索引直接对应完整的原始应用参数；符号运算符和关系始终选取显式参数。动态 `#*` 模板不再支持。
 
 策略也使用 `script_recorder foo => do ...`。证明分支标签由执行器提供，命名 continuation 来自注册信息，手写 recorder 无需读取或重复传入这些路由信息：
 
@@ -606,9 +606,9 @@ script_recorder rememberTrue => do
 策略，但不能使用 ProofScript 的脚本策略。后者只保留 `schemaVersion`、`module` 与完整 `code`，不输出
 `expressions`、`expressionRoots` 或 `proof`。文献引用收集独立于录制，参见[自动文献采集](#自动文献采集)。
 
-`#page theorem` 和 `#page lemma` 在所有模式下都先通过 `script_theorem_impl` / `script_lemma_impl` 生成不同名的内部 `def`，同步执行一次证明，再用原生 theorem 直接引用它，保留 IDE 的编译通过标记。证明失败统一提示“证明存在错误”。页面元数据、录制文件和依赖身份仍使用公开定理名。
-普通模式复用执行版 `script` 或原生 `by`，跳过录制和页面导出；两种模式都会检查 `cite` 的完整参数是否为命题证明，不要求预先配置 `theorem_info`。
-页面模式通过构建选项 `proofScript.pageBuild` 在内部 `def` 中执行录制器，再按模块最终配置导出；同一模块不能中途切换模式。
+`#page theorem` 和 `#page lemma` 保持为宏，显式展开原生 theorem，以保留 IDE 的编译通过标记。`#page end` 之前，两种模式都先通过 `script_theorem_impl` / `script_lemma_impl` 生成不同名的内部 `def`，同步执行一次证明，再用原生 theorem 直接引用它；证明失败统一提示“证明存在错误”。`#page end` 之后跳过 helper，由原生 theorem 直接检查原始证明，不添加页面组件或录制文件。页面元数据、录制文件和依赖身份仍使用公开定理名。
+普通模式复用执行版 `script` 或原生 `by`，跳过录制和页面导出；两种模式都会检查 `cite` 指定的声明是否为命题证明，不要求预先配置 `theorem_info`。
+页面模式通过构建选项 `pageBuild` 在内部 `def` 中执行录制器，再按模块最终配置导出。
 五种独立 Info 命令在普通模式也跳过字段解码、语义校验和配置登记，但语法仍须合法；两种模式都会保留编辑器语义信息，包括尽力解析已有元数据目标。显式调用底层 recorder API 仍可录制。
 
 定理依赖图的上半部分可以包含 `#page lemma`，每个 lemma 也有自己的依赖图；下半部分仅列出使用当前声明的 theorem，不列出 lemma。真实依赖数据仍完整保留。
@@ -689,7 +689,7 @@ ProofText 源代码和解析后的语义 AST 将由 ProofScript 统一导出至�
 
 ### 文献信息注册
 
-页面模式下，`project_info` 配置并选择活动项目，持久化至页面构建的 `.olean`；验证模式跳过该命令。可写 `project_info "MyProject" { ... }` 指定稳定的项目身份；无目标时更新当前活动项目，无活动项目时以模块名建立项目。相同项目允许多次更新，多个项目可以共同进入站点。
+每个 Lake `lean_lib` 对应一个项目，内部以 package 与 library 的组合标识。页面模式下，`project_info { ... }` 将元数据持久化在所属模块的 `.olean`；一个库中最多出现一次，可放在该库任意模块。未设置时使用库名作为展示标题。验证模式跳过此命令。
 
 ```lean
 project_info {
@@ -725,7 +725,7 @@ theorem_info referencedTheorem {
 theorem_info mainResult { name := "主要结果", tags := ["algebra"] }
 ```
 
-定理声明与元数据更新是独立命令。原生 `/-- ... -/` 文档注释仍供 Lean 和编辑器使用。`name`、`tags` 控制展示，`project` 直接保存 `String` 类型的项目名；显式项目赋值优先，否则在最终消费时选择首次登记模块本地唯一项目，本地无项目时选择该模块传递导入闭包中的唯一项目。录制定理在定义模块登记，普通 Lean 声明在首次 `theorem_info` 所在模块登记。多个候选项目要求显式指定 `project`；`none` 或 `reset` 明确解除归属。未知字段进入 `extra` 对象。五种 Info 命令都允许重复更新，并支持已知字段检查、`none` 与 `reset`。定理引用和页面锚点使用 Lean 声明名，跨模块引用时使用完整限定名。
+定理声明与元数据更新是独立命令。原生 `/-- ... -/` 文档注释仍供 Lean 和编辑器使用。`name`、`tags` 控制展示；定理项目归属由声明所属模块的 Lake 库决定，与 `theorem_info` 所在模块无关。`theorem_info` 已移除 `project` 字段，未知字段进入 `extra` 对象。其它 Info 命令仍可重复更新，`project_info` 每库仅允许一次。定理引用和页面锚点使用 Lean 声明名，跨模块引用时使用完整限定名。
 
 ### 自动文献采集
 
@@ -733,7 +733,7 @@ theorem_info mainResult { name := "主要结果", tags := ["algebra"] }
 
 页面构建时，`#page theorem` 和 `#page lemma` 在证明完成后统一收集自动引用，`script` 与 `by` 使用同一套扫描。扫描展开生成的 helper 和 compiler auxiliary proof，保留用户声明作为依赖边界，并且只保留声明类型满足 `Meta.isProp info.type` 的常量，生成 `isDependency := true` 的引用。`def MyProp : Prop := ...` 会被排除，类型本身是命题的证明定义会被保留。`dependencyCollection false` 关闭自动引用收集。
 
-`cite` 始终先检查完整参数的类型 `Meta.isProp (inferType expression)`，再按相同的声明类型规则过滤表达式中的常量。参数可以是证明定义、应用、lambda 或局部证明，不要求预先配置 `theorem_info`。收集结果带有 `isDependency := false`，在 `dependencyCollection false` 下也写入动态暂存区。页面定理事务还会将其独立保存到 `DeclarationFacts.proofRefs`，清空页面暂存区不会丢失这些持久化引用。同名引用合并时自动依赖优先；事务失败时恢复此前引用和事实。
+`cite` 只接受全局定理名（也接受保存命题证明的定义），通过 `Meta.isProp info.type` 检查声明的类型，直接记录该名称，不扫描证明项中的常量。定理应用、lambda 和局部证明不能作为参数；无需预先配置 `theorem_info`。引用带有 `isDependency := false`，在 `dependencyCollection false` 下也写入动态暂存区。页面定理事务还会将其独立保存到 `DeclarationFacts.proofRefs`，清空页面暂存区不会丢失这些持久化引用。同名引用合并时自动依赖优先；事务失败时恢复此前引用和事实。
 
 命名 proof artifact 导出完整 `proofRefs` 数组，包含手动引用及源项目之外的引用，每项都有无损 Lean 名称 `name` 和必需的布尔字段 `isDependency`。导航字段 `proofDependencies` 仅保留自动引用中最终项目与源定理相同的名称，证明定义与定理适用相同规则；`dependencyCollection false` 因而也会关闭自动导航边。`proofFactsDigest` 同时覆盖两个数组，消费端按冻结的目标元数据校验导航投影。manifest `9` 要求这些字段，旧缓存须通过 `lake build MyLibrary:ps4html` 重建。
 
@@ -891,35 +891,32 @@ Finalize 将资源发布到内容寻址目录并把页面 execution 更新为 `r
 
 | 命令 | 模型（`ProofScript`） | 目标 |
 | --- | --- | --- |
-| `project_info` | `ProjectInfo` | 非空项目名字符串；省略目标时更新活动项目 |
+| `project_info` | `ProjectInfo` | 当前 Lake `lean_lib`，无目标参数 |
 | `theorem_info` | `TheoremInfo` | 已声明的 Lean 定理名 |
 | `script_info` | `ScriptInfo` | 已注册的完整脚本 ruleId，或本模块的注册 ID |
-| `def_info` | `DefinitionInfo` | 已声明的 Lean 常量 |
-| `phrase_info` | `PhraseInfo` | 非空短语键 |
+| `decl_info` | `DefinitionInfo` | 已声明的 Lean 常量 |
 
-命令可以重复执行，只更新写出的字段；已知字段的类型错误、同命令重复字段及未知嵌套字段会报错。未知顶层字段保存到 `extra`，支持字符串、数值、布尔、null、数组和对象。可显式写 `extra := { "review.status" := "checked" }`，其键不会覆盖内置字段。
+除每库仅一次的 `project_info` 外，其它命令可以重复执行，只更新写出的字段；已知字段的类型错误、同命令重复字段及未知嵌套字段会报错。未知顶层字段保存到 `extra`，支持字符串、数值、布尔、null、数组和对象。可显式写 `extra := { "review.status" := "checked" }`，其键不会覆盖内置字段。
 
 ```lean
-project_info "课程笔记" { title := "Notes", authors := ["Alice"], edition := 1 }
-project_info "课程笔记" { title := "Revised notes", edition := 2 }
+project_info { title := "Notes", authors := ["Alice"], edition := 1 }
  script_info «rfl» { display := true, reviewed := true }
-def_info Nat { var_name := "n" }
-phrase_info "forall" { template := [{ lang := "en", content := "${body} for every ${binder}" }] }
+decl_info Nat { var_name := "n" }
 ```
 
-项目 ID 统一使用非空字符串字面量，例如 `"课程笔记"`，按完整文本匹配；命名空间和 `open` 不改变项目 ID。定理通过 `project := "课程笔记"` 选择已配置的项目。
+项目身份由 Lake package 与 `lean_lib` 共同确定；命名空间和 `open` 不改变其归属，定理项目由声明所属模块确定。
 
-`def_info` 没有必填字段：`{}` 保留已有设置，`var_name` 控制该声明类型下匿名变量的前缀。前缀为空时取声明名最后一个分量的首字母。内置配置为 `Nat/Int → n`、`Rat → q`，Mathlib 配置为 `Real → x`。证明变量固定使用 `h`，不读取 `theorem_info`。可用名称始终保留；自动名称按前缀共享计数、从 1 开始，显示为 `\textcolor{gray}{n_{1}}`；未赋值元变量显示为 `\textcolor{gray}{?}`。类型描述、绑定身份和模板消费方式详见[变量系统说明](tools/ps4html/Variable-System.md)。
+`decl_info` 没有必填字段：`{}` 保留已有设置，`var_name` 控制该声明类型下匿名变量的前缀。前缀为空时取声明名最后一个分量的首字母。内置配置为 `Nat/Int → n`、`Rat → q`，Mathlib 配置为 `Real → x`。证明变量固定使用 `h`，不读取 `theorem_info`。可用名称始终保留；自动名称按前缀共享计数、从 1 开始，显示为 `\textcolor{gray}{n_{1}}`；未赋值元变量显示为 `\textcolor{gray}{?}`。类型描述、绑定身份和模板消费方式详见[变量系统说明](tools/ps4html/Variable-System.md)。
 
-省略字段保留已有值；`none` 是 Option 字段的空值；`reset` 屏蔽继承值并恢复字段默认值，无默认的必填字段恢复为未提供。普通列表和 styles 整体替换；template 按语言合并，同语言替换保留位置，新语言追加。`extra` 按键更新，单键 `reset` 删除该键。
+省略字段保留已有值；`none` 是 Option 字段的空值。`reset project_info`、`reset theorem_info <名称>`、`reset script_info <ID>`、`reset decl_info <名称>` 将目标的所有字段恢复默认值，并清除附加键；无默认值的必填字段恢复为未提供。概念模板整体替换；脚本模板按语言合并，同语言替换保留位置，新语言追加。`extra` 按键更新。多语言 `forall` 短语由 PS4HTML 内置。
 
 Lean 按实际导入图合并：同模块后写覆盖前写，后代覆盖祖先，独立分支的不同字段可合并；同字段不同值保留冲突及来源，消费前可由本地更新消解，不能依靠调整导入顺序选值。未被消费的不完整配置可以保存。每份证明和页面组件使用所属模块及全部传递导入模块的最终配置，独立 proof 使用相同规则。`#page end` 关闭页面内容收集，后面的 Info 仍参与最终导出。
 
 ### 模块与查询接口
 
-`import ProofScript` 提供脚本、页面和全部默认展示模块，其中的 Info 配置只在页面构建时登记。按需导入可以使用 `ProofScript.Info`（五种模型及命令）、`ProofScript.Script.Registry`（纯注册）、`ProofScript.Script.Command`（脚本声明）、`ProofScript.Builtin.Script`（基础策略的执行、注册、记录器与展示）、`ProofScript.Mathlib.Info`（Mathlib 展示）、`ProofScript.Page.Command`（页面集成）。`Mathlib.Scripts` 承载 Mathlib 策略的执行实现与注册，展示配置位于 Mathlib.Info。
+`import ProofScript` 提供脚本、页面和全部默认展示模块，其中的 Info 配置只在页面构建时登记。按需导入可以使用 `ProofScript.Info`（五种模型及命令）、`ProofScript.Script.Registry`（纯注册）、`ProofScript.Script.Command`（脚本声明）、`ProofScript.Builtin.Scripts`（基础与 Mathlib 策略的执行、注册、记录器与展示）、`ProofScript.Page.Component.Declaration`（页面定理与引理）、`ProofScript.Page.Component.Core`（组件声明）。
 
-模型使用 `ProofScript.ProjectInfo` 等完整名称；源码位置使用 `ProofScript.SourceLocation`。模型、schema、codec、查询及显式底层录制 API 在两种模式均可用，但查询不能恢复普通模式跳过的配置。声明命名空间与模块路径相互独立：`ProofScript.Info` 仍是导入模块，其声明直接位于 `ProofScript` 下。以下查询假定页面模式中已登记 `"Notes"` 项目；领域查询显式接受 `ProofScript.Query`，不能借导出器自身的 mainModule 推断配置视图：
+模型使用 `ProofScript.ProjectInfo` 等完整名称。模型、schema、codec、查询及显式底层录制 API 在两种模式均可用，但查询不能恢复普通模式跳过的配置。声明命名空间与模块路径相互独立：`ProofScript.Info` 仍是导入模块，其声明直接位于 `ProofScript` 下。以下查询假定页面模式中已登记 `"Notes"` 项目；领域查询显式接受 `ProofScript.Query`，不能借导出器自身的 mainModule 推断配置视图：
 
 ```lean
 open Lean Elab Command ProofScript
@@ -935,13 +932,13 @@ run_cmd do
 
 普通字段直接加到相应领域结构体，`deriving InfoSchema` 自动生成字段句柄、codec 关联、编码与 JSON Schema。特殊值类型实现 `InfoCodec`，它继承 Lean 的 `ToJson`，并通过结构化解码器自动提供 `FromJson`；普通 JSON 消费直接使用 `toJson` / `fromJson?`，Info 校验保留 `Diagnostic` 的字段路径和关联字段。`InfoSchema` 类型类直接保存字段规则；特殊合并/校验通过生成的 `Model.infoFields.field` 类型化句柄和 `withOverrides!` 注册为 `InfoSchema` 实例，让配置消费和 JSON 解码使用同一套最终规则。新增 info 种类还需定义保存种类名称和依赖查询的 `InfoSpec`、目标解析、薄命令和快照依赖消费入口；消费者通过 `InfoSchema` 实例取得字段规则；Python 按该种类的实际展示需求适配冻结值，不再维护第二份输入字段表。
 
-派生器当前支持无参数、无继承、非递归、非依赖字段及独立默认值的普通结构体。自定义 Info 命令应把目标解析、全部字段处理及登记动作放在 `whenPageBuild do` 内；`commitInfo` 等显式底层 API 在两种模式仍可使用。InfoCodec 只解析配置；录制捕获继续使用 Recording API，`script_info` 不修改 recorder 或输出契约。注册声明保留在 Basic / Mathlib.Scripts，ruleId 由定义模块和本地 ID 组成；移动注册声明会改变身份。
+派生器当前支持无参数、无继承、非递归、非依赖字段及独立默认值的普通结构体。自定义 Info 命令应把目标解析、全部字段处理及登记动作放在 `whenPageBuild do` 内；`commitInfo` 等显式底层 API 在两种模式仍可使用。InfoCodec 只解析配置；录制捕获继续使用 Recording API，`script_info` 不修改 recorder 或输出契约。ruleId 由定义模块和本地 ID 组成；移动注册声明会改变身份。
 
 
 
 ## 页面导出
 
-页面模式下，`#page end` 关闭页面内容收集并将草稿持久化到 `.olean`，不写页面 JSON；之后的页面组件在两种模式下都会在执行前报错。最终导出直接根据草稿与所属模块的完整 Info 生成页面 JSON，包括 `#page end` 后的配置，可重复导出覆盖页面而不读取旧页面文件。完整站点使用 `lake build MyLibrary:ps4html` 构建。Info 协议为 `9.0.0`，artifact manifest 版本为 `9`，snapshot payload 版本为 `7`，录制协议为 `0.3.0`，调用契约版本为 `2`，不再包含输出字段声明；`info/index.json` 是包含文件摘要、schema、快照和调用契约关联的完成清单。配置和页面草稿可从页面构建的 `.olean` 重建；快照查询仅包含所属模块 `module`，拒绝旧的历史边界字段。普通验证 `.olean` 中跳过的配置必须通过页面重编译恢复；proof/resources 在编译时生成，页面 JSON 在导出时生成。旧 manifest 也须通过 Lean 重新构建。只读缓存使用 `ps4html make --cache`；不完整或版本不匹配的缓存会被拒绝，需要重新构建。
+页面模式下，`#page end` 关闭页面内容收集并将草稿持久化到 `.olean`，不写页面 JSON；之后的 `#page theorem` 和 `#page lemma` 由原生 theorem 直接检查原始证明，不构造 helper 或录制；其余页面组件在两种模式下都会在执行前报错。最终导出直接根据草稿与所属模块的完整 Info 生成页面 JSON，包括 `#page end` 后的配置，可重复导出覆盖页面而不读取旧页面文件。完整站点使用 `lake build MyLibrary:ps4html` 构建。Info 协议为 `12.0.0`，artifact manifest 版本为 `10`，snapshot payload 版本为 `9`，录制协议为 `0.3.0`，调用契约版本为 `2`，不再包含输出字段声明；`info/index.json` 是包含文件摘要、schema、快照和调用契约关联的完成清单。配置和页面草稿可从页面构建的 `.olean` 重建；快照查询仅包含所属模块 `module`，拒绝旧的历史边界字段。普通验证 `.olean` 中跳过的配置必须通过页面重编译恢复；proof/resources 在编译时生成，页面 JSON 在导出时生成。旧 manifest 也须通过 Lean 重新构建。只读缓存使用 `ps4html make --cache`；不完整或版本不匹配的缓存会被拒绝，需要重新构建。
 
 ## 环境要求
 
@@ -966,9 +963,9 @@ dvisvgm --version
 - 文献列表展示已注册 `theorem_info` 元数据的声明。自动引用来自完成后的证明；参数和值的录制不产生文献引用。
 - ProofText 引用在 elaboration 时只检查语法，不验证引用目标一定存在；跨页面索引应由下游消费者建立。
 - ProofText 是小型专用语言，不提供完整 Markdown/Typst 能力。
-- 每个模块保留一份页面草稿；`#page end` 之后的组件在两种模式下都会在执行前报错。最终页面可重复导出。
+- 每个模块保留一份页面草稿；`#page end` 之后的定理和引理按原生 theorem 检查，其余组件在两种模式下都会在执行前报错。最终页面可重复导出。
 - LaTeX 组件要求本机 `latex`、`dvisvgm` 和相应 TeX 宏包，且编译失败会中断 Lean elaboration。
-- 页面 source 路径当前通常为绝对路径；源码位置使用 UTF-8 字节偏移。
+- 页面 source 路径当前通常为绝对路径。
 - Lean 表达式 JSON 与 Lean 内部 AST 紧密相关，仍属于可扩展接口，跨 Lean 版本使用时应谨慎。
 - 当前 universe level 的 `max`/`imax` 序列化实现存在重复键问题，不应依赖其左右操作数能够被完整区分。
 

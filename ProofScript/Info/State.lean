@@ -1,5 +1,6 @@
 import ProofScript.Info.Patch
-import ProofScript.Foundation.ModuleGraph
+import ProofScript.Core.ModuleGraph
+import ProofScript.Core.ModuleExtensionEntries
 
 namespace ProofScript
 
@@ -46,7 +47,6 @@ structure Query where
 structure ContextBinding where
   key : String
   value : Json
-  source : SourceLocation
   deriving Inhabited, ToJson, FromJson
 
 /-- One atomic metadata update. -/
@@ -57,8 +57,8 @@ structure InfoEvent where
   owner : Name
   sequence : Nat
   assignments : Patch := #[]
+  reset : Bool := false
   bindings : Array ContextBinding := #[]
-  source : SourceLocation
   deriving Inhabited, ToJson, FromJson
 
 /-- Imported payloads stay in the extension's module tables. The local count
@@ -71,14 +71,11 @@ initialize infoEventExt : SimplePersistentEnvExtension InfoEvent Nat ←
   }
 
 def moduleEvents (env : Environment) (moduleName : Name) : Array InfoEvent :=
-  if moduleName == env.mainModule then (infoEventExt.getEntries env).reverse.toArray
-  else match env.getModuleIdx? moduleName with
-    | some index => infoEventExt.getModuleEntries env index
-    | none => #[]
+  moduleExtensionEntries infoEventExt env moduleName
 
 /-- Read only the requested module's closure, rather than the exporter's full environment. -/
 def queryEvents (env : Environment) (query : Query) : Except Diagnostic (Array InfoEvent) := do
-  let order ← (ModuleGraph.ofEnvironment env).order query.moduleName
+  let order ← (ModuleGraph.ofEnvironment env).modulesInDependencyOrder query.moduleName
     |>.mapError fun message => { message }
   return order.flatMap (moduleEvents env)
 
@@ -88,45 +85,41 @@ def validatePatch (schema : InfoSchema Record) (patch : Patch) : Except Diagnost
   let mut result := #[]
   for assignment in patch do
     if assigned.contains assignment.key then
-      throw { message := "duplicate assignment in event", source := some assignment.source }
+      throw { message := "duplicate assignment in event" }
     assigned := assigned.push assignment.key
-    let operation ← match assignment.key with
+    let value ← match assignment.key with
       | .builtin name =>
         let some field := schema.fields.find? (fun field => field.name == name && !field.handle.isExtra)
-          | throw { message := s!"unknown builtin field `{name}`", source := some assignment.source }
-        match assignment.operation with
-        | .reset => pure .reset
-        | .set value =>
-          let _ : ToJson field.Value := field.codec.toToJson
-          let value ← (field.decode value).mapError fun error =>
-            { (error.atField name) with source := some assignment.source }
-          pure (.set (toJson value))
+          | throw { message := s!"unknown builtin field `{name}`" }
+        let _ : ToJson field.Value := field.codec.toToJson
+        let value ← (field.decode assignment.value).mapError (Diagnostic.atField name)
+        pure (toJson value)
       | .extra _ =>
         unless schema.extraField?.isSome do
-          throw { message := "this schema does not support extension fields", source := some assignment.source }
-        pure assignment.operation
-    result := result.push { assignment with operation }
+          throw { message := "this schema does not support extension fields" }
+        pure assignment.value
+    result := result.push { assignment with value }
   return result
 
 /-- Construct the entire new environment before the elaborator installs it once. -/
 def commitInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (target : Name ⊕ String)
-    (patch : Patch) (source : SourceLocation)
-    (bindings : Array ContextBinding := #[]) :
+    (patch : Patch)
+    (bindings : Array ContextBinding := #[]) (reset : Bool := false) :
     Except Diagnostic Environment := do
   let schema : InfoSchema Record := inferInstance
   schema.validateDefinition
   let patch ← validatePatch schema patch
   let identity := { kind := spec.kind, target : InfoTarget }
-  identity.validate |>.mapError fun message => { message, source := some source }
+  identity.validate |>.mapError fun message => { message }
   let mut keys : Array String := #[]
   for binding in bindings do
     if binding.key.isEmpty || keys.contains binding.key then
-      throw { message := s!"empty or duplicate context binding `{binding.key}`", source := some binding.source }
+      throw { message := s!"empty or duplicate context binding `{binding.key}`" }
     keys := keys.push binding.key
   let event : InfoEvent := {
     schemaId := schema.id, schemaVersion := schema.version, identity
     owner := env.mainModule, sequence := infoEventExt.getState env
-    assignments := patch, bindings, source }
+    assignments := patch, reset, bindings }
   return infoEventExt.addEntry env event
 
 end ProofScript

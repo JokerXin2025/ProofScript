@@ -74,8 +74,7 @@ Finalized component 示例：
           "implementation": {"$ref": "e4"},
           "expressions": {
             "e0": {"kind": "const", "name": "Demo.compute", "levels": []},
-            "e1": {"kind": "mdata", "data": {"ProofScript.sourceFile": "Demo.lean",
-              "ProofScript.sourceStart": 120, "ProofScript.sourceStop": 132},
+            "e1": {"kind": "mdata", "data": {"ProofScript.exprType": "Bool → Nat"},
               "expr": {"$ref": "e0"}},
             "e2": {"kind": "const", "name": "Bool", "levels": []},
             "e3": {"kind": "lit", "lit": {"kind": "literal.nat", "value": 0}},

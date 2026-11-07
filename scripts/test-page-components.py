@@ -15,10 +15,12 @@ import tempfile
 
 
 ROOT = Path(__file__).resolve().parents[1]
-PRELUDE = """import ProofScript.Page.Command
-import ProofScript.Page.Component.Figure
-import ProofScript.Page.Component.Latex
-import ProofScript.Page.Component.ProofText
+PRELUDE = """import ProofScript.Page.Component.Declaration
+import ProofScript.Page.Component.References
+import ProofScript.Builtin.Scripts.By
+import ProofScript.Extensions.Figure
+import ProofScript.Extensions.LaTeX
+import ProofScript.Extensions.ProofText
 import ProofScript.Page.Component.Computation
 open Lean Elab Command ProofScript
 """
@@ -48,7 +50,7 @@ def main():
             path = work / f"{name}.lean"
             path.write_text(source.replace("__WORK__", json.dumps(str(work))))
             command = ["lake", "env", "lean", f"--root={work}",
-                       f"-DproofScript.pageBuild={str(page_build).lower()}", str(path)]
+                       f"-DpageBuild={str(page_build).lower()}", str(path)]
             if compile:
                 command.extend(["-o", str(path.with_suffix(".olean"))])
             result = subprocess.run(command, cwd=ROOT, env=env, text=True,
@@ -65,10 +67,6 @@ def main():
 
         for mode in (False, True):
             output = lean("Gating", PRELUDE + r'''
-run_cmd do
-  unless (moduleBuildMode? (← getEnv) (← getMainModule)).isNone do
-    throwError "importing a component definition locked this module's build mode"
-
 namespace Widgets
 private def payload (source : String) : Json := toJson source
 /-- A component with editor hooks and compound syntax parameters. -/
@@ -96,8 +94,6 @@ macro "make_widget" : command =>
 make_widget
 
 run_cmd do
-  unless (moduleBuildMode? (← getEnv) (← getMainModule)).isNone do
-    throwError "defining components locked this module's build mode"
   let call ← ofExcept <| Parser.runParserCategory (← getEnv) `command
     "#page widget \"hello\" []"
   let doc ← liftIO <| findDocString? (← getEnv) call.getKind
@@ -113,7 +109,7 @@ def text : Nat := widget
 #page ending
 
 run_cmd do
-  let pageBuild ← pageBuildEnabled
+  let pageBuild ← pageBuild?
   let state := getPageState (← getEnv)
   unless state.components.size == (if pageBuild then 2 else 0) do
     throwError "wrong component count"
@@ -124,15 +120,14 @@ run_cmd do
         (component.value.getObjValAs? (Option String) "extra").toOption == some (some "optional") &&
         (component.value.getObjValAs? (Array String) "names").toOption == some #["alpha", "beta"] do
       throwError "syntax bindings or component JSON changed"
-    let source := String.Pos.Raw.extract (← getFileMap).source
-      ⟨component.source.start⟩ ⟨component.source.stop⟩
-    unless source == "\"hello\"" do throwError "component invocation source range was lost"
+    if let .ok _ := (toJson component).getObjVal? "source" then
+      throwError "component JSON contains a source location"
 #page end
 def afterPage : Nat := text
-project_info "after-page" { title := "Info after closing" }
+project_info { title := "Info after closing" }
 run_cmd do
   let draft := modulePageDraft? (← getEnv) (← getMainModule)
-  unless draft.isSome == (← pageBuildEnabled) do
+  unless draft.isSome == (← pageBuild?) do
     throwError "verification persisted a draft, or page build did not persist it"
 ''', mode)
             for token in ("EDITOR_BEFORE", "EDITOR_AFTER", "AFTER_INNER_RETURN"):
@@ -148,7 +143,7 @@ run_cmd do
 run_cmd stageTheoremRef { name := ``True.intro, isDependency := false }
 #page references
 run_cmd do
-  let expected := if ← pageBuildEnabled then 4 else 0
+  let expected := if ← pageBuild? then 4 else 0
   let state := getPageState (← getEnv)
   unless state.components.size == expected do throwError "wrong builtin component count"
   if expected > 0 then
@@ -199,8 +194,6 @@ page_component "late" =>
                 "Latex": '#page latex (label := "!") "invalid"',
                 "References": '#page references',
                 "Computation": '#page computation { function := missing, payload := "invalid" }',
-                "Theorem": '#page theorem lateTheorem : True := by trace "PROOF_RAN"; trivial',
-                "Lemma": '#page lemma lateLemma : True := by trace "PROOF_RAN"; trivial',
             }
             if tex_log.exists():
                 tex_log.unlink()
@@ -211,11 +204,59 @@ run_cmd stageTheoremRef { name := ``True.intro, isDependency := false }
 ''' + invocation + r'''
 run_cmd do
   unless (← getTheoremRefs).length == 1 do throwError "closed component consumed references"
-  if (← getEnv).contains `lateTheorem || (← getEnv).contains `lateLemma then
-    throwError "closed declaration was elaborated"
 ''', mode, error="page component appears after #page end", absent=("PROOF_RAN",))
                 assert output.count("error:") == 1, output
             assert not tex_log.exists()
+
+            output = lean("ClosedDeclarations", PRELUDE + r'''
+run_cmd stageTheoremRef { name := ``True.intro, isDependency := false }
+#page end
+namespace AfterPage
+/-- Closed theorem documentation. -/
+#page theorem nativeTheorem (P : Prop) (h : P) : P := by
+  trace "CLOSED_PROOF_RAN"
+  exact h
+#page lemma nativeLemma : True := by
+  trace "CLOSED_PROOF_RAN"
+  trivial
+#page theorem scriptTheorem : True := script
+  by trace "CLOSED_PROOF_RAN"
+  by trivial
+#page lemma scriptLemma : True := script
+  by trace "CLOSED_PROOF_RAN"
+  by trivial
+#page theorem termTheorem : True := True.intro
+#page theorem Qualified.late (P : Prop) (h : P) : P := by
+  trace "CLOSED_PROOF_RAN"
+  exact h
+end AfterPage
+run_cmd do
+  let env ← getEnv
+  unless (← getTheoremRefs).length == 1 do throwError "native declaration consumed references"
+  unless (getPageState env).closed && (getPageState env).components.isEmpty do
+    throwError "native declaration changed the closed page"
+  unless (moduleArtifacts env (← getMainModule)).isEmpty do
+    throwError "native declaration recorded an artifact"
+  if let some draft := modulePageDraft? env (← getMainModule) then
+    unless draft.components.isEmpty do throwError "native declaration changed the page draft"
+  for name in [`AfterPage.nativeTheorem, `AfterPage.nativeLemma,
+      `AfterPage.scriptTheorem, `AfterPage.scriptLemma, `AfterPage.termTheorem,
+      `AfterPage.Qualified.late] do
+    let some (.thmInfo info) := env.find? name
+      | throwError "missing native theorem after page end"
+    if (← collectAxioms name).contains ``sorryAx then throwError "proof was replaced by sorry"
+    if info.value.getUsedConstants.any (fun name =>
+        name.eraseMacroScopes.toString.contains "scriptcheck_") then
+      throwError "native theorem after page end still uses a helper"
+  let doc ← liftIO <| findDocString? env `AfterPage.nativeTheorem
+  unless doc.any (·.contains "Closed theorem documentation") do throwError "theorem doc lost"
+''', mode)
+            assert output.count("CLOSED_PROOF_RAN") == 5, output
+
+            lean("ClosedInvalidDeclaration", PRELUDE + r'''
+#page end
+#page theorem invalid : True := by exact (0 : Nat)
+''', mode, error="Type mismatch", absent=("proof unfinished", "after #page end"))
 
             lean("DuplicateEnd", PRELUDE + "#page end\n#page end\n", mode,
                  error="#page end may only appear once")
@@ -226,17 +267,17 @@ def outside : CommandElabM Unit := do
   when_page_build
     pure ()
 ''', mode, error="PageComponentScope")
-            lean("ModeLock", PRELUDE + f'''
+            lean("ModeSwitch", PRELUDE + f'''
 page_component "lock" => pure ()
 #page lock
-set_option proofScript.pageBuild {str(not mode).lower()} in
+set_option pageBuild {str(not mode).lower()} in
 #page lock
-''', mode, error="cannot change `proofScript.pageBuild`")
-            lean("SpecialDeclarations", PRELUDE + r'''
-project_info "special-declarations" { title := "Special declarations" }
+''', mode)
+            output = lean("SpecialDeclarations", PRELUDE + r'''
+project_info { title := "Special declarations" }
 /-- Public theorem documentation. -/
-#page theorem normalTheorem : True := by exact True.intro
-#page lemma normalLemma : True := by exact normalTheorem
+#page theorem normalTheorem : True := by trace "OPEN_PROOF_RAN"; exact True.intro
+#page lemma normalLemma : True := by trace "OPEN_PROOF_RAN"; exact normalTheorem
 run_cmd do
   for name in [`normalTheorem, `normalLemma] do
     unless ((← getEnv).find? name).any (fun info => match info with
@@ -246,13 +287,27 @@ run_cmd do
   unless doc.any (·.contains "Public theorem documentation") do throwError "theorem doc lost"
 #page end
 ''', mode)
+            assert output.count("OPEN_PROOF_RAN") == 2, output
 
         for mode in (False, True):
-            lean("RootImport", "import ProofScript\nopen Lean ProofScript\n" + r'''
+            lean("RootImport", "import ProofScript\nopen Lean Elab Command ProofScript\n" + r'''
 page_component "myWidget" source:str => do
   when_page_build
     addPageComponent source.raw "myWidget" (toJson source.getString)
 #page myWidget "Hello"
+namespace RootImport
+#page theorem nativeTheorem : True := by trivial
+#page theorem scriptTheorem : True := script trivial
+#page lemma nativeLemma : True := by trivial
+#page lemma scriptLemma : True := script trivial
+run_cmd do
+  for name in [`nativeTheorem, `scriptTheorem, `nativeLemma, `scriptLemma] do
+    let declaration := (← getCurrNamespace) ++ name
+    unless ((← getEnv).find? declaration).any (fun info => match info with
+      | .thmInfo _ => true | _ => false) do throwError "root import lost a page declaration"
+    if (← collectAxioms declaration).contains ``sorryAx then
+      throwError "root import replaced a proof with sorry"
+end RootImport
 #page end
 ''', mode)
 
@@ -272,7 +327,7 @@ run_cmd do
 #page imported "hello"
 run_cmd do
   let state := getPageState (← getEnv)
-  if ← pageBuildEnabled then
+  if ← pageBuild? then
     unless state.components.size == 1 && state.components[0]!.value == toJson "imported:hello" do
       throwError "imported component lost its private helper or scope"
   else

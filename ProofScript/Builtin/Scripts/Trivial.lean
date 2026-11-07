@@ -7,10 +7,10 @@ script_macro «trivial»
 
 script_info «trivial» {
   template := [{
-    lang := "zh", tag := "显然",
+    lang := zh, tag := "显然",
     content := "显然该命题成立"
   }, {
-    lang := "en", tag := "trivial",
+    lang := en, tag := "trivial",
     content := ""
   }]
 }

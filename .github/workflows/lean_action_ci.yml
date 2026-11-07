@@ -18,8 +18,12 @@ jobs:
         with:
           python-version: '3.11'
       - name: Page component regression
-        run: python3 scripts/test-page-components.py
+        run: |
+          python3 scripts/test-page-components.py
+          python3 scripts/test-theorem-ide.py
       - name: Install renderer dependencies
         run: python3 -m pip install ./tools/ps4html
       - name: Reference collection regression
         run: python3 scripts/test-references.py
+      - name: Under Development
+        run: exit 1

@@ -1,11 +1,9 @@
-import ProofScript.Info.Commands
-import ProofScript.Builtin.Script
-import ProofScript.Builtin.Config
-import ProofScript.Mathlib.Info
-import ProofScript.Page.Command
+import ProofScript.Page.Component.Declaration
+import ProofScript.Page.Component.References
+import ProofScript.Page.Component.Computation
 import ProofScript.Extensions.ProofText
 import ProofScript.Extensions.Title
 import ProofScript.Extensions.LaTeX
 import ProofScript.Extensions.Figure
-import ProofScript.Page.Component.References
-import ProofScript.Page.Component.Computation
+import ProofScript.Builtin.Scripts
+import ProofScript.Builtin.Config

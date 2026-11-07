@@ -1,6 +1,7 @@
 import html
 import json
 import os
+from Lean2TeX.interactions import ExpressionInteractions
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from urllib.parse import quote as quote_url_path
@@ -50,7 +51,6 @@ class LabelTarget:
     output_path: Path
     anchor: str
     source: Path
-    line: int
 
 
 def load_page(path: Path, project_root: Path) -> Page:
@@ -79,7 +79,7 @@ def load_page(path: Path, project_root: Path) -> Page:
 
 def discover_pages(project_root: Path, export_root: Path | None = None, *, bundle=None) -> list[Page]:
     output_root = (export_root or project_root / ".ProofScript") / "pages"
-    if not output_root.is_dir():
+    if not output_root.is_dir() and bundle is None:
         raise PS4HTMLError(f"ProofScript output directory not found: {output_root}")
     bundle = bundle or InfoBundle(export_root or project_root / ".ProofScript")
     pages = []
@@ -93,8 +93,6 @@ def discover_pages(project_root: Path, export_root: Path | None = None, *, bundl
                                   for artifact in bundle.artifacts.values()
                                   if artifact["module"] == page.module and artifact["declaration"] is not None})
     pages.sort(key = lambda page: page.module)
-    if not pages:
-        raise PS4HTMLError(f"No ProofScript page JSON found in {output_root}")
     return pages
 
 
@@ -128,29 +126,7 @@ def _add_label(labels, kind, label, page, anchor):
     key = (kind, label)
     if key in labels:
         raise PS4HTMLError(f"Duplicate {kind} label: {label}")
-    location = _component_location(page, kind, label)
-    labels[key] = LabelTarget(page.output_path, anchor, page.source, location)
-
-
-def _component_location(page, kind, label):
-    for component in page.components:
-        data = component.get("data", {}) if isinstance(component, dict) else {}
-        if kind == "theorem" and ("theorem" in data or "lemma" in data):
-            tag = "theorem" if "theorem" in data else "lemma"
-            value = data[tag].get("value", {})
-            if _declaration_name(page.module, value.get("proof"), page.declarations) != label:
-                continue
-        elif kind == "heading" and "title" in data:
-            if data["title"].get("value", {}).get("label") != label:
-                continue
-        else:
-            continue
-        start = component.get("source", {}).get("start", 0)
-        try:
-            return page.source.read_bytes()[:start].count(b"\n") + 1
-        except OSError:
-            return 0
-    return 0
+    labels[key] = LabelTarget(page.output_path, anchor, page.source)
 
 
 class PageRenderer:
@@ -170,6 +146,8 @@ class PageRenderer:
         self.rendered_outputs = frozenset(page.output_path for page in self.pages)
 
     def render(self, page: Page) -> str:
+        self._expression_interactions = ExpressionInteractions()
+        self._expression_interactions.enable_render_roots = True
         current_output = page.output_path
         contents = self.render_components(page, current_output)
         contents.extend(self._descendant_index(page.module, current_output))
@@ -177,7 +155,9 @@ class PageRenderer:
         pages = self.pages or [page]
         theorem_navigation = self._theorem_navigation(page, current_output)
         navigation = render_module_navigation(pages, current_output, page.module, index_href, self.default_language, theorem_navigation, self.project_info)
-        return render_page(page.module, "\n\n".join(contents), index_href, navigation, self.default_language)
+        return render_page(page.module, "\n\n".join(contents), index_href, navigation,
+                           self.default_language, self._expression_interactions,
+                           project_id=self.bundle.project_id)
 
     def _theorem_navigation(self, page, current_output):
         templates = []
@@ -227,7 +207,7 @@ class PageRenderer:
             return ""
         return (
             '<section class="theorem-dependency-navigation" hidden>'
-            '<h3><span data-language-panel="zh">定理依赖</span><span data-language-panel="en" hidden>Theorem dependencies</span></h3>'
+            '<h3><span data-language-panel="zh">依赖</span><span data-language-panel="en" hidden>Dependencies</span></h3>'
             '<div class="theorem-dependency-panel" data-theorem-navigation-content></div>'
             + "".join(templates) + '</section>'
         )
@@ -243,7 +223,8 @@ class PageRenderer:
             self.pages, current_output, module, index_href, self.default_language,
             project_info=self.project_info
         )
-        return render_page(module, "\n\n".join(contents), index_href, navigation, self.default_language)
+        return render_page(module, "\n\n".join(contents), index_href, navigation, self.default_language,
+                           project_id=self.bundle.project_id)
 
     def _descendant_index(self, module, current_output):
         descendants = [
@@ -279,7 +260,7 @@ class PageRenderer:
         if tag == "title":
             return TitleRenderer(self.labels, self.build_root, current_output).render(value)
         if tag in {"theorem", "lemma"}:
-            return self._theorem(value, component.get("source", {}), page, tag)
+            return self._theorem(value, page)
         if tag == "latex":
             rendered, diagnostics = render_latex(value, self.project_root, self.resources)
             self.diagnostics.extend(diagnostics)
@@ -304,7 +285,7 @@ class PageRenderer:
             return "\n".join(panels)
         return self._placeholder(tag, value)
 
-    def _theorem(self, value, location, page, declaration_kind="theorem"):
+    def _theorem(self, value, page):
         state = None
         expression_resolver = None
         proof_data = []
@@ -346,9 +327,11 @@ class PageRenderer:
                 for language in ("zh", "en"):
                     engine = ProofEngine([], language=language, expression_resolver=expression_resolver,
                                          lean2tex_config=config)
+                    engine.renderer.interactions = self._expression_interactions
+                    engine.renderer.theorem_id = identity
                     statement = render_statement(proof_document["statement"], engine)
                     panels.append(_render_code_only_declaration(
-                        declaration_kind, name, _theorem_anchor(declaration) + ("-en" if language == "en" else ""),
+                        name, _theorem_anchor(declaration) + ("-en" if language == "en" else ""),
                         highlighted_code, code.count("\n") + (1 if code else 0), identity,
                         statement, language, self.default_language))
                     self.diagnostics.extend({"theorem": name, "proof": record.path, "language": language,
@@ -359,9 +342,6 @@ class PageRenderer:
         else:
             state = ERROR
 
-        source_file = Path(location.get("file", page.source)) if isinstance(location, dict) else page.source
-        if not source_file.is_absolute():
-            source_file = self.project_root / source_file
         anchor = _theorem_anchor(declaration)
         highlighted_code, _applied = highlight_code(code, "lean4", theme = "light")
         lines = code.count("\n") + (1 if code else 0)
@@ -390,9 +370,10 @@ class PageRenderer:
                 lean2tex_config=lean2tex_config,
                 step_rules=step_rules,
             )
+            engine.renderer.interactions = self._expression_interactions
+            engine.renderer.theorem_id = identity
             rendered.append(engine.make(
                 name,
-                source_file,
                 lines,
                 highlighted_code,
                 anchor if language == "zh" else f"{anchor}-en",
@@ -419,13 +400,13 @@ class PageRenderer:
         return f'<section class="unsupported-component" data-component="{html.escape(tag, quote = True)}" data-component-value="{preserved}"><strong>{html.escape(str(title))}</strong><span>Component rendering is not supported yet.</span></section>'
 
 
-def _render_code_only_declaration(kind, name, anchor, code, lines, theorem_id, statement, language="zh", default_language="zh"):
+def _render_code_only_declaration(name, anchor, code, lines, theorem_id, statement, language="zh", default_language="zh"):
     hidden = "" if language == default_language else " hidden"
     return f'''<section class="theorem-proof theorem-code-only" id="{html.escape(anchor, quote=True)}" data-theorem-id="{html.escape(theorem_id, quote=True)}" data-language-panel="{language}"{hidden}>
   <h2><span>{html.escape(name)}</span></h2>
   {statement}
   <div class="proof-source-card">
-    <div class="code-header"><span>{html.escape(kind.title())}</span><span>{lines} 行</span></div>
+    <div class="code-header"><span>Lean</span><span>{lines} 行</span></div>
     <pre class="page-code code-highlighted"><code>{code}</code></pre>
   </div>
 </section>'''

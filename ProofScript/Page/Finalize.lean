@@ -25,19 +25,17 @@ private def resolveComponent (snapshot : Snapshot) (component : ProofScript.Comp
     if component.kind == "references" then
       let mut refs := #[]
       for ref in component.references do
-        let (record, info) ← theoremRecord snapshot ref.name
+        let (record, _) ← theoremRecord snapshot ref.name
         -- Preserve the existing display policy for declarations without theorem metadata.
         unless record.configured do continue
-        let project ← match info.project with
-          | none => pure (json% null)
-          | some id =>
-            let some project := snapshot.find? projectSpec.kind id
-              | throw { message := "reference project is absent from its snapshot", target := some id }
-            pure project.value
+        let project : Json := match record.projectId with
+          | none => Json.null
+          | some id => ((snapshot.find? projectSpec.kind (.inr id)).map fun entry => entry.value).getD Json.null
         refs := refs.push <| json% {
           name: $(ref.name),
           isDependency: $(ref.isDependency),
           info: $(record.value),
+          projectId: $(record.projectId),
           project: $project
         }
       value := .arr refs
@@ -51,7 +49,9 @@ structure FinalizedPage where
 
 /-- Rebuild presentation from the persisted page draft after module compilation.
 The proof's own snapshot is reused exactly; recording data is never replayed here. -/
-def finalizePage (env : Environment) (draft : ProofScript.Page) (proofs : Array FrozenArtifact) :
+def finalizePage (env : Environment) (registry : ProjectRegistry) (projectInfo : ProjectInfo)
+    (draft : ProofScript.Page)
+    (proofs : Array FrozenArtifact) :
     Except Diagnostic FinalizedPage := do
   let query : Query := { moduleName := draft.module }
   let mut components := #[]
@@ -68,11 +68,11 @@ def finalizePage (env : Environment) (draft : ProofScript.Page) (proofs : Array 
       | none => do
         let dependencies := component.references.map fun ref =>
           { kind := theoremSpec.kind, target := .inl ref.name : RenderDependency }
-        freezeSnapshot env query dependencies #[]
+        freezeSnapshot env registry projectInfo query dependencies #[]
     components := components.push (← resolveComponent snapshot component)
     unless snapshots.any (·.id == snapshot.id) do snapshots := snapshots.push snapshot
   let page := { draft with components }
-  let view ← freezeArtifact env {
+  let view ← freezeArtifact env registry projectInfo {
     key := { owner := draft.module, kind := .page, name := draft.module }
     path := (pageOutputPath draft.module).toString
     contentDigest := (toJson page).sha256 }

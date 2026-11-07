@@ -55,8 +55,19 @@
 
 .proof-step-content {
     flex: 1;
+    min-width: 0;
     align-items: center;
     line-height: 1.75;
+}
+
+.proof-calc-viewport {
+    flex: 1 1 0;
+}
+.proof-calc-content {
+    display: flex;
+    align-items: center;
+    width: 100%;
+    min-width: max-content;
 }
 
 .proof-calc-relation {
@@ -67,7 +78,6 @@
 .proof-calc-lhs, .proof-calc-rhs {
     display: inline-block;
     white-space: nowrap;
-    transform-origin: left;
     min-width: 0;
 }
 .proof-calc-lhs {

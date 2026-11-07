@@ -38,14 +38,14 @@ script_recorder snapshotOnlyRule => do
   execute
   record_goal "$goal_after"
 
-project_info "RecordingAPI" { title := "Recording and explicit citations" }
+project_info { title := "Recording and explicit citations" }
 theorem_info snapshotEvidence { name := "Recorded evidence" }
 
 script_info snapshotOnlyRule {
-  template := [{ lang := "en", tag := "Recorded parameter", content := "${evidence}" }]
+  template := [{ lang := en, tag := "Recorded parameter", content := "${evidence}" }]
 }
 script_info snapshotRule {
-  template := [{ lang := "en", tag := "Evidence", content := "${evidence}" }]
+  template := [{ lang := en, tag := "Evidence", content := "${evidence}" }]
 }
 
 #page theorem recordedParameterOnly (h : True) : True := script

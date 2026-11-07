@@ -43,7 +43,7 @@ def render_references(references, labels, build_root, current_output, language="
         if not isinstance(reference, dict):
             continue
         info = reference.get("info", {})
-        project_id = info.get("project") if isinstance(info, dict) else None
+        project_id = reference.get("projectId")
         project = reference.get("project", {})
         key = project_id
         index = group_indexes.get(key)
@@ -62,7 +62,15 @@ def render_references(references, labels, build_root, current_output, language="
 
 def _render_project(index, group, labels, build_root, current_output, language):
     project = group["project"] if isinstance(group["project"], dict) else {}
-    title = project.get("title") or (f"Project {index}" if language == "en" else f"项目 {index}")
+    project_id = group["theorems"][0][1].get("projectId")
+    if isinstance(project_id, str) and project_id:
+        try:
+            fallback = json.loads(project_id)["library"]
+        except (ValueError, KeyError, TypeError):
+            fallback = project_id
+    else:
+        fallback = f"Project {index}" if language == "en" else f"项目 {index}"
+    title = project.get("title") or fallback
     authors = _list_value(project.get("authors"))
     subtitle = " · ".join(
         value for value in (authors, project.get("year", "")) if value
@@ -114,13 +122,13 @@ def _render_theorem(position, reference, labels, build_root, current_output, lan
     target = labels.get(("theorem", lean_name))
     location = lean_name
     if target is not None:
-        source_name = target.source.name
-        location = f"{source_name}:{target.line}" if target.line else source_name
+        location = target.source.name
         target_file = build_root / target.output_path
         current_dir = (build_root / current_output).parent
         href = f'{quote_url_path(os.path.relpath(target_file, current_dir))}#{quote_url_path(target.anchor)}'
         return TEMPLATE_REFERENCE_THEOREM.substitute(
             href = html.escape(href, quote = True),
+            project_id = html.escape(str(reference.get("projectId") or ""), quote=True),
             name = html.escape(str(display_name)),
             location = html.escape(location)
         )

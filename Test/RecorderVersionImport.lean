@@ -3,7 +3,7 @@ import Test.RecorderVersionExtension
 
 open Lean ProofScript
 
-set_option proofScript.pageBuild true
+set_option pageBuild true
 
 script_recorder importedVersionRule => do
   execute

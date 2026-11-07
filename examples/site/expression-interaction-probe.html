@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PS4HTML 表达式标记排版验证</title>
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+  <style>
+    body { max-width: 1060px; margin: 30px auto; padding: 0 20px; color: #334155; font: 14px/1.55 system-ui, sans-serif; }
+    h1 { font-size: 21px; }
+    p, .note { color: #64748b; }
+    table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+    th, td { border-bottom: 1px solid #cbd5e1; padding: 12px; text-align: left; vertical-align: middle; }
+    th:first-child { width: 20%; }
+    th:last-child { width: 20%; }
+    .formula { min-height: 34px; overflow: visible; white-space: nowrap; }
+    .formula .katex { font-size: 1.3em; }
+    .status { font-family: ui-monospace, monospace; font-size: 12px; }
+    .status[data-result="different"], .status[data-result="error"] { color: #b45309; }
+    .status[data-result="equal"] { color: #047857; }
+    .probe-text { margin-top: 20px; border: 1px solid #cbd5e1; border-radius: 7px; padding: 12px; }
+    .probe-text .katex { font-size: 1.3em; }
+    .probe-text p { color: #334155; }
+    code { overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h1>表达式交互标记：KaTeX 排版探针</h1>
+  <p>阶段 1 验证样例，独立于正式生成页面。需要联网加载与 PS4HTML 相同版本的 KaTeX（0.16.9）。左右分别是基线与拟议的整体 <code>\htmlData</code> 标记。状态只比较公式盒子的宽高；还需目视检查内部空白与符号分类。</p>
+  <p class="note">展示数据仅用于验证标记，不作为已实现的语义树。即使此处有差异，也不要直接沿用造成排版变化的包装方式。</p>
+  <table>
+    <thead><tr><th>场景</th><th>原公式</th><th>交互标记</th><th>尺寸 / 标记</th></tr></thead>
+    <tbody id="formula-cases"></tbody>
+  </table>
+  <div class="probe-text">
+    <strong>文字与公式混排、重复引用</strong>
+    <div id="mixed-baseline"></div>
+    <div id="mixed-marked"></div>
+    <div id="mixed-result" class="status"></div>
+  </div>
+  <script>
+    // The wrappers use only short fragment IDs. Identity, parentage and the
+    // invisible unwrap layer live in a separate semantic table, never in TeX.
+    const occurrenceProbe = {
+      occurrences: {
+        outer: { parentId: null, fragmentIds: ["same-range"], kind: "constant" },
+        wrapper: { parentId: "outer", fragmentIds: ["same-range"], kind: "wrapper" },
+        inner: { parentId: "wrapper", fragmentIds: ["same-range"], kind: "constant" },
+        argument: { parentId: "inner", fragmentIds: ["arg-a"], kind: "free-variable" }
+      }
+    };
+    const cases = [
+      { label: "整体 a+b 与内层变量", baseline: String.raw`a+b`, marked: String.raw`\htmlData{ps-expr-fragment=same-range}{\htmlData{ps-expr-fragment=arg-a}{a}+b}`, fragments: ["same-range", "arg-a"] },
+      { label: "相邻关系符间距", baseline: String.raw`x=a+b\leq c`, marked: String.raw`x=\htmlData{ps-expr-fragment=relation}{a+b}\leq c`, fragments: ["relation"] },
+      { label: "上下标", baseline: String.raw`F_{a+b}^{n+1}+c`, marked: String.raw`F_{\htmlData{ps-expr-fragment=subscript}{a+b}}^{n+1}+c`, fragments: ["subscript"] },
+      { label: "分式、嵌套分母", baseline: String.raw`\dfrac{a+b}{c+d}+e`, marked: String.raw`\dfrac{\htmlData{ps-expr-fragment=numerator}{a+b}}{\htmlData{ps-expr-fragment=denominator}{c+d}}+e`, fragments: ["numerator", "denominator"] },
+      { label: "大运算符及界限", baseline: String.raw`\sum_{i=0}^{n}f(i)+1`, marked: String.raw`\htmlData{ps-expr-fragment=sum}{\sum_{i=0}^{n}f(i)}+1`, fragments: ["sum"] },
+      { label: "整体函数应用", baseline: String.raw`f(x)+g(y)`, marked: String.raw`\htmlData{ps-expr-fragment=call}{f(\htmlData{ps-expr-fragment=arg-x}{x})}+g(y)`, fragments: ["call", "arg-x"] },
+      { label: "同范围多层包装器", baseline: String.raw`x+1`, marked: String.raw`\htmlData{ps-expr-fragment=same-range}{x}+1`, fragments: ["same-range"] },
+      { label: "binder 与箭头", baseline: String.raw`x\mapsto x+1`, marked: String.raw`\htmlData{ps-expr-fragment=binder}{x}\mapsto\htmlData{ps-expr-fragment=body}{x+1}`, fragments: ["binder", "body"] }
+    ];
+
+    function renderFormula(target, tex) {
+      katex.render(tex, target, { throwOnError: true, trust: context => context.command === "\\htmlData" });
+      return target.querySelector(".katex-html");
+    }
+
+    function dimensions(element) {
+      const rect = element.getBoundingClientRect();
+      return `${rect.width.toFixed(2)} × ${rect.height.toFixed(2)} px`;
+    }
+
+    function compare(left, right, status) {
+      const a = left.getBoundingClientRect();
+      const b = right.getBoundingClientRect();
+      const equal = Math.abs(a.width - b.width) < 0.5 && Math.abs(a.height - b.height) < 0.5;
+      status.dataset.result = equal ? "equal" : "different";
+      status.textContent = `${equal ? "尺寸一致" : "尺寸不同"}：${dimensions(left)} / ${dimensions(right)}`;
+    }
+
+    window.addEventListener("load", () => {
+      if (!window.katex) {
+        document.getElementById("formula-cases").textContent = "KaTeX 未加载；需要联网打开此页面。";
+        return;
+      }
+      const tbody = document.getElementById("formula-cases");
+      cases.forEach(test => {
+        const row = document.createElement("tr");
+        const title = document.createElement("th");
+        const leftCell = document.createElement("td");
+        const rightCell = document.createElement("td");
+        const status = document.createElement("td");
+        title.textContent = test.label;
+        leftCell.className = rightCell.className = "formula";
+        status.className = "status";
+        row.append(title, leftCell, rightCell, status);
+        tbody.append(row);
+        try {
+          const left = renderFormula(leftCell, test.baseline);
+          const right = renderFormula(rightCell, test.marked);
+          const present = test.fragments.every(id => rightCell.querySelector(`[data-ps-expr-fragment="${id}"]`));
+          compare(left, right, status);
+          status.textContent += present ? " · 标记存在" : " · 缺少标记";
+          if (!present) status.dataset.result = "error";
+        } catch (error) {
+          status.dataset.result = "error";
+          status.textContent = `渲染错误：${error.message}`;
+        }
+      });
+      // A template with independently tagged text and math spans: never wrap
+      // across math delimiters with one \htmlData command.
+      const text = "对于所有 ";
+      for (const [id, marked] of [["mixed-baseline", false], ["mixed-marked", true]]) {
+        const host = document.getElementById(id);
+        const paragraph = document.createElement("p");
+        if (marked) {
+          const prose = document.createElement("span");
+          prose.dataset.psExprFragment = "prose";
+          prose.textContent = text;
+          paragraph.append(prose);
+        } else {
+          paragraph.append(document.createTextNode(text));
+        }
+        for (let i = 0; i < 2; i++) {
+          const math = document.createElement("span");
+          const tex = marked ? String.raw`\htmlData{ps-expr-fragment=repeated}{f(x)}` : String.raw`f(x)`;
+          renderFormula(math, tex);
+          paragraph.append(math, document.createTextNode(i ? " 成立。" : "，并且 "));
+        }
+        host.append(paragraph);
+      }
+      const marked = document.getElementById("mixed-marked");
+      document.getElementById("mixed-result").textContent =
+        `重复片段标记：${marked.querySelectorAll('[data-ps-expr-fragment="repeated"]').length} / 2；文字片段：${marked.querySelectorAll('[data-ps-expr-fragment="prose"]').length} / 1；语义层：${Object.keys(occurrenceProbe.occurrences).length} 个独立对象`;
+    });
+  </script>
+</body>
+</html>

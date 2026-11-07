@@ -25,7 +25,7 @@ from __future__ import annotations
 from .core import Expr2TeX, load
 from .expr import flatten_app, unwrap_mdata
 from .macros import MacroRegistry
-from .model import DisplayNode, Macro, MacroStyle, Unwrap, RenderDiagnostic, RenderLimitError
+from .model import DisplayNode, DisplayTemplate, Macro, MacroStyle, RenderTarget, Unwrap, RenderDiagnostic, RenderLimitError
 from .semantic import SemanticConverter
 from .variable import VariableAllocator
 
@@ -39,6 +39,8 @@ __all__ = [
     "SemanticConverter",
     "Macro",
     "MacroStyle",
+    "DisplayTemplate",
+    "RenderTarget",
     "Unwrap",
     "MacroRegistry",
     "flatten_app",

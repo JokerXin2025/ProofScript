@@ -7,10 +7,10 @@ script_macro «contradiction»
 
 script_info «contradiction» {
   template := [{
-    lang := "zh", tag := "矛盾",
+    lang := zh, tag := "矛盾",
     content := ""
   }, {
-    lang := "en", tag := "contra",
+    lang := en, tag := "contra",
     content := ""
   }]
 }

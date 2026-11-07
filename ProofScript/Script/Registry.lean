@@ -1,5 +1,6 @@
 import Lean.Parser.Syntax
 import Lean.EnvExtension
+import ProofScript.Core.ModuleExtensionEntries
 
 namespace ProofScript
 
@@ -101,8 +102,7 @@ def ScriptTacticRegistration.recordingKind (registration : ScriptTacticRegistrat
 /-- Explicit module closure supplied by the caller; the exporter environment is not the view. -/
 def scriptRegistrationsInModules (env : Environment) (modules : Array Name) : List ScriptTacticRegistration :=
   scriptRegistrationsFromEntries <| modules.flatMap fun owner =>
-    if owner == env.mainModule then (scriptRegistrationExt.getEntries env).reverse.toArray
-    else (env.getModuleIdx? owner).map (scriptRegistrationExt.getModuleEntries env) |>.getD #[]
+    moduleExtensionEntries scriptRegistrationExt env owner
 
 def scriptRegistrationForRecorder (env : Environment) (ruleId : Name) :
     Except String ScriptTacticRegistration := do

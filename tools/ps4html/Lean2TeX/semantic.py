@@ -3,11 +3,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+import json
 
 from .expr import flatten_app, unwrap_mdata
 from .macros import MacroRegistry
 from .model import DisplayNode, RenderDiagnostic, RenderLimitError
 from .variable import VariableAllocator, is_anonymous_name, math_name
+from .numerals import decimal_digits
 
 
 @dataclass(frozen=True)
@@ -15,6 +17,12 @@ class _Binding:
     name: str
     bind_id: str
     generated: bool
+    lean_name: str | None
+    binder_info: object
+    binder_kind: str
+    binder_occurrence_id: str
+    variable_type: str | None
+    variable_value: str | None
 
 
 class SemanticConverter:
@@ -27,6 +35,7 @@ class SemanticConverter:
         self.diagnostics: list[RenderDiagnostic] = []
         self._binding_counter = 0
         self._tree_counter = 0
+        self._occurrence_counter = 0
 
     def convert(self, expr: dict) -> DisplayNode:
         self.diagnostics.clear()
@@ -36,7 +45,15 @@ class SemanticConverter:
         self._tree_counter += 1
         self._tree_scope = f"e{self._tree_counter}"
         with self.allocator.transaction():
-            return self._convert(expr, (), [])
+            root = self._convert(expr, (), [])
+            if root.kind == "wrapper":
+                # The complete expression is below even a root-level unwrap.
+                # Keep the wrapper as an independent occurrence below the root.
+                root = DisplayNode("expression", "expression", [root], metadata={
+                    "originalExprKind": "app",
+                })
+            self._link_occurrences(root)
+            return root
 
     def _convert(self, expr: object, path: tuple[int, ...], bindings: list[_Binding]) -> DisplayNode:
         self._visit()
@@ -44,17 +61,11 @@ class SemanticConverter:
             raise RenderLimitError(f"Expression conversion exceeds depth limit {self.MAX_DEPTH}")
         self._depth += 1
         try:
-            structural, _ = unwrap_mdata(expr, visit=self._visit)
+            structural, data = unwrap_mdata(expr, visit=self._visit)
             node = self._convert_node(structural, path, bindings, expr)
             if isinstance(structural, dict):
                 node.metadata.setdefault("originalExprKind", structural.get("kind"))
-                # An unwrap may reuse its argument's display node, but these
-                # facts belong only to the occurrence currently being converted.
-                source = _source_range(expr)
-                if source is None:
-                    node.metadata.pop("sourceRange", None)
-                else:
-                    node.metadata["sourceRange"] = source
+                node.metadata.update(_occurrence_details(data))
             return node
         finally:
             self._depth -= 1
@@ -77,14 +88,25 @@ class SemanticConverter:
             return self._convert_app(occurrence, path, bindings)
         if kind == "const":
             name = str(expr.get("name", ""))
+            chain = self.registry.alias_chain(name)
+            _, data = unwrap_mdata(occurrence)
             if self.registry.get(name) is None and name not in self.registry.aliases:
-                self._diagnose("L2T001", "missing macro configuration", path, name, occurrence)
-            return DisplayNode(name, "const", metadata={"leanName": name, "originalExprKind": kind})
+                self._diagnose("L2T001", "missing macro configuration", path, name)
+            metadata = {
+                "leanName": name, "displayName": chain[-1], "aliasChain": chain,
+                "traits": ("alias",) if len(chain) > 1 else (), "originalExprKind": kind,
+                "declaration": _declaration_details(data), "levels": expr.get("levels"),
+            }
+            if len(chain) > 1:
+                metadata["aliasTarget"] = {"name": chain[-1],
+                                           "declaration": self.registry.declarations.get(chain[-1])}
+            return DisplayNode(name, "const", metadata=metadata)
         if kind == "lit":
             literal = expr.get("lit", {})
             value = literal.get("value", "?") if isinstance(literal, dict) else "?"
             literal_kind = literal.get("kind") if isinstance(literal, dict) else None
-            return DisplayNode(str(value), "literal", metadata={"value": value, "literalKind": literal_kind, "originalExprKind": kind})
+            text = decimal_digits(value) if literal_kind == "literal.nat" else str(value)
+            return DisplayNode(text, "literal", metadata={"value": text, "literalKind": literal_kind, "originalExprKind": kind})
         if kind == "fvar":
             return self._convert_fvar(expr, occurrence)
         if kind == "bvar":
@@ -92,8 +114,13 @@ class SemanticConverter:
             if isinstance(index, int) and 0 <= index < len(bindings):
                 binding = bindings[index]
                 return DisplayNode(binding.name, "bvar", generated=binding.generated,
-                                   metadata={"bindRef": binding.bind_id, "index": index})
-            self._diagnose("L2T003", f"unbound bvar index {index}", path, expr=occurrence)
+                                   metadata={"bindRef": binding.bind_id, "index": index,
+                                             "leanName": binding.lean_name, "binderInfo": binding.binder_info,
+                                             "binderKind": binding.binder_kind,
+                                             "binderOccurrenceId": binding.binder_occurrence_id,
+                                             "variableType": binding.variable_type,
+                                             "variableValue": binding.variable_value})
+            self._diagnose("L2T003", f"unbound bvar index {index}", path)
             return DisplayNode(f"bvar {index}", "unknown", metadata={"originalExprKind": kind})
         if kind in ("forall", "lam"):
             return self._convert_binder(expr, path, bindings, occurrence)
@@ -109,7 +136,7 @@ class SemanticConverter:
             return DisplayNode(name, "sort", metadata={"level": level})
         if kind == "mvar":
             return DisplayNode("?", "metavariable", metadata={"id": expr["id"]})
-        self._diagnose("L2T010", f"unknown expression kind {kind!r}", path, expr=occurrence)
+        self._diagnose("L2T010", f"unknown expression kind {kind!r}", path)
         return DisplayNode(str(kind or "missing"), "unknown", metadata={"originalExprKind": kind})
 
     def _convert_app(self, expr: dict, path, bindings) -> DisplayNode:
@@ -119,45 +146,70 @@ class SemanticConverter:
             self._diagnose("L2T010", "malformed application", path)
             return DisplayNode("malformed app", "unknown")
         structural_head, _ = unwrap_mdata(head)
-        head_name = structural_head.get("name") if structural_head.get("kind") == "const" else None
+        head_name = structural_head.get("name") if isinstance(structural_head, dict) and structural_head.get("kind") == "const" else None
         if isinstance(head_name, str):
             name = head_name
-            canonical_name = self.registry.resolve_alias(name)
+            chain = self.registry.alias_chain(name)
+            canonical_name = chain[-1]
+            _, head_data = unwrap_mdata(head)
+            levels = structural_head.get("levels")
+            identity = {"leanName": name, "displayName": canonical_name, "aliasChain": chain,
+                        "traits": ("alias",) if len(chain) > 1 else (),
+                        "declaration": _declaration_details(head_data),
+                        "levels": levels,
+                        "headExpressionType": _string(head_data, "ProofScript.exprType")}
+            if len(chain) > 1:
+                identity["aliasTarget"] = {"name": canonical_name,
+                                           "declaration": self.registry.declarations.get(canonical_name)}
             unwrap = self.registry.unwraps.get(name) or self.registry.unwraps.get(canonical_name)
             if unwrap is not None:
                 if unwrap.argument < len(args):
-                    return self._convert(args[unwrap.argument], path + (unwrap.argument,), bindings)
-                self._diagnose("L2T002", f"unwrap argument index {unwrap.argument} out of range for {len(args)} arguments", path, name, expr)
+                    child = self._convert(args[unwrap.argument], path + (unwrap.argument,), bindings)
+                    return DisplayNode(name, "wrapper", [child], metadata={
+                        **identity, "traits": (*identity["traits"], "wrapper"),
+                        "headConst": name, "rawArgumentCount": len(args),
+                        "unwrapArgument": unwrap.argument, "unwrapRuleName": unwrap.name,
+                        "originalExprKind": "app",
+                    })
+                self._diagnose("L2T002", f"unwrap argument index {unwrap.argument} out of range for {len(args)} arguments", path, name)
             name = canonical_name
             macro = self.registry.get(name)
             if macro is not None:
                 selected = list(macro.arguments)
-                if not macro.auto_arity:
+                if macro.kind == "concept" and not macro.auto_arity:
                     selected = list(range(len(args)))
                 if any(index >= len(args) for index in selected):
-                    self._diagnose("L2T002", f"macro argument index out of range for {len(args)} arguments", path, name, expr)
+                    self._diagnose("L2T002", f"macro argument index out of range for {len(args)} arguments", path, name)
                     converted_head = self._convert(head, path + (0,), bindings)
                     children = [converted_head] + [self._convert(arg, path + (i + 1,), bindings) for i, arg in enumerate(args)]
-                    return DisplayNode("application", "application", children, metadata={"headConst": name, "rawArgumentCount": len(args)})
+                    return DisplayNode("application", "application", children, metadata={
+                        **identity, "headConst": name, "rawArgumentCount": len(args)})
                 children = [self._convert(args[index], path + (index,), bindings) for index in selected]
                 display = DisplayNode(name, macro.kind, children, metadata={
-                    "leanName": name, "headConst": name, "rawArgumentCount": len(args),
+                    **identity, "headConst": name, "rawArgumentCount": len(args),
                     "selectedArgumentIndices": selected, "originalExprKind": "app",
                 })
                 return display
-            if name == "Exists" and len(args) == 2:
-                return DisplayNode("Exists", "exists", [
-                    self._convert(args[0], path + (0,), bindings),
-                    self._convert(args[1], path + (1,), bindings),
-                ], metadata={"headConst": name, "rawArgumentCount": len(args)})
         if head_name is not None:
-            self._diagnose("L2T009", "using application fallback", path, head_name, expr)
+            self._diagnose("L2T009", "using application fallback", path, head_name)
         return self._application_fallback(head, args, path, bindings, head_name)
 
     def _application_fallback(self, head, args, path, bindings, name):
         converted_head = self._convert(head, path + (0,), bindings)
         children = [converted_head] + [self._convert(arg, path + (i + 1,), bindings) for i, arg in enumerate(args)]
-        return DisplayNode("application", "application", children, metadata={"headConst": name, "rawArgumentCount": len(args)})
+        metadata = {"headConst": name, "rawArgumentCount": len(args)}
+        if isinstance(name, str):
+            chain = self.registry.alias_chain(name)
+            structural_head, head_data = unwrap_mdata(head)
+            metadata.update(leanName=name, displayName=chain[-1], aliasChain=chain,
+                            traits=("alias",) if len(chain) > 1 else (),
+                            declaration=_declaration_details(head_data),
+                            levels=structural_head.get("levels"),
+                            headExpressionType=_string(head_data, "ProofScript.exprType"))
+            if len(chain) > 1:
+                metadata["aliasTarget"] = {"name": chain[-1],
+                                           "declaration": self.registry.declarations.get(chain[-1])}
+        return DisplayNode("application", "application", children, metadata=metadata)
 
     def _convert_fvar(self, expr, occurrence) -> DisplayNode:
         fvar_id = expr["id"]
@@ -167,6 +219,9 @@ class SemanticConverter:
         name = self.allocator.allocate(data.get("ProofScript.type"), fvar_id=fvar_id) if generated else math_name(raw_name)
         return DisplayNode(name, "fvar", generated=generated, metadata={
             "leanName": raw_name, "fvarId": fvar_id,
+            "variableKind": _string(data, "ProofScript.variableKind"),
+            "variableType": _string(data, "ProofScript.variableType"),
+            "variableValue": _string(data, "ProofScript.variableValue"),
         })
 
     def _new_binding(self, expr, occurrence) -> tuple[_Binding, DisplayNode]:
@@ -176,11 +231,19 @@ class SemanticConverter:
         name = self.allocator.allocate(data.get("ProofScript.type")) if generated else math_name(raw_name)
         bind_id = f"{self._tree_scope}:b{self._binding_counter}"
         self._binding_counter += 1
-        binding = _Binding(name, bind_id, generated)
+        binder_id = self._next_occurrence_id()
+        binder_kind = expr.get("kind")
+        variable_type = _string(data, "ProofScript.variableType")
+        variable_value = _string(data, "ProofScript.variableValue")
+        binding = _Binding(name, bind_id, generated, raw_name, expr.get("binderInfo"),
+                           binder_kind, binder_id, variable_type, variable_value)
         binder = DisplayNode(name, "binder", generated=generated, metadata={
             "bindId": bind_id, "leanName": raw_name,
             "binderInfo": expr.get("binderInfo"),
-        })
+            "binderKind": binder_kind,
+            "variableType": variable_type,
+            "variableValue": variable_value,
+        }, occurrence_id=binder_id)
         return binding, binder
 
     def _convert_binder(self, expr, path, bindings, occurrence) -> DisplayNode:
@@ -199,8 +262,24 @@ class SemanticConverter:
         body = self._convert(expr.get("body"), path + (1,), [binding] + bindings)
         return DisplayNode("let", "let", [binder, value, body])
 
-    def _diagnose(self, code, message, path, constant=None, expr=None) -> None:
-        self.diagnostics.append(RenderDiagnostic("warning", code, message, constant, path, _source_range(expr)))
+    def _next_occurrence_id(self) -> str:
+        identity = f"{self._tree_scope}:o{self._occurrence_counter}"
+        self._occurrence_counter += 1
+        return identity
+
+    def _link_occurrences(self, root: DisplayNode) -> None:
+        # The ID is local to one converter's render session; a page renderer
+        # prefixes it with the theorem and language-panel instance in phase 4.
+        pending = [(root, None)]
+        while pending:
+            node, parent_id = pending.pop()
+            if node.occurrence_id is None:
+                node.occurrence_id = self._next_occurrence_id()
+            node.parent_id = parent_id
+            pending.extend((child, node.occurrence_id) for child in reversed(node.children))
+
+    def _diagnose(self, code, message, path, constant=None) -> None:
+        self.diagnostics.append(RenderDiagnostic("warning", code, message, constant, path))
 
 
 def _uses_outer_bvar(expr: object, depth: int = 0, *, visit=None) -> bool:
@@ -228,11 +307,28 @@ def _uses_outer_bvar(expr: object, depth: int = 0, *, visit=None) -> bool:
     return False
 
 
-def _source_range(expr: object) -> dict | None:
-    _, data = unwrap_mdata(expr)
-    file = data.get("ProofScript.sourceFile")
-    start = data.get("ProofScript.sourceStart")
-    stop = data.get("ProofScript.sourceStop")
-    if isinstance(file, str) and file and type(start) is int and type(stop) is int and 0 <= start <= stop:
-        return {"file": file, "start": start, "stop": stop}
-    return None
+def _string(data: dict, key: str) -> str | None:
+    value = data.get(key)
+    return value if isinstance(value, str) else None
+
+
+def _occurrence_details(data: dict) -> dict:
+    return {"expressionType": _string(data, "ProofScript.exprType"),
+            "expressionText": _string(data, "ProofScript.exprText")}
+
+
+def _declaration_details(data: dict) -> dict:
+    levels = _string(data, "ProofScript.levelParams")
+    try:
+        parsed = json.loads(levels) if levels is not None else None
+        if not isinstance(parsed, list) or any(not isinstance(item, str) for item in parsed):
+            parsed = None
+    except (ValueError, TypeError):
+        parsed = None
+    unsafe = data.get("ProofScript.declarationUnsafe")
+    partial = data.get("ProofScript.declarationPartial")
+    return {"kind": _string(data, "ProofScript.declarationKind"),
+            "type": _string(data, "ProofScript.declarationType"),
+            "levelParams": parsed,
+            "unsafe": unsafe if type(unsafe) is bool else None,
+            "partial": partial if type(partial) is bool else None}

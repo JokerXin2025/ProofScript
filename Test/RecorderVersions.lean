@@ -5,7 +5,7 @@ import ProofScript
 open Lean ProofScript
 open Lean.Elab.Tactic
 
-set_option proofScript.pageBuild true
+set_option pageBuild true
 
 script_macro versionedRecorderRule
   "versioned_recorder" h:ident => `(tactic| exact $h:ident)

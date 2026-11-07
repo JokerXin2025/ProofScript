@@ -9,10 +9,10 @@ script_macro «omega» (clear := [config])
 
 script_info «omega» {
   template := [{
-    lang := "zh", tag := "整数算术",
+    lang := zh, tag := "整数算术",
     content := ""
   }, {
-    lang := "en", tag := "omega",
+    lang := en, tag := "omega",
     content := ""
   }]
 }

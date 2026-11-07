@@ -1,6 +1,6 @@
 import ProofScript
 
-set_option proofScript.pageBuild true
+set_option pageBuild true
 
 #page theorem Qualified.root (P : Prop) (h : P) : P := by
   exact h

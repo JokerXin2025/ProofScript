@@ -22,7 +22,7 @@ structure DeclarationFacts where
   declarationKind : RecordedDeclarationKind
   /-- Committed automatic dependencies and manual citations; page consumption cannot clear them. -/
   proofRefs : Array RefInfo
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited
 
 private inductive DeclarationEntry where
   | user (facts : DeclarationFacts)
@@ -89,7 +89,7 @@ the public theorem; an explicit `proofSource` may be its already checked helper 
 registered immediately before the native theorem command. Return automatic references
 for the page staging area; manual citations are supplied from the proof's staged refs. -/
 def registerDeclarationFacts (before : Environment) (declaration : Name)
-    (kind : RecordedDeclarationKind) (source : SourceLocation)
+    (kind : RecordedDeclarationKind)
     (citations : List RefInfo := []) (proofSource : Option Name := none) : MetaM (Array RefInfo) := do
   let env ← getEnv
   let captured : Except Diagnostic (Array Name × DeclarationCaptureState) := (do
@@ -110,18 +110,18 @@ def registerDeclarationFacts (before : Environment) (declaration : Name)
         result := result ++ (← expandConstant before env registry cached declaration name)
       return canonicalNames result
     action.run {} : Except Diagnostic (Array Name × DeclarationCaptureState)).mapError fun error =>
-      { error with kind := some theoremSpec.kind, target := some declaration.toString, source := some source }
+      { error with kind := some theoremSpec.kind, target := some declaration.toString }
   let (constants, capture) ← match captured with
     | .ok result => pure result
     | .error error => throwError error.render
-  let dependencies ← if dependencyCollection.get (← getOptions) then
+  let dependencies ← if ← dependencyCollection? then
       RefInfo.collectConstantRefs constants true
     else pure #[]
   let facts : DeclarationFacts := {
     declaration, ownerModule := env.mainModule, declarationKind := kind,
     proofRefs := (dependencies.foldl RefInfo.mergeRef citations).toArray }
   -- Register the declaration's owner without freezing presentation configuration.
-  let env ← match commitInfo theoremSpec env declaration #[] source with
+  let env ← match commitInfo theoremSpec env declaration #[] with
     | .ok env => pure env
     | .error error => throwError error.render
   let env := capture.expanded.foldl (fun env name constants =>

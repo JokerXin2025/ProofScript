@@ -4,14 +4,11 @@ namespace ProofScript
 
 open Lean
 
-structure Origin where
+/-- Event identity used to order competing writes across the module graph. -/
+structure WriteId where
   owner : Name
   sequence : Nat
-  source : SourceLocation
   deriving Inhabited, Repr, BEq
-
-def Origin.related (origin : Origin) : RelatedSource :=
-  { owner := origin.owner, sequence := origin.sequence, source := origin.source }
 
 inductive UnitKey where
   | field (name : String)
@@ -30,25 +27,25 @@ def UnitKey.path : UnitKey → JsonPath
 structure Candidate where
   /-- none is a tombstone/missing value; JSON null remains an ordinary value. -/
   value : Option Json
-  origin : Origin
+  write : WriteId
   deriving Inhabited
 
-/-- Equal values deliberately retain every independent origin. -/
+/-- Equal values retain independent writes so later overrides resolve correctly. -/
 structure UnitState where
   key : UnitKey
   fallback : Option Json := none
   candidates : Array Candidate := #[]
   deriving Inhabited
 
-private def dominates (graph : ModuleGraph) (later earlier : Origin) : Bool :=
+private def dominates (graph : ModuleGraph) (later earlier : WriteId) : Bool :=
   if later.owner == earlier.owner then
     later.sequence > earlier.sequence
   else graph.dependsOn later.owner earlier.owner
 
 def UnitState.add (state : UnitState) (graph : ModuleGraph) (candidate : Candidate) : UnitState :=
-  if state.candidates.any (fun old => dominates graph old.origin candidate.origin) then state
+  if state.candidates.any (fun old => dominates graph old.write candidate.write) then state
   else { state with candidates := (state.candidates.filter fun old =>
-    old.origin != candidate.origin && !dominates graph candidate.origin old.origin).push candidate }
+    old.write != candidate.write && !dominates graph candidate.write old.write).push candidate }
 
 private def UnitState.hasValue (state : UnitState) : Bool :=
   if state.candidates.isEmpty then state.fallback.isSome else state.candidates.any (·.value.isSome)
@@ -58,8 +55,7 @@ def UnitState.conflict? (state : UnitState) : Option Diagnostic := do
   if state.candidates.all (·.value == first.value) then none else
     some {
       message := "conflicting independent writes"
-      path := state.key.path
-      related := state.candidates.map (·.origin.related) }
+      path := state.key.path }
 
 def UnitState.value (state : UnitState) : Except Diagnostic (Option Json) :=
   match state.conflict? with
@@ -79,16 +75,13 @@ def PartialView.conflicts (view : PartialView) : Array Diagnostic :=
   view.units.filterMap fun unit => unit.conflict?.map fun error =>
     { error with kind := some view.identity.kind, target := some (toString view.identity.target) }
 
-def PartialView.provenance (view : PartialView) : Array (UnitKey × Array Origin) :=
-  view.units.map fun unit => (unit.key, unit.candidates.map (·.origin))
-
 private def PartialView.unit (view : PartialView) (key : UnitKey) : UnitState :=
   (view.units.find? (·.key == key)).getD { key }
 
 /-- Select the requested module's complete import closure and order its updates. -/
 def selectEvents (graph : ModuleGraph) (events : Array InfoEvent) (query : Query) :
     Except Diagnostic (Array InfoEvent) := do
-  let order ← (graph.order query.moduleName).mapError fun message => { message }
+  let order ← (graph.modulesInDependencyOrder query.moduleName).mapError fun message => { message }
   let mut selected : Array InfoEvent := #[]
   for owner in order do
     let localEvents := (events.filter (·.owner == owner)).qsort (fun a b => a.sequence < b.sequence)
@@ -96,15 +89,16 @@ def selectEvents (graph : ModuleGraph) (events : Array InfoEvent) (query : Query
       if let some old := selected.find? (fun old => old.owner == event.owner && old.sequence == event.sequence) then
         unless toJson old == toJson event do
           throw ({
-            message := s!"inconsistent event identity `{owner} #{event.sequence}`"
-            source := some event.source } : Diagnostic)
+            message := s!"inconsistent event identity `{owner} #{event.sequence}`" } : Diagnostic)
       else selected := selected.push event
   return selected
 
-private def writes (events : Array InfoEvent) : Array (Assignment × Origin) :=
+private def writes (events : Array InfoEvent) : Array (Option Assignment × WriteId) :=
   events.flatMap fun event =>
-    event.assignments.map fun assignment =>
-      (assignment, { owner := event.owner, sequence := event.sequence, source := assignment.source })
+    let write : WriteId := ⟨event.owner, event.sequence⟩
+    (if event.reset then #[(none, write)] else #[]) ++
+      event.assignments.map fun assignment =>
+        (some assignment, write)
 
 private def keyedValues (field : FieldSpec Record) (value : Json) :
     Except Diagnostic (Array (String × Json)) := do
@@ -114,14 +108,14 @@ private def keyedValues (field : FieldSpec Record) (value : Json) :
   | .replace => throw { message := "expected a keyed field" }
 
 private def resolveKeyed (graph : ModuleGraph) (field : FieldSpec Record)
-    (assignments : Array (Assignment × Origin)) : Except Diagnostic (Array UnitState × Array String) := do
+    (assignments : Array (Option Json × WriteId)) : Except Diagnostic (Array UnitState × Array String) := do
   let defaults ← field.defaultJson.mapM (keyedValues field)
   let defaults := defaults.getD #[]
   -- The universe includes later and independent keys. A reset writes a tombstone to every key,
   -- including keys not present in its default value or in its own import branch.
   let mut keys := defaults.map (·.1)
   for (assignment, _) in assignments do
-    if let .set value := assignment.operation then
+    if let some value := assignment then
       for (key, _) in ← keyedValues field value do
         if !keys.contains key then keys := keys.push key
   let mut units : Array UnitState := keys.map fun key =>
@@ -129,26 +123,26 @@ private def resolveKeyed (graph : ModuleGraph) (field : FieldSpec Record)
   let mut presence : UnitState := {
     key := .presence field.name, fallback := field.defaultJson.map fun _ => json% true }
   let mut order := defaults.map (·.1)
-  for (assignment, origin) in assignments do
-    match assignment.operation with
-    | .set value =>
-      presence := presence.add graph { value := some (json% true), origin }
+  for (assignment, write) in assignments do
+    match assignment with
+    | some value =>
+      presence := presence.add graph { value := some (json% true), write }
       for (key, value) in ← keyedValues field value do
         let some index := keys.findIdx? (· == key) | unreachable!
-        units := units.set! index (units[index]!.add graph { value := some value, origin })
+        units := units.set! index (units[index]!.add graph { value := some value, write })
         if !order.contains key && units[index]!.hasValue then order := order.push key
-    | .reset =>
+    | none =>
       -- Discard ancestor positions too: after reset, reintroduced keys append in fresh input order.
       order := order.filter fun key =>
         let unit := units[(keys.findIdx? (· == key)).getD 0]!
         unit.candidates.any fun candidate =>
-          candidate.value.isSome && !dominates graph origin candidate.origin
-      presence := presence.add graph { value := field.defaultJson.map fun _ => json% true, origin }
+          candidate.value.isSome && !dominates graph write candidate.write
+      presence := presence.add graph { value := field.defaultJson.map fun _ => json% true, write }
       units := units.map fun unit =>
         let value := match unit.key with
           | .keyed _ key => (defaults.find? (·.1 == key)).map (·.2)
           | _ => none
-        unit.add graph { value, origin }
+        unit.add graph { value, write }
       for (key, _) in defaults do
         if !order.contains key then order := order.push key
   return (#[presence] ++ units, order)
@@ -165,7 +159,7 @@ def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : ModuleGr
     if event.schemaId != schema.id || event.schemaVersion != schema.version then
       throw ({
         message := s!"unsupported schema `{event.schemaId}@{event.schemaVersion}`; expected `{schema.id}@{schema.version}`"
-        kind := some spec.kind, target := some (toString target), source := some event.source } : Diagnostic)
+        kind := some spec.kind, target := some (toString target) } : Diagnostic)
     discard <| validatePatch schema event.assignments
   let allWrites := writes selected
   let mut units := #[]
@@ -177,24 +171,36 @@ def resolveEvents [InfoSchema Record] (spec : InfoSpec Record) (graph : ModuleGr
         | none => pure {}
       let mut extra := defaults.toList.toArray.map fun (key, value) =>
         ({ key := .extra key, fallback := some value } : UnitState)
-      for (assignment, origin) in allWrites do
-        if let .extra key := assignment.key then
+      let mut keys := defaults.toList.toArray.map (·.1)
+      for (assignment, _) in allWrites do
+        if let some { key := .extra key, .. } := assignment then
+          if !keys.contains key then keys := keys.push key
+      for key in keys do
+        if !extra.any (·.key == .extra key) then extra := extra.push { key := .extra key }
+      for (assignment, write) in allWrites do
+        if assignment.isNone then
+          extra := extra.map fun unit =>
+            let value := match unit.key with
+              | .extra key => (defaults.toList.find? (·.1 == key)).map (·.2)
+              | _ => none
+            unit.add graph { value, write }
+        if let some { key := .extra key, value, .. } := assignment then
           let index := extra.findIdx? (·.key == .extra key)
           let unit := index.map (extra[·]!) |>.getD { key := .extra key }
-          let value := match assignment.operation with | .set value => some value | .reset => none
-          let unit := unit.add graph { value, origin }
+          let unit := unit.add graph { value := some value, write }
           extra := match index with | some index => extra.set! index unit | none => extra.push unit
       units := units ++ extra
     else
-      let assignments := allWrites.filter (fun (assignment, _) => assignment.key == .builtin field.name)
+      let assignments := allWrites.filterMap fun (assignment, write) =>
+        match assignment with
+        | none => some (none, write)
+        | some assignment =>
+          if assignment.key == .builtin field.name then some (some assignment.value, write) else none
       match field.handle.merge with
       | .replace =>
         let mut unit : UnitState := { key := .field field.name, fallback := field.defaultJson }
-        for (assignment, origin) in assignments do
-          let value := match assignment.operation with
-            | .set value => some value
-            | .reset => field.defaultJson
-          unit := unit.add graph { value, origin }
+        for (assignment, write) in assignments do
+          unit := unit.add graph { value := assignment.or field.defaultJson, write }
         units := units.push unit
       | .keyed .. =>
         let (fieldUnits, order) ← resolveKeyed graph field assignments
@@ -206,18 +212,9 @@ def resolvePartial [InfoSchema Record] (spec : InfoSpec Record) (env : Environme
     Except Diagnostic PartialView := do
   resolveEvents spec (ModuleGraph.ofEnvironment env) (← queryEvents env query) query target
 
-/-- Domain checks performed after materialization retain the same field provenance. -/
-def PartialView.attach (view : PartialView) (error : Diagnostic) : Diagnostic := Id.run do
-  let paths := if error.relatedPaths.isEmpty && error.related.isEmpty then #[]
-    else error.relatedPaths.push error.path
-  let relevant := view.units.filter fun unit => paths.isEmpty || paths.any fun path =>
-    path.isPrefixOf unit.key.path || unit.key.path.isPrefixOf path
-  let mut related := error.related
-  for unit in relevant do
-    for candidate in unit.candidates do
-      let source := candidate.origin.related
-      if !related.contains source then related := related.push source
-  return { error with kind := some view.identity.kind, target := some (toString view.identity.target), related }
+/-- Add the configuration target to a validation error. -/
+def PartialView.attach (view : PartialView) (error : Diagnostic) : Diagnostic :=
+  { error with kind := some view.identity.kind, target := some (toString view.identity.target) }
 
 /-- Materialization is the consumption boundary: conflicts and combined-value checks happen here. -/
 def PartialView.materialize (view : PartialView) (schema : InfoSchema Record) : Except Diagnostic Json :=
@@ -250,14 +247,13 @@ def PartialView.materialize (view : PartialView) (schema : InfoSchema Record) : 
 
 structure ResolvedInfo (Record : Type) where
   value : Record
-  provenance : Array (UnitKey × Array Origin)
   dependencies : Array (String × (Name ⊕ String))
 
 def consumeView [InfoSchema Record] (spec : InfoSpec Record) (view : PartialView) : Except Diagnostic (ResolvedInfo Record) := do
   let schema : InfoSchema Record := inferInstance
   let json ← view.materialize schema
   let value ← (schema.decode json).mapError view.attach
-  return { value, provenance := view.provenance, dependencies := spec.dependencies value }
+  return { value, dependencies := spec.dependencies value }
 
 def resolveInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (query : Query) (target : Name ⊕ String) :
     Except Diagnostic (ResolvedInfo Record) := do
@@ -270,8 +266,8 @@ def resolveContextEvents (graph : ModuleGraph) (events : Array InfoEvent)
   for event in ← selectEvents graph events query do
     for binding in event.bindings do
       if binding.key == key then
-        state := state.add graph { value := some binding.value, origin := {
-          owner := event.owner, sequence := event.sequence, source := binding.source } }
+        state := state.add graph { value := some binding.value, write := {
+          owner := event.owner, sequence := event.sequence } }
   return state
 
 def resolveContext (env : Environment) (query : Query) (key : String) : Except Diagnostic UnitState := do

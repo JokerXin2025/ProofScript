@@ -6,9 +6,6 @@ provides semantic blocks and inline markup for prose that is exported with a Lea
 ProofText resembles Typst, but it is a distinct and deliberately small language. In particular,
 `*text*` means strong text, and unordered list items begin with `-`.
 
-Headings are separate [title components](Title-Component.md), written with `#page title` and
-`#page sub title`. ProofText has no heading blocks; `@<label>` refers to a title component.
-
 This document describes the syntax implemented by the current ProofText parser.
 
 ## 1. Using `#page text`

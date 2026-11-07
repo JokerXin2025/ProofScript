@@ -26,9 +26,9 @@ def withRollback (action : TacticM α) : TacticM α := do
   let saved ← Tactic.saveState
   try
     action
-  catch ex =>
+  catch e =>
     saved.restore
-    throw ex
+    throw e
 
 /-- Run an action without retaining tactic, elaboration, or InfoTree changes.
 Unlike `withoutModifyingState`, this also restores the elaboration info tree when
@@ -61,5 +61,22 @@ def resolveGoal! (goals : List MVarId) (label : Name) : TacticM MVarId := do
   let some goal ← resolveGoal? goals label
   | throwError "Label `{label}` has no matching goal"
   return goal
+
+/-- Reset the current goal tags in order with a `Name` list. -/
+elab "set_goal_tags" names:term : tactic => do
+  let names ← unsafe Term.evalTerm (α := List Name) (value := names) <|
+    mkApp (mkConst ``List [.zero]) (mkConst ``Name)
+  let goals ← getGoals
+  unless goals.length == names.length do
+    throwError "Unexpected error occurred during executing `set_goal_tags`"
+  for goal in goals, name in names do
+    goal.setTag name
+
+/-- Reset the current goal tags using a `Nat → Name` map. Indices start at zero. -/
+elab "set_goal_tags'" map:term : tactic => do
+  let map ← unsafe Term.evalTerm (α := Nat → Name) (value := map) <|
+    ← mkArrow (mkConst ``Nat) (mkConst ``Name)
+  for goal in ← getGoals, i in 0...* do
+    goal.setTag (map i)
 
 end Lean.Elab.Tactic

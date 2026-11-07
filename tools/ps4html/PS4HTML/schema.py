@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from PS4HTML.project import PS4HTMLError
+from PS4HTML.large_json import loads as load_large_json
 from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD
 
 
@@ -437,7 +438,7 @@ class ResourceLoader:
             return self.proof_cache[key]
         content = self.read_text(value, PROOF_MEDIA_TYPE)
         try:
-            document = json.loads(content)
+            document = load_large_json(content)
         except json.JSONDecodeError as error:
             raise PS4HTMLError(f"Invalid embedded proof JSON {path}: {error}") from error
         resolver = validate_document(document)

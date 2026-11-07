@@ -135,11 +135,15 @@ def hasStrategyBranches {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   return !(← getRecordingState).strategyBranches.isEmpty
 
 def strategyBranchForGoal {m : Type → Type} [Monad m] [MonadEnv m]
-    [MonadLiftT IO m] (goal : MVarId) : m (Option (String × Name)) := do
+    [MonadMCtx m] [MonadLiftT IO m] (goal : MVarId) : m (Option (String × Name)) := do
   let state ← getRecordingState
   match state.strategyBranches with
   | route :: _ =>
-      pure <| route.branches.find? (·.goal == goal) |>.map fun branch => (route.mainTag, branch.label)
+      for branch in route.branches do
+        -- `case tag h` renames locals by assigning the original goal to a fresh one.
+        if (← instantiateMVars (mkMVar branch.goal)) == mkMVar goal then
+          return some (route.mainTag, branch.label)
+      return none
   | [] => pure none
 
 def activateStrategyBranch {m : Type → Type} [Monad m] [MonadEnv m]

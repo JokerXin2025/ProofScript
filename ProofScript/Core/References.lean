@@ -18,7 +18,7 @@ structure RefInfo where
   /-- Whether this reference is a theorem dependency. Automatic proof dependencies
   take precedence over manual citations. -/
   isDependency : Bool := true
-deriving Repr, BEq, ToJson, FromJson
+deriving BEq, ToJson
 
 namespace RefInfo
 
@@ -55,7 +55,10 @@ variable {α : Type} {m : Type → Type} [Monad m] [MonadEnv m] [MonadFinally m]
 private initialize theoremRefsExt : EnvExtension (List RefInfo) ←
   registerEnvExtension (pure []) (asyncMode := .sync)
 
+/-- Clear references staged for the current page. -/
 def clearTheoremRefs : m Unit := modifyEnv (theoremRefsExt.setState · [])
+
+/-- Return references staged for the current page. -/
 def getTheoremRefs : m (List RefInfo) := return theoremRefsExt.getState (← getEnv)
 
 /-- Merge a reference into the page's reference staging area. -/
@@ -68,6 +71,10 @@ register_option dependencyCollection : Bool := {
   defValue := true,
   descr := "automatic collection of dependencies in the proofs"
 }
+
+/-- Return the value of option `dependencyCollection`. -/
+def dependencyCollection? {m : Type → Type} [Monad m] [MonadOptions m] : m Bool :=
+  return dependencyCollection.get (← getOptions)
 
 /-- Run an action with an isolated reference staging area. Return its staged
 references and restore the outer staging area on success or failure. -/

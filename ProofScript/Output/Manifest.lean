@@ -2,13 +2,14 @@ import ProofScript.Script.Contract
 import ProofScript.Utils.Json
 import ProofScript.Utils.JsonPath
 import ProofScript.Info.State
+import ProofScript.Core.ModuleExtensionEntries
 
 namespace ProofScript
 
 open Lean
 open scoped InfoJson
 
-def manifestSchemaVersion : String := "9"
+def manifestSchemaVersion : String := "10"
 
 structure StepBinding where
   path : JsonPath
@@ -81,8 +82,7 @@ initialize artifactExt : SimplePersistentEnvExtension Artifact Unit ←
     addImportedFn := fun _ => () }
 
 def moduleArtifacts (env : Environment) (owner : Name) : Array Artifact := Id.run do
-  let entries := if owner == env.mainModule then (artifactExt.getEntries env).reverse.toArray
-    else (env.getModuleIdx? owner).map (artifactExt.getModuleEntries env) |>.getD #[]
+  let entries := moduleExtensionEntries artifactExt env owner
   let mut artifacts := #[]
   for artifact in entries do
     artifacts := (artifacts.filter (·.key != artifact.key)).push artifact

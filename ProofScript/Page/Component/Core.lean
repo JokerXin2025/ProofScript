@@ -64,13 +64,8 @@ def parseComponentMetadata (stx : Syntax) : Except String ComponentMetadata := d
   | throw "component metadata requires 'title'"
   return { title := titleValue, label, extra }
 
-def sourceLocation (stx : Syntax) : CoreM SourceLocation := do
-  return SourceLocation.ofSyntax (← getFileName) stx
-
-/-- Record the module build mode and reject a component after `#page end`
-before running any component elaboration code. -/
+/-- Reject a component after `#page end` before running any component elaboration code. -/
 def beginPageComponent : CommandElabM Unit := do
-  discard <| recordModuleBuildMode
   ofExcept <| ensurePageOpen (← getEnv)
 
 /- `page_component` supplies this lexical instance while elaborating its body.
@@ -108,13 +103,12 @@ macro "when_page_build" body:doSeq : doElem =>
     JSON construction and resource IO within that body. -/
 def addPageComponent (stx : Syntax) (kind : String) (value : Json)
     (labels : Array (ReferenceKind × String) := #[]) : CommandElabM Unit := whenPageBuild do
-  let location ← liftCoreM <| sourceLocation stx
   let mut env ← getEnv
   for (kind, label) in labels do
-    env ← match registerLabel env kind label location with
+    env ← match registerLabel env kind label with
       | .ok nextEnv => pure nextEnv
       | .error message => throwErrorAt stx message
-  let (nextEnv, added) ← match addComponent env { source := location, kind, value } with
+  let (nextEnv, added) ← match addComponent env { kind, value } with
     | .ok result => pure result
     | .error message => throwErrorAt stx message
   unless added do

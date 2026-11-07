@@ -9,10 +9,10 @@ script_macro «symm» (clear := [loc])
 
 script_info «symm» {
   template := [{
-    lang := "zh", tag := "对称性",
+    lang := zh, tag := "对称性",
     content := ""
   }, {
-    lang := "en", tag := "symm",
+    lang := en, tag := "symm",
     content := ""
   }]
 }

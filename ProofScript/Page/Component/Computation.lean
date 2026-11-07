@@ -47,7 +47,6 @@ structure PendingEntry where
   wrapper : String
   module : String
   functionType : EntryType
-  source : SourceLocation
 deriving Inhabited, ToJson
 
 def pendingEntryPath (moduleName declaration : String) : FilePath :=
@@ -222,14 +221,13 @@ private def addComputationComponent (metadataStx : Syntax)
   let type ← liftTermElabM do
     return toString (← Meta.ppExpr info.type)
   let recorded ← liftTermElabM do
-    let action := recordComputationFunction declaration type implementation (some functionStx.raw)
+    let action := recordComputationFunction declaration type implementation
     (action { elaborator := .anonymous }).run' { goals := [] }
   let payload ← parseJsonAt payloadStx.raw payloadStx.getString
   let shape ← functionShape functionStx.raw info
   let wrapper ← addWrapper declaration shape
   let moduleName ← getMainModule
   let bundleId := moduleName.toString
-  let location ← liftCoreM <| sourceLocation functionStx.raw
   let inputType ← liftTermElabM <| toString <$> Meta.ppExpr shape.input
   let outputType ← liftTermElabM <| toString <$> Meta.ppExpr shape.output
   let pending : Computation.PendingEntry := {
@@ -238,7 +236,6 @@ private def addComputationComponent (metadataStx : Syntax)
     wrapper := wrapper.toString
     module := moduleName.toString
     functionType := { input := inputType, output := outputType, errorMode := shape.errorMode }
-    source := location
   }
   let manifest ← liftIO <| Computation.writePendingEntry pending
   let labels := match metadata.label with
@@ -339,7 +336,7 @@ private def parseComputationFields (fields : Array (TSyntax ``computationField))
 
 page_component "computation" "{" fields:computationField,* "}" => do
   annotateComputationFields fields
-  unless ← pageBuildEnabled do
+  unless ← pageBuild? do
     annotateComputationFunction fields
     return
   let (metadataStx, rendererStx, functionStx, payloadStx) ← parseComputationFields fields

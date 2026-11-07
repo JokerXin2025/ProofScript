@@ -10,7 +10,6 @@ syntax infoFields := "{" sepBy(infoField, ", ") "}"
 
 /-- Lower priority preserves ordinary Lean structure terms; quoted keys use this literal parser. -/
 syntax (name := infoObject) (priority := low) "{" sepBy(infoField, ", ") "}" : term
-syntax (name := resetValue) "reset" : term
 
 structure InputField where
   key : String
@@ -26,7 +25,7 @@ def readFields (stx : TSyntax ``infoFields) : CommandElabM (Array InputField) :=
       let name ← match key with
         | `(infoKey| $id:ident) => pure id.getId.eraseMacroScopes.toString
         | `(infoKey| $text:str) => pure text.getString
-        | _ => throwErrorAt key "expected a field name"
+         | _ => throwErrorAt key "expected a field name"
       return { key := name, ref := key.raw, value }
     | _ => throwErrorAt field "expected field := value"
 
@@ -41,8 +40,6 @@ def readObject (stx : TSyntax `term) : CommandElabM (Array InputField) := do
     | `(structInstField| $key:ident := $value:term) =>
       return { key := key.getId.eraseMacroScopes.toString, ref := key.raw, value }
     | _ => throwErrorAt field "expected field := value"
-
-def isReset (stx : TSyntax `term) : Bool := stx.raw.isOfKind ``resetValue
 
 /-- Parse JSON literals directly; no elaboration or evaluation of arbitrary Lean code. -/
 partial def parseExtraValue (stx : TSyntax `term) : CommandElabM ExtraValue := do

@@ -1,69 +1,89 @@
-function alignAndScaleMath() {
-    // 1. 获取所有的推导行
-    const blocks = document.querySelectorAll('.proof-step');
-    
-    // 2. 将它们按父元素分组（确保不同的推导模块之间互不影响）
-    const groups = new Map();
-    blocks.forEach(block => {
-        const parent = block.parentElement;
-        if (!groups.has(parent)) {
-            groups.set(parent, []);
-        }
-        groups.get(parent).push(block);
-    });
+(function () {
+    "use strict";
 
-    // 3. 核心计算：寻找最宽项并设置 Flex Basis
-    groups.forEach(groupBlocks => {
-        let maxLhsWidth = 0;
-        let maxRhsWidth = 0;
+    const selector = ".ps-fit-viewport";
+    let scheduled = false;
+    let notifying = false;
 
-        // 【第一轮遍历】：重置样式，并测量每一侧所需的“物理最大宽度”
-        groupBlocks.forEach(block => {
-            const lhs = block.querySelector('.proof-calc-lhs');
-            const rhs = block.querySelector('.proof-calc-rhs');
-
-            if (lhs) {
-                lhs.style.flex = '0 0 auto';      // 临时收缩到最小
-                lhs.style.transform = 'scale(1)'; // 取消缩放干扰
-                maxLhsWidth = Math.max(maxLhsWidth, lhs.scrollWidth);
-            }
-            if (rhs) {
-                rhs.style.flex = '0 0 auto';
-                rhs.style.transform = 'scale(1)';
-                maxRhsWidth = Math.max(maxRhsWidth, rhs.scrollWidth);
-            }
+    function alignCalculations() {
+        const groups = new Map();
+        document.querySelectorAll(".proof-step.calc").forEach(block => {
+            const parent = block.parentElement;
+            if (!groups.has(parent)) groups.set(parent, []);
+            groups.get(parent).push(block);
         });
-
-        // 【第二轮遍历】：利用 Flexbox 原生机制实现“空白平分”
-        // flex: 1 1 {基础宽度}px 
-        // 这表示：保底分配最大内容宽度，然后将剩余的屏幕空白 1:1 绝对平分给两侧
-        groupBlocks.forEach(block => {
-            const lhs = block.querySelector('.proof-calc-lhs');
-            const rhs = block.querySelector('.proof-calc-rhs');
-
-            if (lhs) lhs.style.flex = `1 1 ${maxLhsWidth}px`;
-            if (rhs) rhs.style.flex = `1 1 ${maxRhsWidth}px`;
+        groups.forEach(blocks => {
+            let left = 0, right = 0;
+            blocks.forEach(block => {
+                const lhs = block.querySelector(".proof-calc-lhs");
+                const rhs = block.querySelector(".proof-calc-rhs");
+                if (lhs) {
+                    lhs.style.flex = "0 0 auto";
+                    left = Math.max(left, lhs.scrollWidth);
+                }
+                if (rhs) {
+                    rhs.style.flex = "0 0 auto";
+                    right = Math.max(right, rhs.scrollWidth);
+                }
+            });
+            blocks.forEach(block => {
+                const lhs = block.querySelector(".proof-calc-lhs");
+                const rhs = block.querySelector(".proof-calc-rhs");
+                if (lhs) lhs.style.flex = `1 1 ${left}px`;
+                if (rhs) rhs.style.flex = `1 1 ${right}px`;
+            });
         });
-    });
+    }
 
-    // 4. 【第三轮遍历】：超长缩放保护（防止手机窄屏超出）
-    // 此时浏览器已经完成了排版，如果屏幕不够大导致实际空间小于内容空间，按比例缩放文字
-    const mathContainers = document.querySelectorAll('.proof-calc-lhs, .proof-calc-rhs');
-    mathContainers.forEach(container => {
-        const availableWidth = container.offsetWidth;
-        const actualWidth = container.scrollWidth;
-        
-        if (actualWidth > availableWidth && availableWidth > 0) {
-            container.style.transform = `scale(${availableWidth / actualWidth})`;
+    function fit(viewport) {
+        const content = viewport.querySelector(":scope > .ps-fit-content");
+        if (!content || !viewport.clientWidth) return;
+        content.style.transform = "";
+        viewport.style.height = "";
+        // scrollWidth measures untransformed KaTeX and other unbreakable children.
+        const naturalWidth = content.scrollWidth;
+        const scale = naturalWidth > viewport.clientWidth
+            ? viewport.clientWidth / naturalWidth : 1;
+        if (scale < 1) {
+            content.style.transform = `scale(${scale})`;
+            viewport.style.height = `${content.scrollHeight * scale}px`;
         }
+    }
+
+    function alignAndScaleMath() {
+        scheduled = false;
+        alignCalculations();
+        document.querySelectorAll(selector).forEach(fit);
+        notifying = true;
+        document.dispatchEvent(new Event("ps4html:layoutchange"));
+        notifying = false;
+    }
+
+    function schedule() {
+        if (scheduled) return;
+        scheduled = true;
+        requestAnimationFrame(alignAndScaleMath);
+    }
+
+    window.addEventListener("resize", schedule);
+    window.addEventListener("load", schedule);
+    document.addEventListener("DOMContentLoaded", () => {
+        schedule();
+        const main = document.querySelector("#main-content");
+        if (main && typeof ResizeObserver !== "undefined") {
+            let previousWidth = main.clientWidth;
+            new ResizeObserver(() => {
+                if (previousWidth !== main.clientWidth) {
+                    previousWidth = main.clientWidth;
+                    schedule();
+                }
+            }).observe(main);
+        }
+        if (main && typeof MutationObserver !== "undefined") {
+            new MutationObserver(schedule).observe(main, {subtree: true, childList: true, characterData: true});
+        }
+        document.fonts?.addEventListener("loadingdone", schedule);
     });
-    document.dispatchEvent(new Event('ps4html:layoutchange'));
-}
-
-// ============== 绑定事件监听 ==============
-
-// 1. 页面窗口大小改变时，实时重新居中分配
-window.addEventListener('resize', alignAndScaleMath);
-
-// 2. 页面加载与 KaTeX 渲染完成后计算
-document.addEventListener("DOMContentLoaded", alignAndScaleMath);
+    document.addEventListener("ps4html:layoutchange", () => { if (!notifying) schedule(); });
+    document.addEventListener("toggle", schedule, true);
+})();

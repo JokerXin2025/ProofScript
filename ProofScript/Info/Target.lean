@@ -69,8 +69,4 @@ def updateLiteralInfo [InfoSchema Record] (spec : InfoSpec Record) (target : TSy
   if target.getString.isEmpty then throwErrorAt target s!"{spec.kind} key must not be empty"
   elaborateInfo spec (Name.mkSimple target.getString) fields ref
 
-def updateDeclarationInfo [InfoSchema Record] (spec : InfoSpec Record) (target : TSyntax `ident)
-    (fields : Array InputField) (ref : Syntax) : CommandElabM Unit := do
-  elaborateInfo spec (← resolveDeclaration target) fields ref
-
 end ProofScript

@@ -1,4 +1,4 @@
-import ProofScript.Page.Command
+import ProofScript.Page.State
 import ProofScript.Extensions.Title
 import ProofScript.Extensions.ProofText
 
@@ -7,11 +7,9 @@ Title component regression checks and a visual gallery.
 Preview: `lake build +Test.PageTitle:ps4html`.
 -/
 
-set_option proofScript.pageBuild true
+set_option pageBuild true
 
 open Lean Elab Command ProofScript
-
-project_info "ProofScriptTitleTest" { title := "独立标题组件测试" }
 
 #page title (label := "title-main") "标题组件：*行内格式* 与 $x^2$"
 
@@ -90,7 +88,7 @@ run_cmd do
 run_cmd do
   let some page := modulePageDraft? (← getEnv) (← getMainModule)
     | throwError "the title gallery was not persisted"
-  unless page.components.size == 16 do
+  unless page.components.size == 15 do
     throwError m!"failed title commands changed the page: {page.components.size} components"
 
 /-- error: page component appears after #page end -/

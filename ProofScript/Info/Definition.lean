@@ -1,18 +1,20 @@
 import ProofScript.Info.Derive
 import ProofScript.Info.Target
 import ProofScript.Info.Template
+import ProofScript.Utils.Ascii
+import ProofScript.Info.Script
 
 namespace ProofScript
 
 open Lean
 
 inductive DefinitionKind where
-  | const | operator | relation | logic | projection | constructor | type
+  | concept | wrapper | relation | operator | alias
   deriving Inhabited, Repr, BEq
 
 instance : InfoCodec DefinitionKind := enumCodec #[
-  ("const", .const), ("operator", .operator), ("relation", .relation), ("logic", .logic),
-  ("projection", .projection), ("constructor", .constructor), ("type", .type)]
+  ("concept", .concept), ("wrapper", .wrapper), ("relation", .relation), ("operator", .operator),
+  ("alias", .alias)]
 
 inductive StyleMode where
 | formula
@@ -68,149 +70,209 @@ instance : InfoCodec BinderSelector where
     ]
   }
 
-structure DefinitionStyle where
-  name : String := "formula"
+instance (priority := high) : InfoCodec (Option Language) := optionalInputCodec
+
+structure DefinitionTemplate where
+  label : String
+  lang : Option Language := none
   mode : StyleMode := .formula
-  template : String
-  fixity : StyleFixity := .custom
-  precedence : Nat := 100
-  associativity : StyleAssociativity := .none
+  content : String
   binders : Array BinderSelector := #[]
   isolated_arguments : Array Nat := #[]
   deriving Inhabited, InfoSchema
 
-instance : InfoSchema DefinitionStyle :=
-  (inferInstance : InfoSchema DefinitionStyle).withOverrides! {
+instance : InfoSchema DefinitionTemplate :=
+  (inferInstance : InfoSchema DefinitionTemplate).withOverrides! {
     fields := #[
-      DefinitionStyle.infoFields.precedence.withValidation fun value =>
-        if value > 100 then .error "precedence exceeds 100" else .ok (),
-      DefinitionStyle.infoFields.binders.withValidation fun values => do
+      DefinitionTemplate.infoFields.label.withValidation fun value =>
+        if isNonemptyBasicAscii value then .ok () else .error "label must be a nonempty printable ASCII string",
+      DefinitionTemplate.infoFields.lang.withValidation fun value =>
+        if value.any (·.code.isEmpty) then .error "lang must not be empty" else .ok ()
+    ]
+    ++ #[
+      DefinitionTemplate.infoFields.binders.withValidation fun values => do
         if values.any (·.count == 0) then throw "binder count must be positive"
         uniqueIndices (values.map (·.argument)),
-      DefinitionStyle.infoFields.isolated_arguments.withValidation uniqueIndices] }
+      DefinitionTemplate.infoFields.isolated_arguments.withValidation uniqueIndices] }
 
-instance (priority := high) : InfoCodec (Option DefinitionKind) := optionalInputCodec
-instance (priority := high) : InfoCodec (Option (Array DefinitionStyle)) := optionalInputCodec
+structure ConceptInfo where
+  auto_arity : Bool := true
+  templates : Array DefinitionTemplate := #[]
+  default : String := "formula"
+  deriving Inhabited, InfoSchema
 
-/-- Conditional defaults remain absent until consumption; explicit [] differs from omitted styles. -/
+/-- Symbolic operator layout. -/
+structure OperatorInfo where
+  symbol : String := ""
+  fixity : StyleFixity := .infix
+  precedence : Nat := 100
+  associativity : StyleAssociativity := .none
+  deriving Inhabited, InfoSchema
+
+instance : InfoSchema OperatorInfo :=
+  (inferInstance : InfoSchema OperatorInfo).withOverrides! {
+    fields := #[OperatorInfo.infoFields.precedence.withValidation fun value =>
+      if value > 100 then .error "precedence exceeds 100" else .ok ()] }
+
+structure RelationInfo where
+  symbol : String := ""
+  deriving Inhabited, InfoSchema
+
+structure WrapperInfo where
+  index : Option Nat := none
+  deriving Inhabited, InfoSchema
+
+structure AliasInfo where
+  target : Option DeclarationRef := none
+  deriving Inhabited, InfoSchema
+
 structure DefinitionInfo where
   /-- Variable-name prefix for this type; an empty string requests automatic naming. -/
   var_name : String := ""
-  kind : Option DefinitionKind := none
-  auto_arity : Bool := true
-  styles : Option (Array DefinitionStyle) := none
+  kind : DefinitionKind := .concept
+  concept_info : ConceptInfo := {}
+  operator_info : OperatorInfo := {}
+  relation_info : RelationInfo := {}
+  wrapper_info : WrapperInfo := {}
+  alias_info : AliasInfo := {}
   /-- Theorem parameter text template: #self, #type and explicit type arguments #N.
       Formula fragments use dollar delimiters. -/
   parameter_template : Option String := none
-  calc_symbol : Option String := none
-  unwrap : Option Nat := none
-  alias : Option DeclarationRef := none
   extra : ExtraFields := {}
   deriving Inhabited, InfoSchema
 
-/-- The ordinary rendering mode after calc shorthand and conditional defaults are resolved. -/
+/-- Concept templates and argument selection. -/
 structure DefinitionDisplay where
   kind : DefinitionKind
   auto_arity : Bool
-  styles : Array DefinitionStyle
+  templates : Array DefinitionTemplate
   deriving Inhabited
 
-private def definitionConstraint (name message : String) (related : Array String := #[]) : Diagnostic :=
-  { message, path := #[.key name], relatedPaths := related.map fun name => #[.key name] }
+private def definitionConstraint (name message : String) : Diagnostic :=
+  { message, path := #[.key name] }
+
+private def templateConstraint (index : Nat) (field message : String) : Diagnostic :=
+  { message, path := #[.key "concept_info", .key "templates", .index index, .key field] }
 
 def DefinitionInfo.display (value : DefinitionInfo) : Except Diagnostic DefinitionDisplay := do
-  let kind := value.kind.getD (if value.calc_symbol.isSome then .relation else .const)
-  let styles ← match value.styles, value.calc_symbol with
-    | some styles, _ => pure styles
-    | none, some _ =>
-      if kind != .relation then
-        throw <| definitionConstraint DefinitionInfo.infoFields.kind.name "calc_symbol requires relation kind"
-          #[DefinitionInfo.infoFields.calc_symbol.name]
-      pure #[]
-    | none, none => pure #[]
-  return { kind, auto_arity := value.auto_arity, styles }
+  let info := value.concept_info
+  return ⟨value.kind, info.auto_arity, info.templates⟩
 
-private def validateStyle (display : DefinitionDisplay) (style : DefinitionStyle) : Except Diagnostic Unit := do
-  let references := argumentReferences style.template
+private def validateTemplate (display : DefinitionDisplay) (template : DefinitionTemplate) : Except Diagnostic Unit := do
+  let references := argumentReferences template.content
   let args := references.arguments ++ references.binders.map (·.1)
-  let related := #[#[.key DefinitionStyle.infoFields.template.name]]
   if references.wildcard then
-    throw { message := "dynamic placeholder #* is no longer supported", path := #[.key DefinitionStyle.infoFields.template.name] }
+    throw { message := "dynamic placeholder #* is no longer supported", path := #[.key DefinitionTemplate.infoFields.content.name] }
   let sorted := args.toList.eraseDups.toArray.qsort (· < ·)
   if display.auto_arity && (sorted.mapIdx fun index value => index == value).any (!·) then
-    throw { message := "non-contiguous argument placeholders", path := #[.key DefinitionStyle.infoFields.template.name] }
+    throw { message := "non-contiguous argument placeholders", path := #[.key DefinitionTemplate.infoFields.content.name] }
   for (index, depth) in references.binders do
-    let binder := style.binders.find? (·.argument == index)
+    let binder := template.binders.find? (·.argument == index)
     if binder.isNone || depth > (binder.map (·.count) |>.getD 0) + 1 then
-      throw { message := "@ selector needs a matching binder count", path := #[.key DefinitionStyle.infoFields.binders.name], relatedPaths := related }
-  if display.auto_arity && style.isolated_arguments.any (!args.contains ·) then
-    throw { message := "isolated_arguments must reference a template argument", path := #[.key DefinitionStyle.infoFields.isolated_arguments.name], relatedPaths := related }
+      throw { message := "@ selector needs a matching binder count", path := #[.key DefinitionTemplate.infoFields.binders.name] }
+  if display.auto_arity && template.isolated_arguments.any (!args.contains ·) then
+    throw { message := "isolated_arguments must reference a template argument", path := #[.key DefinitionTemplate.infoFields.isolated_arguments.name] }
 
 def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := do
+  let display ← value.display
+  let templates := display.templates
+  if value.kind == .relation && value.relation_info.symbol.isEmpty then
+    throw <| definitionConstraint "relation_info" "relation symbol must not be empty"
+  if value.kind == .operator then
+    if value.operator_info.symbol.isEmpty then
+      throw <| definitionConstraint "operator_info" "operator symbol must not be empty"
+    unless #[StyleFixity.prefix, .postfix, .infix].contains value.operator_info.fixity do
+      throw <| definitionConstraint "operator_info" "symbolic operators require prefix, postfix or infix fixity"
   if let some template := value.parameter_template then
     if template.isEmpty then
       throw <| definitionConstraint "parameter_template" "parameter template must not be empty"
     let refs := argumentReferences template
     if refs.wildcard || !refs.binders.isEmpty then
       throw <| definitionConstraint "parameter_template" "parameter templates support #self, #type and #N only"
-  if value.alias.isSome && value.unwrap.isSome then
-    throw <| definitionConstraint DefinitionInfo.infoFields.alias.name "alias and unwrap are mutually exclusive"
-      #[DefinitionInfo.infoFields.unwrap.name]
-  -- Alias and unwrap modes preserve stored display fields for a later explicit mode switch.
-  if value.alias.isSome || value.unwrap.isSome then return
-  let display ← value.display
-  let references := display.styles.map fun style => argumentReferences style.template
+  if value.kind != .concept then return
+  let formulae := templates.filter (·.label == "formula")
+  if formulae.size > 1 then
+    throw <| definitionConstraint "concept_info" "formula label may occur at most once"
+  for index in [:templates.size] do
+    let template := templates[index]!
+    if !isNonemptyBasicAscii template.label then
+      throw <| templateConstraint index DefinitionTemplate.infoFields.label.name
+        "label must be a nonempty printable ASCII string"
+    if template.label == "formula" && template.lang.isSome then
+      throw <| templateConstraint index DefinitionTemplate.infoFields.lang.name
+        "formula label must not specify lang"
+    if template.label != "formula" && template.lang.isNone then
+      throw <| templateConstraint index DefinitionTemplate.infoFields.lang.name
+        "non-formula labels must specify lang"
+    if let some lang := template.lang then
+      if lang.code.isEmpty then
+        throw <| templateConstraint index DefinitionTemplate.infoFields.lang.name
+          "lang must not be empty"
+  if value.concept_info.default.isEmpty then
+    throw <| definitionConstraint "concept_info" "default must not be empty"
+  if templates.isEmpty then return
+  if formulae.isEmpty && !templates.any (·.lang.map (·.code) == some "en") then
+    throw <| definitionConstraint "concept_info" "at least one formula or en template is required"
+  let defaultTemplates := templates.filter (·.label == value.concept_info.default)
+  if defaultTemplates.isEmpty then
+    throw <| definitionConstraint "concept_info" "default must name an existing template label"
+  if value.concept_info.default != "formula" && !templates.any (fun template =>
+       template.label == value.concept_info.default && template.lang.map (·.code) == some "en") then
+    throw <| definitionConstraint "concept_info" "default label must have an en template"
+  let mut keys : Array (String × Option String) := #[]
+  for index in [:templates.size] do
+    let template := templates[index]!
+    let key := (template.label, template.lang.map (·.code))
+    if keys.contains key then
+      throw <| definitionConstraint "concept_info"
+        "duplicate label and lang combination"
+    keys := keys.push key
+  let references := display.templates.map fun template => argumentReferences template.content
   if !references.isEmpty && references.all (!·.binders.isEmpty) then
-    throw <| definitionConstraint DefinitionInfo.infoFields.styles.name "a style without @ selectors is required"
-  for index in [:display.styles.size] do
-    (validateStyle display display.styles[index]!).mapError fun error =>
+    throw <| definitionConstraint "concept_info" "a template without @ selectors is required"
+  for index in [:display.templates.size] do
+    (validateTemplate display display.templates[index]!).mapError fun error =>
       { error with
-        path := #[.key DefinitionInfo.infoFields.styles.name, .index index] ++ error.path
-        relatedPaths := #[#[.key DefinitionInfo.infoFields.auto_arity.name],
-          #[.key DefinitionInfo.infoFields.styles.name]] }
+        path := #[.key "concept_info", .key "templates", .index index] ++ error.path }
 
 instance : InfoSchema DefinitionInfo :=
-  (inferInstance : InfoSchema DefinitionInfo).withOverrides! {
-    fields := #[DefinitionInfo.infoFields.calc_symbol.withValidation fun value =>
-      if value.any String.isEmpty then .error "calc_symbol must not be empty" else .ok ()]
-    validateRecord := validateDefinitionInfo }
+  { (inferInstance : InfoSchema DefinitionInfo).withOverrides! {
+    validateRecord := validateDefinitionInfo } with version := "8.0.0" }
 
 def definitionSpec : InfoSpec DefinitionInfo := {
   kind := "definition"
-  dependencies := fun value => value.alias.toList.toArray.map fun reference => ("definition", reference.name) }
+  dependencies := fun value =>
+    if value.kind == .alias then
+      value.alias_info.target.toList.toArray.map fun reference => ("definition", reference.name)
+    else #[] }
 
-private def aliasSources (info : ResolvedInfo DefinitionInfo) : Array RelatedSource :=
-  info.provenance.filter (·.1 == .field DefinitionInfo.infoFields.alias.name)
-    |>.flatMap fun (_, origins) => origins.map (·.related)
-
-/-- Validate the static alias closure in the same module view, retaining every
-    edge's source. Snapshots resolve explicit argument selection from declaration
+/-- Validate the static alias closure in the same module view.
+    Snapshots resolve explicit argument selection from declaration
     binders; the backend checks application arity and selected lambda shapes. -/
 def resolveDefinitionChain (env : Environment) (query : Query) (declaration : Name) :
     Except Diagnostic (Array (Name × ResolvedInfo DefinitionInfo)) := do
   let events ← queryEvents env query
   let mut current := declaration
   let mut chain : Array (Name × ResolvedInfo DefinitionInfo) := #[]
-  let mut related : Array RelatedSource := #[]
   -- Every distinct alias node requires a configuration event, so this is a finite bound.
   for _ in [:events.size + 1] do
     let fail := fun (error : Diagnostic) => { error with
-      kind := some definitionSpec.kind, target := some current.toString,
-      related := (error.related ++ related).toList.eraseDups.toArray }
+      kind := some definitionSpec.kind, target := some current.toString }
     if chain.any (·.1 == current) then
       let names := (chain.map (·.1.toString)).push current.toString
       let error : Diagnostic := {
         message := "alias cycle: " ++ String.intercalate " → " names.toList
-        path := #[.key DefinitionInfo.infoFields.alias.name] }
+        path := #[.key DefinitionInfo.infoFields.alias_info.name, .key AliasInfo.infoFields.target.name] }
       throw (fail error)
     unless env.contains current do throw <| fail { message := "unknown declaration in alias closure" }
     let info ← (resolveConfiguredInfo definitionSpec env query current).mapError fail
     chain := chain.push (current, info)
-    match info.value.alias with
-    | none => return chain
-    | some reference =>
-      related := related ++ aliasSources info
-      current := reference.name
+    if info.value.kind == .alias then
+      match info.value.alias_info.target with
+      | none => return chain
+      | some reference =>
+        current := reference.name
+    else return chain
   throw { message := "alias closure exceeded its event bound", kind := some definitionSpec.kind, target := some declaration.toString }
 
 def resolveDefinitionInfo (env : Environment) (query : Query) (declaration : Name) :

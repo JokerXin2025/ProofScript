@@ -23,7 +23,7 @@ LAYOUTS = {
 }
 
 STRATEGIES = {
-    "ProofScript.Builtin.Script.split_and!": ("decompose", "递归拆分合取", "To split the conjunction recursively,"),
+    "splitAnd!": ("decompose", "递归拆分合取", "To split the conjunction recursively,"),
     "ProofScript.Builtin.Script.cases_by!": ("cases", "逐项分类讨论", "Analyzing each case,"),
     "ProofScript.Builtin.Script.cases_on": ("cases", "分类讨论", "By cases,"),
     "ProofScript.Builtin.Script.constructor": ("constructor", "应用构造器", "Apply the constructor"),

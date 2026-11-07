@@ -1,6 +1,6 @@
 # Lean2TeX 变量管理系统
 
-当前实现位于 [variable.py](Lean2TeX/variable.py)、[semantic.py](Lean2TeX/semantic.py) 和 [renderer.py](Lean2TeX/renderer.py)。声明类型的前缀使用 `def_info Nat { var_name := "n" }` 配置；Lean 按产物所属模块及其传递导入闭包的最终 Info 冻结，Python 只读取该产物 `snapshotId` 指定的配置。本模块后置的 `def_info` 也会更新前面证明的变量前缀。
+当前实现位于 [variable.py](Lean2TeX/variable.py)、[semantic.py](Lean2TeX/semantic.py) 和 [renderer.py](Lean2TeX/renderer.py)。声明类型的前缀使用 `decl_info Nat { var_name := "n" }` 配置；Lean 按产物所属模块及其传递导入闭包的最终 Info 冻结，Python 只读取该产物 `snapshotId` 指定的配置。本模块后置的 `decl_info` 也会更新前面证明的变量前缀。
 
 默认 reader 给 fvar 和 lambda、forall、let 的绑定节点记录标量 `ProofScript.type`，描述的是变量的类型：
 
@@ -25,6 +25,6 @@ Script 模板继续使用实际表达式字段占位符，例如 `${subject}`；
 
 最终 TeX 通过 `htmlData` 携带身份，供 [lean2tex.js](PS4HTML/assets/js/lean2tex.js) 在同一定理内高亮引用。fvar 按 `fvarId`，binder 和 bvar 按 `bindId`／`bindRef` 关联；同名不同变量仍各自独立。生成变量的 `data-l2t-generated` 标记让高亮只改变背景和边框，文字保持灰色。
 
-每个定理创建独立 ProofEngine 和渲染器。外部调用者复用实例时应在定理边界调用 `renderer.reset()`。`render` 在转换或排版异常时恢复本次新增的计数和缓存；分开调用时，成功的 `convert` 提交分配，`render_display` 不改变分配状态。源码位置仍属于各自出现位置，局部定义的类型和值由专用 `let` 步骤展示，后续引用不生成声明悬停提示。
+每个定理创建独立 ProofEngine 和渲染器。外部调用者复用实例时应在定理边界调用 `renderer.reset()`。`render` 在转换或排版异常时恢复本次新增的计数和缓存；分开调用时，成功的 `convert` 提交分配，`render_display` 不改变分配状态。局部定义的类型和值由专用 `let` 步骤展示，后续引用不生成声明悬停提示。
 
-命名系统只保留表达式注解、声明前缀、前缀计数器、fvar 自动名称缓存和绑定身份。内置 `Nat/Int → n`、`Rat → q` 由基础配置提供，`Real → x` 由 Mathlib 配置提供；没有名字池、名称占用或作用域释放接口。Info 协议为 `9.0.0`、manifest 版本为 `9`、snapshot payload 版本为 `7`，旧缓存须重新执行 `lake build MyLibrary:ps4html`；录制协议 `0.3.0` 与调用契约 `2` 不变。完整接口见 [Lean2TeX 说明](Lean2TeX/README.md)，实施进度见[重构计划](../../docs/Variable-Naming-Refactor-Plan-zh.md)。
+命名系统只保留表达式注解、声明前缀、前缀计数器、fvar 自动名称缓存和绑定身份。内置 `Nat/Int → n`、`Rat → q` 由基础配置提供，`Real → x` 由 Mathlib 配置提供；没有名字池、名称占用或作用域释放接口。Info 协议为 `12.0.0`、manifest 版本为 `10`、snapshot payload 版本为 `9`，旧缓存须重新执行 `lake build MyLibrary:ps4html`；录制协议 `0.3.0` 与调用契约 `2` 不变。完整接口见 [Lean2TeX 说明](Lean2TeX/README.md)，实施进度见[重构计划](../../docs/Variable-Naming-Refactor-Plan-zh.md)。

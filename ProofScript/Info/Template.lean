@@ -2,21 +2,6 @@ import ProofScript.Info.Value
 
 namespace ProofScript
 
-/-- Literal ${name} references. Rendering and language fallback remain consumer responsibilities. -/
-def namedPlaceholders (template : String) : Array String := Id.run do
-  let chars := template.toList.toArray
-  let mut result := #[]
-  let mut index := 0
-  while index + 1 < chars.size do
-    if chars[index]! == '$' && chars[index + 1]! == '{' then
-      let start := index + 2
-      index := start
-      while index < chars.size && chars[index]! != '}' do index := index + 1
-      if index < chars.size then
-        result := result.push (String.ofList (chars.toList.drop start |>.take (index - start)))
-    index := index + 1
-  return result
-
 structure ArgumentReferences where
   arguments : Array Nat := #[]
   /-- (selected argument index, @ depth); @@0 selects the body after one binder. -/

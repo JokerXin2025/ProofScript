@@ -7,10 +7,10 @@ script_macro «exfalso»
 
 script_info «exfalso» {
   template := [{
-    lang := "zh", tag := "归假",
+    lang := zh, tag := "归假",
     content := "矛盾蕴涵任何目标"
   }, {
-    lang := "en", tag := "exfalso",
+    lang := en, tag := "exfalso",
     content := ""
   }]
 }
