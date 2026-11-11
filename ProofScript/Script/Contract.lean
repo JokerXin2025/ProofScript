@@ -26,12 +26,4 @@ def RecordingContract.ofRegistration (registration : ScriptTacticRegistration) :
 
 def RecordingContract.id (contract : RecordingContract) : String := (toJson contract).sha256
 
-/-- Only presentation validation uses this descriptor; it cannot dispatch execution. -/
-def RecordingContract.registration (contract : RecordingContract) : ScriptTacticRegistration :=
-  { ruleId := contract.ruleId, name := contract.name,
-     config := { kind := contract.kind, continuation := contract.continuation },
-    sourceKind := .anonymous, executionKind := .anonymous,
-    automaticRecordingKind := none, explicitRecordingKind := none,
-    explicitRecordingParent := none }
-
 end ProofScript

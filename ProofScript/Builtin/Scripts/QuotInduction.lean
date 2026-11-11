@@ -4,10 +4,12 @@ import ProofScript.Info.Commands
 
 #guard_msgs (drop info) in
 #check Quot.inductionOn
-script_macro «quotInduction» (intro := [a])
+script_macro «quotInduction»
 "quot_induction " q:term "with" a:ident => `(tactic|
   refine Quot.inductionOn $q (fun $a => ?_)
 )
+
+script_recorder «quotInduction» auto (intro := [a])
 
 script_info «quotInduction» {
   template := [{

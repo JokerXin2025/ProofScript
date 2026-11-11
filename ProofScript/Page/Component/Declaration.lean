@@ -58,8 +58,6 @@ elab "_record_theorem_statement" : tactic => withMainContext do
 private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyntax `ident)
     (binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinder))
     (type proof : TSyntax `term) : CommandElabM Unit := do
-  -- After the page closes, the native theorem checks the original proof.
-  if (getPageState (← getEnv)).closed then return
   let saved ← get
   modify fun state => { state with messages := {} }
   try
@@ -117,12 +115,8 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
               let capture ← `(tactic| _record_theorem_statement)
               let sequence : TSyntax ``tacticSeq := ⟨buildTacticSeq (#[capture.raw] ++ tactics)⟩
               check (← `(term| by $sequence:tacticSeq))
-              let beforeDocument ← getEnv
-              let document ← recordedProofJson label code moduleName
+              let (document, artifact) ← recordedProofJson label code moduleName
                 (artifactKey := some key) (path := path)
-              let some artifact := (moduleArtifacts (← getEnv) moduleName).find? (·.key == key)
-                | throwError "missing proof artifact"
-              setEnv beforeDocument
               pure (document, { artifact with declaration := some declaration })
         pure (some (document, artifact))
     let citations := stagedReferences.filter (!·.isDependency)
@@ -135,22 +129,31 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
         registerDeclarationFacts before declaration kind citations (proofSource := some helperName)
       if let some statements := statements? then
         modifyEnv fun env => registerScript env declaration type.raw (scriptStmtsToArray statements)
-      match registerProofArtifact (← getEnv) artifact with
-      | .ok env => setEnv env
-      | .error message => throwError message
       let moduleName ← getMainModule
-      let proofPath ← liftIO <| activeOutputPath (proofOutputPath moduleName declaration)
-      let proofRef ← liftIO <| resourceReferencePath proofPath
+      let proofRef := proofOutputPath moduleName declaration
       let sorryAx := (← collectAxioms helperName).contains ``sorryAx
       let component : Component := {
         kind := toString kind, declaration := some declaration
-        value := json% { proof: $(proofRef.toString), sorryAx: $sorryAx } }
-      let (env, added) ← match addComponent (← getEnv) component with
-        | .ok result => pure result
-        | .error message => throwErrorAt name message
-      setEnv env
-      unless added do logWarningAt name "page component appears after #page end and was ignored"
-      liftCoreM <| exportProofToFile proofPath document
+        value := json% {
+          proof: $(resourceJson proofRef document.pretty "application/vnd.proofscript.proof+json"),
+          sorryAx: $sorryAx } }
+      let requests := artifact.dependencies.map fun dependency =>
+        (⟨⟨dependency.kind, dependency.target⟩, dependency.required,
+          s!"theorem {declaration}", none⟩ : InfoRequest)
+      let requests := requests.push ⟨⟨"theorem", .inl declaration⟩, false,
+        s!"theorem {declaration}", none⟩
+      let requests := artifact.bindings.foldl (fun requests binding =>
+        requests.push ⟨⟨"script", .inl binding.contract.ruleId⟩, false,
+          s!"theorem {declaration}", none⟩) requests
+      let env ← match registerProofArtifact (← getEnv) artifact with
+        | .ok env => pure env
+        | .error message => throwError message
+      let env ← match registerProofDocument env artifact document with
+        | .ok env => pure env
+        | .error message => throwError message
+      match addComponent env component requests with
+      | .ok updated => setEnv updated
+      | .error message => throwErrorAt name message
       for reference in stagedReferences do stageTheoremRef reference
       for dependency in dependencies do stageTheoremRef dependency
     modify fun state => { state with messages := saved.messages ++ state.messages }
@@ -167,9 +170,7 @@ elab "script_lemma_impl " name:ident helper:ident binders:bracketedBinder*
     ":" type:term ":=" proof:term : command =>
   allowHashCommandLint <| elabDeclaration .«lemma» name helper binders type proof
 
-elab "scriptProof% " helper:ident " := " proof:term : term <= expectedType => do
-  if (getPageState (← getEnv)).closed then
-    return ← Term.elabTermEnsuringType proof (some expectedType)
+elab "scriptProof% " helper:ident " := " _proof:term : term <= expectedType => do
   let helperName := resolveHelperName helper (← getCurrNamespace)
   unless ((← getEnv).find? helperName).any (fun info => match info with
       | .defnInfo _ => true

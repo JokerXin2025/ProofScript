@@ -47,6 +47,7 @@ structure RecordingState where
   strategyBranches : List RecordingStrategyRoute := []
   pendingStrategies : List PendingRecordingStrategy := []
   openSteps : List RecordingSlot := []
+  executedInitial : List Name := []
   selectedContract : Option RecordingContract := none
   contractBindings : Array BoxContractBinding := #[]
   deriving Inhabited
@@ -226,6 +227,19 @@ def recordingSlotIsOpen {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] (slot : RecordingSlot) : m Bool := do
   return (← getRecordingState).openSteps.any (·.token == slot.token)
 
+/-- A successful step must reach V0 exactly once, even if recorder code returns early. -/
+def markInitialRecorder {m : Type → Type} [Monad m] [Lean.MonadEnv m]
+    [MonadLiftT IO m] (slot : RecordingSlot) : m Unit := do
+  let state ← getRecordingState
+  if state.executedInitial.contains slot.token then
+    return ← liftM (throw (IO.userError "script recorder executed its initial version more than once") : IO Unit)
+  modifyRecordingState fun state =>
+    { state with executedInitial := slot.token :: state.executedInitial }
+
+def initialRecorderExecuted {m : Type → Type} [Monad m] [Lean.MonadEnv m]
+    [MonadLiftT IO m] (slot : RecordingSlot) : m Bool := do
+  return (← getRecordingState).executedInitial.contains slot.token
+
 def getRecordingSlotItem {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] (slot : RecordingSlot) : m RecordedValue := do
   let state ← getRecordingState
@@ -290,7 +304,9 @@ def attachRecordingSlotContracts {m : Type → Type} [Monad m] [MonadEnv m]
 def closeRecordingSlot {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] (slot : RecordingSlot) : m Unit := do
   modifyRecordingState fun state =>
-    { state with openSteps := state.openSteps.filter (·.token != slot.token) }
+    { state with
+      openSteps := state.openSteps.filter (·.token != slot.token)
+      executedInitial := state.executedInitial.filter (· != slot.token) }
 
 /-- Actual invocation positions come only from structured proof data. Plain
     metadata cannot manufacture a child invocation or a binding obligation. -/
@@ -321,17 +337,18 @@ private partial def structuredStepPaths (steps : Array RecordedValue) (parent : 
     data needed by the file writer; a missing or empty root is an error. -/
 def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     [MonadLiftT IO m] (boxName : String) (code : String)
-    (owner : Name) (artifactKey : Option ArtifactKey := none) (path : String := "") : m Json := do
+    (owner : Name) (artifactKey : Option ArtifactKey := none) (path : String := "") :
+    m (Json × Artifact) := do
   unless (← getRecordingState).openSteps.isEmpty do
-    return ← liftM (throw (IO.userError "[ProofScript] Cannot export an unfinished recording step.") : IO Json)
+    return ← liftM (throw (IO.userError "[ProofScript] Cannot export an unfinished recording step.") : IO (Json × Artifact))
   unless (← getRecordingState).pendingStrategies.isEmpty &&
       (← getRecordingState).strategyBranches.isEmpty do
-    return ← liftM (throw (IO.userError "[ProofScript] Cannot export an unfinished recording strategy.") : IO Json)
+    return ← liftM (throw (IO.userError "[ProofScript] Cannot export an unfinished recording strategy.") : IO (Json × Artifact))
   let boxes := (← getRecordingState).boxes
   let some (_, proof) := boxes.find? (fun (name, _) => name == boxName)
-    | liftM (throw (IO.userError s!"[ProofScript] Box '{boxName}' has not been initialized.") : IO Json)
+    | liftM (throw (IO.userError s!"[ProofScript] Box '{boxName}' has not been initialized.") : IO (Json × Artifact))
   if proof.isEmpty then
-    return ← liftM (throw (IO.userError s!"[ProofScript] Box '{boxName}' is empty.") : IO Json)
+    return ← liftM (throw (IO.userError s!"[ProofScript] Box '{boxName}' is empty.") : IO (Json × Artifact))
   let state ← getRecordingState
   let stepPaths := structuredStepPaths proof #[.key "proof"]
   let statement ← requireRecordingStatement
@@ -350,28 +367,21 @@ def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     | .ok roots => pure roots
     | .error message => liftM (throw (IO.userError message) : IO (Array JsonPath))
   if state.contractBindings.any (·.box != boxName) then
-    return ← liftM (throw (IO.userError "[ProofScript] Cannot export unassembled child recording contracts.") : IO Json)
+    return ← liftM (throw (IO.userError "[ProofScript] Cannot export unassembled child recording contracts.") : IO (Json × Artifact))
   let bindings := (state.contractBindings.filter (·.box == boxName)).map fun entry =>
     { entry.binding with path := #[.key "proof", .index entry.index] ++ entry.binding.path }
   if let .error message := validateStepBindings proof bindings stepPaths then
-    return ← liftM (throw (IO.userError message) : IO Json)
+    return ← liftM (throw (IO.userError message) : IO (Json × Artifact))
   let dependencies ← match recordedDependencies (← getEnv) expressions document bindings expressionRoots with
     | .ok dependencies => pure dependencies
     | .error message => liftM (throw (IO.userError message) : IO (Array RenderDependency))
   let key := artifactKey.getD { owner, kind := .proof, name := boxName.toName }
+  -- The declaration command commits its artifact and document together after
+  -- it has checked the full theorem and registered semantic proof facts.
   let artifact : Artifact := {
     key, path, dependencies, bindings, contentDigest := document.sha256
     declaration := if (← getEnv).contains key.name then some key.name else none }
-  match registerProofArtifact (← getEnv) artifact with
-  | .ok env => setEnv env
-  | .error message => return ← liftM (throw (IO.userError message) : IO Json)
-  return document
-
-/-- Write a completed, immutable proof document. -/
-def exportProofToFile (fileName : System.FilePath) (proof : Json) : CoreM Unit := do
-  if let some parent := fileName.parent then
-    IO.FS.createDirAll parent
-  IO.FS.writeFile fileName proof.pretty
+  return (document, artifact)
 
 /-- Native tactic proofs retain their statement graph but have no recorded steps. -/
 def codeOnlyProofJson (owner : Name) (code : String) (statement : RecordedValue) :=

@@ -2,8 +2,12 @@ import ProofScript.Script.Command
 import ProofScript.Info.Commands
 
 
-script_macro «by» (clear := [tac, decr])
+script_macro «by»
 "by " tac:tactic decr:(str)? => `(tactic| $tac)
+
+script_recorder «by» => do
+  record_value "decr_before" (decr.map (·.getString) |>.getD "")
+  execute
 
 script_info «by» {
   template := [{

@@ -18,11 +18,12 @@ from .variable import VariableAllocator
 class Expr2TeX:
     """Public expression conversion, TeX rendering, and diagnostics."""
 
-    def __init__(self, registry: MacroRegistry | None = None, allocator: VariableAllocator | None = None):
+    def __init__(self, registry: MacroRegistry | None = None, allocator: VariableAllocator | None = None,
+                 *, definition_names: dict[str, str] | None = None, theorem_names: dict[str, str] | None = None):
         self.registry = registry or MacroRegistry()
         self.allocator = allocator or VariableAllocator()
         self.converter = SemanticConverter(self.registry, self.allocator)
-        self.layout = LayoutRenderer(self.registry)
+        self.layout = LayoutRenderer(self.registry, definition_names, theorem_names)
         self.diagnostics: list[RenderDiagnostic] = []
         self.parameter_templates = {}
         self.interactions: ExpressionInteractions | None = None
@@ -32,7 +33,8 @@ class Expr2TeX:
     @classmethod
     def from_config(cls, config: EffectiveConfiguration) -> Expr2TeX:
         """Create independent per-proof allocation and diagnostic state."""
-        renderer = cls(config.registry, VariableAllocator(config.variable_prefixes))
+        renderer = cls(config.registry, VariableAllocator(config.variable_prefixes),
+                       definition_names=config.definition_names, theorem_names=config.theorem_names)
         renderer.parameter_templates = config.parameter_templates
         return renderer
 
@@ -141,7 +143,8 @@ class Expr2TeX:
         if self.interactions:
             self.interactions.collect(tex)
             if self.interactions.enable_render_roots and not self.interactions._render_depth:
-                root = self.interactions.add_root(node, fragments, self.registry, language, parent_mode)
+                root = self.interactions.add_root(node, fragments, self.registry, language, parent_mode,
+                                                  self.layout.definition_names, self.layout.theorem_names)
                 tex = f"[[PS4HTML-ROOT-{root}]]{tex}[[PS4HTML-ENDROOT-{root}]]"
         self.diagnostics.extend(self.layout.diagnostics)
         return tex
@@ -180,7 +183,26 @@ class Expr2TeX:
         return self.render(relation)
 
 
-def load(export_root: str | Path, module: str, *, snapshot_id=None) -> Expr2TeX:
-    """Load a consumed module view, or explicitly select one persisted snapshot."""
-    from PS4HTML.info import InfoBundle
-    return Expr2TeX.from_config(InfoBundle(export_root).configuration(module, snapshot_id))
+def load(export_root: str | Path, module: str) -> Expr2TeX:
+    """Load frozen Info from an exported module document."""
+    import json
+    from Lean2TeX.configuration import interpret
+    from PS4HTML.info import name_text
+
+    root = Path(export_root)
+    path = root / "info" / Path(*module.split("."))
+    document = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
+    if document.get("schemaVersion") != "14.0.0":
+        raise ValueError("Unsupported ProofScript module Info version")
+    values = {}
+    for record in document["records"]:
+        identity = record["identity"]
+        kind = identity["kind"]
+        if kind not in ("definition", "theorem"):
+            continue
+        target = name_text(identity["target"])
+        fields = {key: value for key, value in record["value"].items() if key != "extra"}
+        if kind == "definition" and fields["alias_info"]["target"] is not None:
+            fields["alias_info"] = {"target": name_text(fields["alias_info"]["target"])}
+        values[kind, target] = fields
+    return Expr2TeX.from_config(interpret(values))

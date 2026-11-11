@@ -64,10 +64,6 @@ def parseComponentMetadata (stx : Syntax) : Except String ComponentMetadata := d
   | throw "component metadata requires 'title'"
   return { title := titleValue, label, extra }
 
-/-- Reject a component after `#page end` before running any component elaboration code. -/
-def beginPageComponent : CommandElabM Unit := do
-  ofExcept <| ensurePageOpen (← getEnv)
-
 /- `page_component` supplies this lexical instance while elaborating its body.
     Helpers constructed elsewhere cannot accidentally acquire that scope. -/
 private class PageComponentScope where
@@ -98,22 +94,14 @@ private def runPageBuild [PageComponentScope]
 macro "when_page_build" body:doSeq : doElem =>
   `(doElem| runPageBuild (fun () => do $body:doSeq))
 
-/-- Adds component data during page builds. `page_component` checks the page
-    boundary before the command body; `when_page_build` should guard validation,
-    JSON construction and resource IO within that body. -/
+/-- Adds component data during page builds. Requests and labels are committed
+    together with the component so failed elaboration cannot leave orphan requests. -/
 def addPageComponent (stx : Syntax) (kind : String) (value : Json)
-    (labels : Array (ReferenceKind × String) := #[]) : CommandElabM Unit := whenPageBuild do
-  let mut env ← getEnv
-  for (kind, label) in labels do
-    env ← match registerLabel env kind label with
-      | .ok nextEnv => pure nextEnv
-      | .error message => throwErrorAt stx message
-  let (nextEnv, added) ← match addComponent env { kind, value } with
-    | .ok result => pure result
-    | .error message => throwErrorAt stx message
-  unless added do
-    logWarningAt stx "page component appears after #page end and was ignored"
-  setEnv nextEnv
+    (labels : Array (ReferenceKind × String) := #[])
+    (requests : Array InfoRequest := #[]) : CommandElabM Unit := whenPageBuild do
+  match addComponent (← getEnv) { kind, value } requests labels with
+  | .ok env => setEnv env
+  | .error message => throwErrorAt stx message
 
 /-/ Define a page command whose invocation syntax is `#page <keyword> ...`.
 
@@ -121,16 +109,13 @@ def addPageComponent (stx : Syntax) (kind : String) (value : Json)
     the same syntax as native `elab`; the RHS has type
     `Lean.Elab.Command.CommandElabM Unit`.
 
-    The generated elaborator first calls `beginPageComponent`, so a command after
-    `#page end` fails before any RHS code runs. Page-only work inside the RHS uses
-    `when_page_build`; editor annotations can remain outside it. -/
+    Page-only work inside the RHS uses `when_page_build`; editor annotations can
+    remain outside it. -/
 macro doc?:(docComment)? "page_component" keyword:str
     args:(macroArg)* " => " rhs:term : command => do
   let component := keyword.getString.trimAscii.toString
   if component.isEmpty then
     Macro.throwErrorAt keyword "page_component requires a non-empty component name"
-  if component == "end" then
-    Macro.throwErrorAt keyword "`end` is reserved for `#page end` and cannot be a page component name"
   let page ← `(macroArg| "#page")
   let first ← `(macroArg| &$keyword:str)
   -- Keep the category unscoped, as Lean's elab_rules dispatches on its name.
@@ -138,7 +123,6 @@ macro doc?:(docComment)? "page_component" keyword:str
   `(command| $[$doc?:docComment]? elab $page:macroArg $first:macroArg
       $args:macroArg* : $category:ident => do
     Lean.Elab.Command.allowHashCommandLint do
-      ProofScript.beginPageComponent
       withPageComponentScope fun scope =>
         letI : PageComponentScope := scope
         let action : Lean.Elab.Command.CommandElabM Unit := $rhs

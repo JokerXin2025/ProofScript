@@ -8,7 +8,7 @@
     const minSidebar = 240;
     const minContent = 480;
     const step = 24;
-    const storageKey = "ps4html:sidebar-width";
+    const parameter = "ps4html-sidebar-width";
     let width = null;
     let pointer = null;
     let frame = null;
@@ -29,17 +29,27 @@
     }
 
     function save() {
-        try { localStorage.setItem(storageKey, String(Math.round(width))); } catch (_) { /* storage unavailable */ }
+        if (width === null) return;
+        const url = new URL(window.location.href);
+        url.searchParams.set(parameter, String(Math.round(width)));
+        window.history.replaceState(window.history.state, "", url);
+        window.PS4HTMLNavigationState?.carryToLinks();
+        document.dispatchEvent(new Event("ps4html:sidebarchange"));
     }
 
-    try {
-        const stored = Number(localStorage.getItem(storageKey));
-        if (stored >= minSidebar) update(stored);
-    } catch (_) { /* storage unavailable */ }
-    if (width === null) {
-        splitter.setAttribute("aria-valuemax", String(bounds()));
-        splitter.setAttribute("aria-valuenow", String(Math.round(splitter.getBoundingClientRect().left - layout.getBoundingClientRect().left)));
+    function restore() {
+        const raw = new URL(window.location.href).searchParams.get(parameter);
+        const value = raw !== null && /^\d+$/.test(raw) ? Number(raw) : NaN;
+        if (Number.isSafeInteger(value) && value >= minSidebar) update(value);
+        else {
+            width = null;
+            layout.style.removeProperty("--sidebar-width");
+            splitter.setAttribute("aria-valuemax", String(bounds()));
+            splitter.setAttribute("aria-valuenow", String(Math.round(splitter.getBoundingClientRect().left - layout.getBoundingClientRect().left)));
+        }
     }
+    restore();
+    window.addEventListener("popstate", restore);
 
     splitter.addEventListener("pointerdown", event => {
         if (!event.isPrimary || event.button !== 0) return;

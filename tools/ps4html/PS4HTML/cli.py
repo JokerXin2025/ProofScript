@@ -2,9 +2,18 @@ import argparse
 from pathlib import Path
 
 from PS4HTML.clean import clean
-from PS4HTML.make import make, build_library, build_module
 from PS4HTML.project import PS4HTMLError
 from PS4HTML.serve import serve
+
+
+def render_target(manifest: Path):
+    from PS4HTML.module_protocol import render_target as render
+    return render(manifest)
+
+
+def render_cached():
+    from PS4HTML.module_protocol import render_cached_targets
+    return render_cached_targets()
 
 
 def main():
@@ -12,21 +21,10 @@ def main():
     commands = parser.add_subparsers(dest="command", required=True)
     cache = commands.add_parser("make", help="Render existing ProofScript exports only")
     cache.add_argument("-c", "--cache", action="store_true", required=True)
-    cache.set_defaults(func=lambda args: make())
-    library = commands.add_parser("_build-library", help="Internal Lake facet entry point")
-    library.add_argument("package")
-    library.add_argument("library")
-    library.add_argument("--build-dir", type=Path, required=True)
-    library.add_argument("modules_and_sources", nargs="+")
-    library.set_defaults(func=lambda args: build_library(args.package, args.library, args.modules_and_sources,
-                                                       build_dir=args.build_dir))
-    module = commands.add_parser("_build-module", help="Internal Lake module facet entry point")
-    module.add_argument("package")
-    module.add_argument("module")
-    module.add_argument("--build-dir", type=Path, required=True)
-    module.add_argument("source")
-    module.set_defaults(func=lambda args: build_module(args.package, args.module, args.source,
-                                                     build_dir=args.build_dir))
+    cache.set_defaults(func=lambda args: render_cached())
+    rendered = commands.add_parser("_render-target", help="Render a completed ProofScript target")
+    rendered.add_argument("manifest", type=Path)
+    rendered.set_defaults(func=lambda args: render_target(args.manifest))
     commands.add_parser("clean").set_defaults(func=lambda args: clean(True))
     preview = commands.add_parser("serve", help="Serve .PS4HTML/build with Wasm headers")
     preview.add_argument("target", nargs="?", default=".")
@@ -40,5 +38,5 @@ def main():
     args = parser.parse_args()
     try:
         args.func(args)
-    except (PS4HTMLError, OSError) as error:
+    except (PS4HTMLError, OSError, KeyError, TypeError, ValueError) as error:
         parser.exit(1, f"ps4html: error: {error}\n")

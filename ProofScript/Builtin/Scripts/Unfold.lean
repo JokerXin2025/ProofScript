@@ -4,10 +4,12 @@ import ProofScript.Info.Commands
 open Lean.Parser.Tactic (location)
 
 
-script_macro «unfold» (clear := [defs, loc])
+script_macro «unfold»
 "unfold" defs:(ppSpace colGt ident)+ loc:(location)? => `(tactic|
   unfold $defs* $[$loc]?
 )
+
+script_recorder «unfold» auto (clear := [defs, loc])
 
 script_info «unfold» {
   template := [{

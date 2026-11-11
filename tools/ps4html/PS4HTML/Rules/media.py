@@ -1,4 +1,5 @@
 import base64
+import hashlib
 import html
 import json
 import mimetypes
@@ -63,7 +64,7 @@ def render_latex(value, project_root: Path | None = None,
     ), []
 
 
-def render_figure(value, project_root: Path) -> tuple[str, list[dict]]:
+def render_figure(value, project_root: Path, export_root: Path | None = None) -> tuple[str, list[dict]]:
     if not isinstance(value, dict):
         return _error("Figure", "Invalid figure component")
     metadata, resource, extension = value.get("metadata"), value.get("path"), value.get("extension")
@@ -72,15 +73,24 @@ def render_figure(value, project_root: Path) -> tuple[str, list[dict]]:
     relative = Path(resource)
     if relative.is_absolute():
         return _error(_title(metadata, "Figure"), "Figure resource path must be relative")
-    path = (project_root / relative).resolve()
+    source_root = project_root
+    if export_root is not None:
+        descriptor = value.get("resource", {}).get("$resource") if isinstance(value.get("resource"), dict) else None
+        if not isinstance(descriptor, dict) or descriptor.get("path") != resource or not resource.startswith(".ProofScript/resources/"):
+            raise PS4HTMLError("Figure has no matching exported resource")
+        relative = Path(resource.removeprefix(".ProofScript/"))
+        source_root = export_root
+    path = (source_root / relative).resolve()
     try:
-        path.relative_to(project_root.resolve())
+        path.relative_to(source_root.resolve())
     except ValueError:
         return _error(_title(metadata, "Figure"), "Figure resource escapes the Lean project")
     try:
         content = path.read_bytes()
     except OSError as error:
         return _error(_title(metadata, "Figure"), f"Unable to read figure resource: {error}")
+    if export_root is not None and hashlib.sha256(content).hexdigest() != descriptor.get("hash"):
+        raise PS4HTMLError("Figure resource hash mismatch")
     mime = mimetypes.guess_type(path.name)[0]
     if mime is None:
         mime = "image/svg+xml" if extension.lower() == "svg" else f"image/{extension.lower()}"

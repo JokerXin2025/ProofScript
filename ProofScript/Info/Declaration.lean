@@ -121,7 +121,8 @@ def registerDeclarationFacts (before : Environment) (declaration : Name)
     declaration, ownerModule := env.mainModule, declarationKind := kind,
     proofRefs := (dependencies.foldl RefInfo.mergeRef citations).toArray }
   -- Register the declaration's owner without freezing presentation configuration.
-  let env ← match commitInfo theoremSpec env declaration #[] with
+  let env ← match commitInfo theoremSpec env declaration #[] #[] false
+      s!"{← getFileName}:{(← getFileMap).toPosition ((← getRef).getPos?.getD 0)}" with
     | .ok env => pure env
     | .error error => throwError error.render
   let env := capture.expanded.foldl (fun env name constants =>

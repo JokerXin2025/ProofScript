@@ -8,6 +8,11 @@ const viewport = {
     clientWidth: 450, style: {},
     querySelector: selector => selector === ':scope > .ps-fit-content' ? content : null,
 };
+let reads = 0;
+let naturalWidth = content.scrollWidth;
+Object.defineProperty(content, 'scrollWidth', {
+    get() { reads++; return naturalWidth; }, set(value) { naturalWidth = value; },
+});
 const document = {
     querySelectorAll: selector => selector === '.ps-fit-viewport' ? [viewport] : [],
     addEventListener: (name, handler) => handlers.set(name, handler),
@@ -23,6 +28,10 @@ handlers.get('resize')();
 frame();
 assert.equal(content.style.transform, 'scale(0.5)', 'oversized content fits the available width');
 assert.equal(viewport.style.height, '60px', 'the box reserves the scaled content height');
+const firstReads = reads;
+handlers.get('resize')();
+frame();
+assert.ok(reads - firstReads <= 2, 'unchanged viewport skips width-reset layout work');
 
 viewport.clientWidth = 1000;
 handlers.get('resize')();

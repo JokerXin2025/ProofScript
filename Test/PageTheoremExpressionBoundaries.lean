@@ -20,7 +20,7 @@ def BoundaryBinary (a b : Nat) : Nat := a + b
 
 wrapper_info BoundaryWrap { index := some 0 }
 alias_info BoundaryAlias { target := some Eq }
-decl_info BoundaryBinary { concept_info := { templates := [
+decl_info BoundaryBinary { «concept_info» := { templates := [
     { label := "formula", content := "#0+#1" },
     { label := "call", lang := zh, content := "\\operatorname{binary}(#0,#1)" },
     { label := "call", lang := en, content := "\\operatorname{binary}(#0,#1)" }
@@ -32,10 +32,10 @@ def BoundaryPower (_ : Nat) (_ : String) : Prop := True
 
 -- The only ungrouped linear template can expose HTML string styles. Fraction
 -- and superscript must keep their strings inside KaTeX.
-decl_info BoundaryLinear { concept_info := { templates := [{ label := "formula", content := "#0+#1+#2" }] } }
-decl_info BoundaryFraction { concept_info := { templates := [{ label := "formula", content := "\\frac{#0}{#1}",
+decl_info BoundaryLinear { «concept_info» := { templates := [{ label := "formula", content := "#0+#1+#2" }] } }
+decl_info BoundaryFraction { «concept_info» := { templates := [{ label := "formula", content := "\\frac{#0}{#1}",
                    isolated_arguments := [0, 1] }] } }
-decl_info BoundaryPower { concept_info := { templates := [{ label := "formula", content := "{#0}^{#1}",
+decl_info BoundaryPower { «concept_info» := { templates := [{ label := "formula", content := "{#0}^{#1}",
                    isolated_arguments := [1] }] } }
 
 -- Wrapper and alias preserve their original application and relation meaning.
@@ -103,6 +103,5 @@ universe u v
      second + first) = (x + 1) * 3 := by
   admit
 
-#page end
 
 end PageTheoremExpressionBoundaries

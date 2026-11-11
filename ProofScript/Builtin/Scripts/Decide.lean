@@ -4,8 +4,10 @@ import ProofScript.Info.Commands
 open Lean.Parser.Tactic (optConfig)
 
 
-script_macro «decide» (clear := [config])
+script_macro «decide»
 "decide" config:optConfig => `(tactic| decide $config)
+
+script_recorder «decide» auto (clear := [config])
 
 script_info «decide» {
   template := [{
@@ -17,5 +19,7 @@ script_info «decide» {
   }]
 }
 
-script_macro «nativeDecide» (clear := [config])
+script_macro «nativeDecide»
 "native_decide" config:optConfig => `(tactic| native_decide $config)
+
+script_recorder «nativeDecide» auto (clear := [config])

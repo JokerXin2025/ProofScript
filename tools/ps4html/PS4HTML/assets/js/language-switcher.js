@@ -1,11 +1,21 @@
 (function () {
     const supported = ["zh", "en"];
-    const stored = window.localStorage.getItem("ps4html-language");
+    const parameter = "ps4html-language";
     const pageDefault = document.documentElement.dataset.defaultLanguage;
-    const initial = supported.includes(stored) ? stored : (supported.includes(pageDefault) ? pageDefault : "zh");
+    const fallback = supported.includes(pageDefault) ? pageDefault : "zh";
+    const currentLanguage = () => {
+        const value = new URL(window.location.href).searchParams.get(parameter);
+        return supported.includes(value) ? value : fallback;
+    };
 
-    function setLanguage(language) {
+    function setLanguage(language, writeUrl = true) {
         if (!supported.includes(language)) return;
+        if (writeUrl) {
+            const url = new URL(window.location.href);
+            if (language === fallback) url.searchParams.delete(parameter);
+            else url.searchParams.set(parameter, language);
+            window.history.replaceState(window.history.state, "", url);
+        }
         document.documentElement.dataset.language = language;
         document.querySelectorAll("[data-language-panel]").forEach(panel => {
             panel.hidden = panel.dataset.languagePanel !== language;
@@ -20,7 +30,7 @@
         document.querySelectorAll(".language-menu [data-language]").forEach(item => {
             item.setAttribute("aria-checked", item.dataset.language === language ? "true" : "false");
         });
-        window.localStorage.setItem("ps4html-language", language);
+        window.PS4HTMLNavigationState?.carryToLinks();
         document.dispatchEvent(new CustomEvent("ps4html:languagechange", {detail: {language}}));
         document.dispatchEvent(new Event("ps4html:layoutchange"));
     }
@@ -64,5 +74,6 @@
         if (event.key === "Escape") closeMenus();
     });
 
-    window.addEventListener("DOMContentLoaded", () => setLanguage(initial));
+    window.addEventListener("DOMContentLoaded", () => setLanguage(currentLanguage(), false));
+    window.addEventListener("popstate", () => setLanguage(currentLanguage(), false));
 })();

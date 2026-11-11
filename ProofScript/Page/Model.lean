@@ -14,13 +14,11 @@ structure Component where
   declaration : Option Name := none
   /-- Reference metadata is resolved in the page owner's final module view. -/
   references : Array RefInfo := #[]
-  snapshotId : Option String := none
 deriving Inhabited
 
 instance : ToJson Component where
-  toJson component := Json.mkObj <|
-    [("data", Json.mkObj [(component.kind, json% { value: $(component.value) })])] ++
-      component.snapshotId.toList.map fun id => ("snapshotId", toJson id)
+  toJson component := Json.mkObj
+    [("data", Json.mkObj [(component.kind, json% { value: $(component.value) })])]
 
 structure Page where
   module : Name

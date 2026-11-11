@@ -10,12 +10,11 @@ open Lean
 /-- A proof's project and dependency set resolved together in its owner's final module view. -/
 structure FrozenTheoremFacts where
   query : Query
-  snapshotId : String
   value : TheoremExport
   deriving Inhabited
 
 def freezeTheoremFacts (env : Environment) (registry : ProjectRegistry) (query : Query)
-    (snapshotId : String) (declaration : Name) :
+    (declaration : Name) :
     Except Diagnostic FrozenTheoremFacts :=
   (do
     let some facts := declarationFacts? env declaration
@@ -30,15 +29,15 @@ def freezeTheoremFacts (env : Environment) (registry : ProjectRegistry) (query :
       let targetProject := resolveTheoremProject env registry ref.name
       if targetProject == some project then dependencies := dependencies.push ref.name
     let value ← (TheoremExport.create declaration facts.declarationKind project.projectId facts.proofRefs dependencies).mapError fun message => { message }
-    return { query, snapshotId, value }
+    return { query, value }
       : Except Diagnostic FrozenTheoremFacts).mapError fun error =>
         { error with kind := some theoremSpec.kind, target := some declaration.toString }
 
 /-- Rendering and semantic facts must use the artifact owner's final module view. -/
 def theoremFactsForArtifact (env : Environment) (registry : ProjectRegistry) (artifact : Artifact)
-    (snapshotId : String) : Except Diagnostic (Option FrozenTheoremFacts) := do
+    : Except Diagnostic (Option FrozenTheoremFacts) := do
   if artifact.key.kind != .proof then return none
   let some declaration := artifact.declaration | return none
-  return some (← freezeTheoremFacts env registry artifact.query snapshotId declaration)
+  return some (← freezeTheoremFacts env registry artifact.query declaration)
 
 end ProofScript

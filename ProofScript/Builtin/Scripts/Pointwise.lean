@@ -96,8 +96,10 @@ macro "pointwise" loc:(location)? : tactic => `(tactic|
   ] $[$loc]?
 )
 
-script_macro «pointwise» (clear := [loc])
+script_macro «pointwise»
 "pointwise" loc:(location)? => `(tactic| pointwise $[$loc]?)
+
+script_recorder «pointwise» auto (clear := [loc])
 
 script_info «pointwise» {
   template := [{

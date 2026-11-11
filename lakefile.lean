@@ -14,23 +14,37 @@ lean_lib ProofScript
 
 lean_lib Test where
   roots := #[
-    `Test.CalcRecorder,
-    `Test.Cite,
-    `Test.RecorderVersions,
-    `Test.RecorderVersionImport,
-    `Test.PageTheoremMathlib,
-    `Test.PageTheoremQualified,
-    `Test.RecorderVersionFixture,
-    `Test.RecorderVersionExtension,
-    `Test.PageTitle,
-    `Test.PageTheoremExpressionInteractions,
-    `Test.PageTheoremExpressionBoundaries]
+    `Test.ClassicalFormula,
+    `Test.PageScriptBoard,
+    `Test.RecorderAuto,
+    `Test.RecorderStage3,
+    `Test.RecorderVersionBase,
+    `Test.RecorderVersionExtension
+  ]
 
-lean_exe proofscriptExport where
-  root := `ProofScript.Output.Main
+lean_exe proofscriptModuleExport where
+  root := `ProofScript.Output.ModuleMain
   supportInterpreter := true
 
 namespace ProofScriptPageBuild
+
+private def encodePart (text : String) : String := Id.run do
+  let mut result := ""
+  let digits := "0123456789ABCDEF".toList.toArray
+  for byte in text.toUTF8.data do
+    let char := Char.ofNat byte.toNat
+    if byte.toNat < 128 && (char.isAlphanum || char == '_') then
+      result := result.push char
+    else
+      result := result ++ "%" ++ String.singleton digits[byte.toNat / 16]! ++
+        String.singleton digits[byte.toNat % 16]!
+  return result
+
+private def encodedName (name : Name) : String :=
+  String.intercalate "/" (name.components.map fun part => match part with
+    | .num _ index => "%N" ++ toString index
+    | .str _ text => encodePart text
+    | .anonymous => "")
 
 private partial def dependsOn (pkg : Package) (key : Name) : Bool :=
   pkg.keyName == key || pkg.depPkgs.any (dependsOn · key)
@@ -49,8 +63,7 @@ private def pageConfig (sources : NameSet) (buildRoot : FilePath) (pkg : Package
   if sources.contains pkg.keyName then
     { pkg.config with
       buildDir := buildRoot / s!"{pkg.wsIdx}-{pkg.baseName}"
-      enableArtifactCache? := some false
-      restoreAllArtifacts? := some true }
+      enableArtifactCache? := some false }
   else pkg.config
 
 private partial def remapDeps (sources : NameSet) (buildRoot : FilePath) (pkg : Package) : Array Package :=
@@ -88,11 +101,8 @@ def pageOptions (ws : Workspace) (sources : NameSet)
         LeanOptions.ofArray #[⟨`weak.pageBuild, .ofBool true⟩])
     else options
 
-def buildRoot (ws : Workspace) (lib : LeanLib) : FilePath :=
-  ws.root.dir / ".lake" / "ps4html" / lib.pkg.baseName.toString / lib.name.toString
-
-def moduleBuildRoot (ws : Workspace) (mod : Lake.Module) : FilePath :=
-  ws.root.dir / ".lake" / "ps4html" / mod.pkg.baseName.toString / ".modules" / mod.name.toString
+def exportBuildRoot (ws : Workspace) (lib : LeanLib) : FilePath :=
+  ws.root.dir / ".lake" / "proofscript" / lib.pkg.baseName.toString / lib.name.toString
 
 inductive PageTarget where
   | library (lib : LeanLib)
@@ -114,62 +124,6 @@ def PageTarget.lib : PageTarget → LeanLib
   | .library lib => lib
   | .module mod => mod.lib
 
-def PageTarget.buildRoot (ws : Workspace) : PageTarget → FilePath
-  | .library lib => ProofScriptPageBuild.buildRoot ws lib
-  | .module mod => moduleBuildRoot ws mod
-
-private def checkedJson [FromJson α] (value : Json) (field : String) : IO α :=
-  match value.getObjValAs? α field with
-  | .ok result => pure result
-  | .error message => throw <| IO.userError s!"invalid PS4HTML session field {field}: {message}"
-
-structure Session where
-  file : FilePath
-  value : Json
-  buildRoot : FilePath
-  exportRoot : FilePath
-
-/-- The Python coordinator owns the project lock and cleans this session's Lean directory. -/
-def readSession (ws : Workspace) (selection : PageTarget) : IO Session := do
-  let some session ← IO.getEnv "PS4HTML_BUILD_SESSION"
-    | throw <| IO.userError "ps4htmlInputs requires a PS4HTML build session; use the ps4html facet"
-  let file := FilePath.mk session |>.normalize
-  let value ← match Json.parse (← IO.FS.readFile file) with
-    | .ok value => pure value
-    | .error message => throw <| IO.userError s!"invalid PS4HTML session JSON: {message}"
-  unless (← checkedJson (α := Nat) value "schemaVersion") == 1 do
-    throw <| IO.userError "unsupported PS4HTML build session version"
-  let targetKind ← match value.getObjVal? "targetKind" with
-    | .error _ => pure "library"
-    | .ok _ => checkedJson (α := String) value "targetKind"
-  unless targetKind == selection.kind &&
-      (← checkedJson (α := String) value "package") == selection.pkg.baseName.toString &&
-      (← checkedJson (α := String) value selection.kind) == selection.name.toString do
-    throw <| IO.userError s!"PS4HTML build session does not match the requested {selection.kind}"
-  let sessionBuild := FilePath.mk (← checkedJson value "buildRoot") |>.normalize
-  let exportRoot := FilePath.mk (← checkedJson value "exportRoot") |>.normalize
-  unless sessionBuild.isAbsolute && sessionBuild == (selection.buildRoot ws).normalize do
-    throw <| IO.userError s!"PS4HTML session must use the {selection.kind}'s dedicated page build directory"
-  let staging := (ws.root.dir / ".PS4HTML" / "staging").normalize.toString ++ "/"
-  unless file.isAbsolute && file.toString.startsWith staging &&
-      exportRoot == file.parent.getD ws.root.dir / "release" / ".ProofScript" do
-    throw <| IO.userError "PS4HTML exports must use the build session's unpublished release directory"
-  unless (← IO.getEnv "PROOF_SCRIPT_OUTPUT_ROOT") == some exportRoot.toString do
-    throw <| IO.userError "PROOF_SCRIPT_OUTPUT_ROOT disagrees with the PS4HTML session"
-  IO.FS.createDirAll sessionBuild
-  unless (← sessionBuild.readDir).isEmpty do
-    throw <| IO.userError "PS4HTML page build directory was not cleaned before starting Lake"
-  let supportNames : Array String ← match value.getObjVal? "supportPackages" with
-    | .error _ => pure #[]
-    | .ok _ => checkedJson value "supportPackages"
-  let required := sourcePackages ws selection.pkg
-  for name in supportNames do
-    let some pkg := ws.packages.find? (·.baseName.toString == name)
-      | throw <| IO.userError s!"unknown PS4HTML support package: {name}"
-    if required.contains pkg.keyName then
-      throw <| IO.userError s!"PS4HTML package {name} requires page compilation; supportPackages cannot exclude the selected package, ProofScript, or its dependent packages"
-  return { file, value, buildRoot := sessionBuild, exportRoot }
-
 def mappedLibrary (ws : Workspace) (original : LeanLib) : FetchM LeanLib := do
   let some pkg := ws.findPackageByKey? original.pkg.keyName | error "page build package not found"
   let some lib := pkg.findLeanLib? original.name | error "page build library not found"
@@ -179,17 +133,6 @@ def mappedModule (ws : Workspace) (original : Lake.Module) : FetchM Lake.Module 
   let lib ← mappedLibrary ws original.lib
   let some mod := lib.findModule? original.name | error "page build module not found"
   return mod
-
-def PageTarget.inputs (ws : Workspace) : PageTarget → FetchM (Array Lake.Module × Job Unit)
-  | .library original => do
-    let lib ← mappedLibrary ws original
-    let job ← lib.leanArts.fetch
-    let owners ← (← lib.modules.fetch).await
-    return (owners, job)
-  | .module original => do
-    let mod ← mappedModule ws original
-    let job ← mod.leanArts.fetch
-    return (#[mod], job.mix (Job.pure ()))
 
 def moduleClosure (mods : Array Lake.Module) : FetchM (Array Lake.Module) := do
   let mut seen : ModuleSet := ∅
@@ -201,108 +144,139 @@ def moduleClosure (mods : Array Lake.Module) : FetchM (Array Lake.Module) := do
         result := result.push dep
   return result
 
-def sessionManifest (session : Session) (ws : Workspace) (selection : PageTarget)
-    (sources : NameSet) (owners libraryModules modules : Array Lake.Module) : Json :=
-  let selected := selection.lib
-  let project := json% { "package": $(selected.pkg.baseName.toString), library: $(selected.name.toString) }
-  session.value
-    |>.setObjVal! "buildMode" (.str "page")
-    |>.setObjVal! "owners" (toJson (owners.map (·.name.toString)))
-    |>.setObjVal! "selectedProject" project
-    |>.setObjVal! "projects" (.arr (ws.root.leanLibs.map fun lib => json% {
-      "package": $(lib.pkg.baseName.toString), library: $(lib.name.toString) }))
-    |>.setObjVal! "projectRoots" (toJson (selected.roots.map (·.toString)))
-    |>.setObjVal! "libraryModules" (toJson (libraryModules.map (·.name.toString)))
-    |>.setObjVal! "moduleProjects" (.arr (owners.map fun mod => json% {
-      module: $(mod.name.toString), "package": $(selected.pkg.baseName.toString),
-      library: $(selected.name.toString) }))
-    |>.setObjVal! "closureProjects" (.arr (modules.map fun mod => json% {
-      module: $(mod.name.toString), "package": $(mod.lib.pkg.baseName.toString),
-      library: $(mod.lib.name.toString) }))
-    |>.setObjVal! "sourcePackages" (toJson (ws.packages.filterMap fun pkg =>
-      if sources.contains pkg.keyName then some pkg.baseName.toString else none))
-    |>.setObjVal! "modules" (.arr (modules.map fun mod => json% {
-      name: $(mod.name.toString), "package": $(mod.pkg.baseName.toString),
-      source: $(mod.leanFile.toString), olean: $(mod.oleanFile.toString),
-      c: $(mod.cFile.toString), setup: $(mod.setupFile.toString) }))
+end ProofScriptPageBuild
 
-/-- Both scopes compile in the same isolated page environment, exporting only their owners. -/
-def buildInputs (selection : PageTarget) : FetchM (Job Unit) := do
+namespace ProofScriptPageBuild
+
+/-- Run a module export after its page-mode .olean and the independent exporter exist. -/
+def exportTarget (selection : PageTarget) : FetchM (Job FilePath) := do
   let ws ← getWorkspace
-  let session ← readSession ws selection
   let sources := sourcePackages ws selection.pkg
-  let workspace := remapWorkspace ws sources session.buildRoot
-  let options := pageOptions ws sources (← getLeanOptOverrides)
-  withTheReader BuildContext (fun context => { context with
-      opaqueWs := workspace, leanOptOverrides := options }) do
-    let (owners, inputJob) ← selection.inputs workspace
-    let some exporter ← findLeanExe? `proofscriptExport | error "ProofScript Info exporter not found"
-    let exporterJob ← exporter.fetch
-    let selectedLib ← mappedLibrary workspace selection.lib
-    let libraryModules ← (← selectedLib.modules.fetch).await
-    -- All library modules must be elaborated: project_info may be introduced by a macro
-    -- in a root that is not imported by the selected module.
-    let metadataModules := match selection with
-      | .library _ => #[]
-      | .module _ => libraryModules.filter fun mod => !owners.any (·.name == mod.name)
-    let mut jobs := inputJob
-    for mod in metadataModules do
-      jobs := (jobs.mix (← mod.leanArts.fetch)).map (fun _ => ())
-    let modules ← moduleClosure (owners ++ metadataModules)
-    (jobs.mix exporterJob).mapM fun _ => do
-      IO.FS.writeFile session.file (sessionManifest session workspace selection sources owners libraryModules modules).pretty
-      proc {
-        cmd := exporter.file.toString
-        args := #[session.exportRoot.toString] ++ owners.map (·.name.toString)
-        cwd := workspace.root.dir
-        env := (← getAugmentedEnv).push ("PROOF_SCRIPT_OUTPUT_ROOT", some session.exportRoot.toString)
-      }
-
-/-- Hand off publication to Python without first building the ordinary Lean artifacts. -/
-def buildSite (selection : PageTarget) : FetchM (Job FilePath) := do
-  let mods ← match selection with
+  let workspace := remapWorkspace ws sources (exportBuildRoot ws selection.lib)
+   let options := pageOptions ws sources (← getLeanOptOverrides)
+  let originalModules ← match selection with
     | .library lib => (← lib.modules.fetch).await
     | .module mod => pure #[mod]
-  let root ← getRootPackage
-  Job.async do
-    let relative := match selection with
-      | .library _ => FilePath.mk selection.name.toString
-      | .module mod => FilePath.mk mod.lib.name.toString
-    let output := root.dir / ".PS4HTML" / "build" / selection.pkg.baseName.toString / relative / "index.html"
+  withTheReader BuildContext (fun context => { context with
+      opaqueWs := workspace, leanOptOverrides := options }) do
+    let owners ← originalModules.mapM (mappedModule workspace)
+    let library ← mappedLibrary workspace selection.lib
+    let inventory ← (← library.modules.fetch).await
+    let mut exports : Job Unit := Job.pure ()
+    let some exporter ← findLeanExe? `proofscriptModuleExport
+      | error "ProofScript module exporter not found"
+    let executable ← exporter.fetch
+    let framework := ws.packages.findSome? fun pkg =>
+      if pkg.baseName == `ProofScript then some pkg.dir else none
+    let some framework := framework | error "ProofScript package not found"
+    let output := ws.root.dir / ".ProofScript"
+    let build := exportBuildRoot ws selection.lib
+    for owner in owners do
+      let compiled ← owner.leanArts.fetch
+      let closure ← moduleClosure #[owner]
+      let manifest := json% {
+         schemaVersion: 1,
+         sourcePackages: $(ws.packages.filterMap fun pkg =>
+           if sources.contains pkg.keyName then some pkg.baseName.toString else none),
+        selectedProject: { "package": $(selection.pkg.baseName.toString),
+          library: $(selection.lib.name.toString) },
+        projects: $((#[selection.lib]).map fun lib => json% {
+          "package": $(lib.pkg.baseName.toString), library: $(lib.name.toString) }),
+        projectRoots: $(selection.lib.roots.map (·.toString)),
+        libraryModules: $(inventory.map (·.name.toString)),
+        moduleProjects: $((#[owner]).map fun mod => json% {
+          module: $(mod.name.toString), "package": $(selection.pkg.baseName.toString),
+          library: $(selection.lib.name.toString) }),
+         closureProjects: $(closure.map fun mod => json% {
+           module: $(mod.name.toString), "package": $(mod.lib.pkg.baseName.toString),
+           library: $(mod.lib.name.toString) }),
+         modules: $(closure.map fun mod => json% {
+           name: $(mod.name.toString), "package": $(mod.pkg.baseName.toString),
+           source: $(mod.leanFile.toString), olean: $(mod.oleanFile.toString),
+           c: $(mod.cFile.toString), setup: $(mod.setupFile.toString) }),
+         moduleManifest: $(s!"manifests/modules/{encodedName owner.name}.json") }
+      let job ← (compiled.mix executable).mapM fun _ => do
+        let metadata := build / "exports" / selection.kind / encodedName owner.name / "build.json"
+        let descriptor := build / "exports" / selection.kind / encodedName owner.name / "descriptor.json"
+        IO.FS.createDirAll metadata.parent.get!
+        IO.FS.writeFile metadata manifest.pretty
+        let python := (← IO.getEnv "PROOF_SCRIPT_PYTHON").getD "python3"
+        let publisher := framework / "tools" / "proofscript" / "module_export.py"
+        let scripts := #[framework / "scripts" / "build-computations.mjs",
+           framework / "scripts" / "finalize-computations.mjs",
+           framework / "scripts" / "computation-build-paths.mjs",
+           framework / "tools" / "proofscript" / "export_cache.py",
+           framework / "tools" / "proofscript" / "target_manifest.py"]
+        let cache ← IO.Process.output {
+          cmd := python,
+          args := #[ (framework / "tools" / "proofscript" / "export_cache.py").toString,
+            metadata.toString, output.toString,
+             (output / "manifests" / "modules" /
+               s!"{encodedName owner.name}.json").toString,
+            exporter.file.toString, publisher.toString] ++ scripts.map (·.toString),
+          cwd := ws.root.dir }
+        if cache.exitCode == 0 then return
+        unless cache.exitCode == 1 do
+          error s!"ProofScript export cache check failed: {cache.stderr}"
+        proc {
+          cmd := exporter.file.toString,
+          args := #[descriptor.toString, output.toString,
+            publisher.toString,
+            framework.toString, owner.name.toString],
+          cwd := ws.root.dir,
+          env := (← getAugmentedEnv).push
+            ("PROOF_SCRIPT_BUILD_MANIFEST", some metadata.toString)
+            |>.push ("PROOF_SCRIPT_EXPORT_FINGERPRINT", some cache.stdout.trimAscii.toString)
+        }
+      exports := (exports.mix job).map (fun _ => ())
+    exports.mapM fun _ => do
+      let python := (← IO.getEnv "PROOF_SCRIPT_PYTHON").getD "python3"
+      let targetName := selection.name.toString
+      proc {
+        cmd := python,
+         args := #[(framework / "tools" / "proofscript" / "target_manifest.py").toString,
+           output.toString, selection.pkg.baseName.toString, selection.lib.name.toString,
+           selection.kind, targetName] ++ owners.map fun mod => s!"{mod.name.toString}={encodedName mod.name}",
+        cwd := ws.root.dir,
+        env := ← getAugmentedEnv
+      }
+      return output / "manifests" / "targets" / selection.pkg.baseName.toString /
+        selection.lib.name.toString / selection.kind / s!"{targetName}.json"
+
+/-- Rendering begins only after Lake has compiled and published every owner. -/
+def renderTarget (selection : PageTarget) : FetchM (Job FilePath) := do
+  let exports ← exportTarget selection
+  let ws ← getWorkspace
+  let framework := ws.packages.findSome? fun pkg =>
+    if pkg.baseName == `ProofScript then some pkg.dir else none
+  let some framework := framework | error "ProofScript package not found"
+  exports.mapM fun targetFile => do
     let python := (← IO.getEnv "PS4HTML_PYTHON").getD "python3"
-    let backend := (← getWorkspace).packages.findSome? fun p =>
-      if p.baseName == `ProofScript then some (p.dir / "tools" / "ps4html") else none
-    let some backend := backend | error "ProofScript package not found in Lake workspace"
-    let sourceArgs := match selection with
-      | .library _ => mods.flatMap fun mod => #[mod.name.toString, mod.leanFile.toString]
-      | .module mod => #[mod.leanFile.toString]
+    let result := ws.root.dir / ".PS4HTML" / "build" /
+      selection.pkg.baseName.toString / selection.lib.name.toString / "index.html"
     proc {
-      cmd := python
-      args := #["-m", "PS4HTML", s!"_build-{selection.kind}", selection.pkg.baseName.toString, selection.name.toString,
-        "--build-dir", (selection.buildRoot (← getWorkspace)).toString] ++ sourceArgs
-      cwd := root.dir
-      env := (← getAugmentedEnv).push ("PYTHONPATH", some backend.toString)
-        |>.push ("LAKE", some (← getLake).toString)
-        |>.push ("PS4HTML_LAKE_CONFIG", some root.configFile.toString)
-        |>.push ("PS4HTML_LAKE_ARGS", some (Lean.toJson ((← getWorkspace).lakeArgs?.getD #[])).compress)
-        |>.push ("PS4HTML_LAKE_CWD", some (← IO.currentDir).toString)
+      cmd := python,
+      args := #["-m", "PS4HTML", "_render-target", targetFile.toString],
+      cwd := ws.root.dir,
+      env := (← getAugmentedEnv).push ("PYTHONPATH", some
+        (framework / "tools" / "ps4html").toString)
     }
-    return output
+    return result
 
 end ProofScriptPageBuild
 
-/-- Compile and export a fresh page session without touching ordinary verification products. -/
-library_facet ps4htmlInputs (original) : Unit := do
-  ProofScriptPageBuild.buildInputs (.library original)
-
-/-- Compile one module and its imports; the export bundle owns only the requested module. -/
-module_facet ps4htmlInputs (original) : Unit := do
-  ProofScriptPageBuild.buildInputs (.module original)
-
 /-- Build the complete HTML site for the requested Lean library. -/
 library_facet ps4html (lib) : FilePath := do
-  ProofScriptPageBuild.buildSite (.library lib)
+  ProofScriptPageBuild.renderTarget (.library lib)
 
 /-- Build an isolated HTML preview; use `+Module:ps4html` to select a module explicitly. -/
 module_facet ps4html (mod) : FilePath := do
-  ProofScriptPageBuild.buildSite (.module mod)
+  ProofScriptPageBuild.renderTarget (.module mod)
+
+/-- Export a complete library to the project's .ProofScript directory without rendering HTML. -/
+library_facet proofscriptExport (lib) : FilePath := do
+  ProofScriptPageBuild.exportTarget (.library lib)
+
+/-- Export one module and update its library's complete input bundle. -/
+module_facet proofscriptExport (mod) : FilePath := do
+  ProofScriptPageBuild.exportTarget (.module mod)

@@ -42,6 +42,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         inner.addEventListener('transitionend', event => {
+            // Descendant hover colors and dashboard animations bubble here too.
+            // Only this container's own flip/height transition changes its layout.
+            if (event.target !== inner || !['height', 'transform'].includes(event.propertyName)) return;
             if (event.propertyName === 'height' && !inner.classList.contains('flipped')) {
                 inner.style.height = '';
                 delete inner.dataset.frontHeight;

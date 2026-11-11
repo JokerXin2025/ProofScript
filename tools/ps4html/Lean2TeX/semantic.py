@@ -90,17 +90,18 @@ class SemanticConverter:
             name = str(expr.get("name", ""))
             chain = self.registry.alias_chain(name)
             _, data = unwrap_mdata(occurrence)
-            if self.registry.get(name) is None and name not in self.registry.aliases:
-                self._diagnose("L2T001", "missing macro configuration", path, name)
+            declaration = _declaration_details(data)
+            if declaration["kind"] is None:
+                declaration["kind"] = (self.registry.declarations.get(name) or {}).get("kind")
             metadata = {
                 "leanName": name, "displayName": chain[-1], "aliasChain": chain,
                 "traits": ("alias",) if len(chain) > 1 else (), "originalExprKind": kind,
-                "declaration": _declaration_details(data), "levels": expr.get("levels"),
+                "declaration": declaration, "levels": expr.get("levels"),
             }
             if len(chain) > 1:
                 metadata["aliasTarget"] = {"name": chain[-1],
                                            "declaration": self.registry.declarations.get(chain[-1])}
-            return DisplayNode(name, "const", metadata=metadata)
+            return DisplayNode(name, "theorem" if declaration["kind"] == "theorem" else "const", metadata=metadata)
         if kind == "lit":
             literal = expr.get("lit", {})
             value = literal.get("value", "?") if isinstance(literal, dict) else "?"
@@ -152,6 +153,10 @@ class SemanticConverter:
             chain = self.registry.alias_chain(name)
             canonical_name = chain[-1]
             _, head_data = unwrap_mdata(head)
+            declaration_kind = _string(head_data, "ProofScript.declarationKind") or (
+                self.registry.declarations.get(name) or {}).get("kind")
+            if declaration_kind == "theorem":
+                return self._application_fallback(head, args, path, bindings, name)
             levels = structural_head.get("levels")
             identity = {"leanName": name, "displayName": canonical_name, "aliasChain": chain,
                         "traits": ("alias",) if len(chain) > 1 else (),

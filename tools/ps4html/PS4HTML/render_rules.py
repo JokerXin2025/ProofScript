@@ -4,6 +4,7 @@ import html
 import re
 
 from PS4HTML.engine import render_step, render_strategy, render_details
+from PS4HTML.dashboard import validate_dashboard, render_dashboard
 from PS4HTML.Rules.calc import rule_calc
 from PS4HTML.Rules.infer import rule_infer
 from PS4HTML.Rules.diagram import rule_svg, rule_latex
@@ -104,6 +105,8 @@ def validate_record(rule, step, *, resolver=None, path=None):
             resolver.require_root(owner + suffix, value)
 
     fields = rule["fields"]
+    if rule["kind"] == "tactic" and fields.get("renderer", "none") == "none":
+        validate_dashboard(step, fields.get("board", []), resolver, path)
     if fields.get("display") is False:
         if rule["kind"] == "strategy":
             branches = step.get(BRANCHES_FIELD)
@@ -199,8 +202,14 @@ def validate_rules(document, module, imports=None):
             raise ValueError(f"Rule output declarations are unsupported for {rule_id}; rebuild with Lean")
         if rule_id in result:
             raise ValueError(f"Duplicate rule {rule_id} in {module}")
-        if set(fields) - {"renderer", "template", "display", "color"}:
+        if set(fields) - {"renderer", "template", "display", "color", "board"}:
             raise ValueError(f"Unsupported rendering fields for {rule_id}")
+        board = fields.get("board", [])
+        if not isinstance(board, list) or any(
+                not isinstance(item, dict) or set(item) != {"name", "value"} or
+                not isinstance(item["name"], str) or not isinstance(item["value"], str)
+                for item in board):
+            raise ValueError(f"Invalid board for {rule_id}")
         if "display" in fields and type(fields["display"]) is not bool:
             raise ValueError(f"Invalid display for {rule_id}")
         if "color" in fields and (not isinstance(fields["color"], list) or
@@ -301,7 +310,8 @@ def render_rule(rule, step, proof, path, index):
     style = _rule_style(fields)
     if rule["kind"] != "strategy":
         content = _template(entry["content"], step, proof)
-        return render_step(title, content, style=style)
+        dashboard = render_dashboard(step, fields.get("board", []), proof) if rule["kind"] == "tactic" else ""
+        return render_step(title, content, style=style, dashboard=dashboard)
     branches = {branch["name"]: (index, branch["proof"]) for index, branch in enumerate(step[BRANCHES_FIELD])}
     children = [_introducer(entry.get("introducer"), step, proof)]
     for case in entry["cases"]:

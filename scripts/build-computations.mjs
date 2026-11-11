@@ -11,7 +11,14 @@ const root = process.cwd();
 const proofScriptRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const outputRoot = resolve(process.env.PROOF_SCRIPT_OUTPUT_ROOT || join(root, ".ProofScript"));
 const pendingRoot = join(outputRoot, "computations", "pending");
-const bundlesRoot = join(outputRoot, "computations", "bundles");
+const resourceModule = process.env.PROOF_SCRIPT_RESOURCE_MODULE;
+if (resourceModule && !resourceModule.split("/").every(part =>
+    part && part !== "." && part !== ".." && !part.includes("\\"))) {
+  throw new Error("invalid ProofScript computation module path");
+}
+const bundlesRoot = resourceModule
+  ? join(outputRoot, "computations", "bundles", resourceModule)
+  : join(outputRoot, "computations", "bundles");
 const leanWasmPrefix = process.env.PROOF_SCRIPT_LEAN_WASM_PREFIX;
 
 if (!leanWasmPrefix) {

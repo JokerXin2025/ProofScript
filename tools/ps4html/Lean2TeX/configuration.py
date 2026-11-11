@@ -13,6 +13,8 @@ class EffectiveConfiguration:
     registry: MacroRegistry
     variable_prefixes: dict[str, str]
     parameter_templates: dict = field(default_factory=dict)
+    definition_names: dict[str, str] = field(default_factory=dict)
+    theorem_names: dict[str, str] = field(default_factory=dict)
 
 
 def _renderer_template(template):
@@ -25,8 +27,11 @@ def interpret(values: dict) -> EffectiveConfiguration:
     registry = MacroRegistry()
     variable_prefixes = {}
     parameter_templates = {}
+    definition_names = {}
+    theorem_names = {}
     for (category, target), fields in values.items():
         if category == "definition":
+            definition_names[target] = fields["name"] or target
             if isinstance(fields.get("declaration"), dict):
                 registry.declarations[target] = fields["declaration"]
             variable_prefixes[target] = fields["var_name"]
@@ -56,4 +61,7 @@ def interpret(values: dict) -> EffectiveConfiguration:
                     "default": concept["default"],
                     "templates": [_renderer_template(template)
                                   for template in concept["templates"]]}))
-    return EffectiveConfiguration(registry, variable_prefixes, parameter_templates)
+        elif category == "theorem":
+            theorem_names[target] = fields["name"] or target
+    return EffectiveConfiguration(registry, variable_prefixes, parameter_templates,
+                                  definition_names, theorem_names)

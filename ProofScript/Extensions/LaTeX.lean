@@ -62,19 +62,21 @@ script_elab «latex» (kind := metadata)
 
 script_recorder «latex» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   let metadata ←
     match parseComponentMetadata metadata.raw with
     | .ok value => pure value
     | .error message => throwErrorAt metadata message
-  let svg ←
-    writeTextResource "svg" "svg" "image/svg+xml" <| ←
-      compileLatexToSvg code.getString
+  let content ← compileLatexToSvg code.getString
+  let (env, svg) := recordTextResource (← getEnv) "svg" "svg" "image/svg+xml" content
+  setEnv env
   record_value "metadata" (toJson metadata)
   record_value "language" "latex"
   record_value "source" code.getString
   record_value "svg" svg
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «latex» {
   renderer := «media»
@@ -85,15 +87,18 @@ page_component "latex" metadata:componentMeta code:str => do
   when_page_build do
     match parseComponentMetadata metadata.raw with
     | .ok metadata =>
-        let svg ← writeTextResource "svg" "svg" "image/svg+xml" <|
-          ← compileLatexToSvg code.getString
+        let content ← Lean.Elab.Command.liftIO <| compileLatexToSvg code.getString
+        let svg := textResourceDescriptor "svg" "svg" "image/svg+xml" content
         let value : LatexComponent := {
           metadata := metadata
           source := code.getString
           svg := svg
         }
-        addPageComponent code.raw "latex" (toJson value) <|
-          match metadata.label with
+        let labels : Array (ReferenceKind × String) := match metadata.label with
           | some label => #[("figure", label)]
           | none => #[]
+        let (env, _) := recordTextResource (← getEnv) "svg" "svg" "image/svg+xml" content
+        match addComponent env { kind := "latex", value := toJson value } #[] labels with
+        | .ok env => setEnv env
+        | .error message => throwErrorAt code.raw message
     | .error message => throwErrorAt metadata.raw message

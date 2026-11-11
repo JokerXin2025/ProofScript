@@ -2,7 +2,7 @@ import html
 import json
 import os
 from Lean2TeX.interactions import ExpressionInteractions
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from pathlib import Path
 from urllib.parse import quote as quote_url_path
 
@@ -15,7 +15,7 @@ from PS4HTML.Rules.media import render_figure, render_latex
 from PS4HTML.Rules.references import render_references
 from PS4HTML.schema import ResourceLoader, SCHEMA_VERSION, PROOF_SCHEMA_VERSION, validate_document
 from PS4HTML.Rules.computation import render_computation
-from PS4HTML.info import InfoBundle, name_text
+from PS4HTML.info import name_text
 from PS4HTML.theorem_graph import TheoremGraph, theorem_id
 
 
@@ -35,14 +35,12 @@ class Page:
     def output_path(self) -> Path:
         if self.exported_path is not None:
             relative = self.exported_path.with_suffix(".html")
-            return Path("index.html") if len(relative.parts) == 1 else relative
+            return relative
         if "pages" in self.path.parts:
             position = len(self.path.parts) - 1 - list(reversed(self.path.parts)).index("pages")
             relative = Path(*self.path.parts[position + 1:]).with_suffix(".html")
-            return Path("index.html") if len(relative.parts) == 1 else relative
+            return relative
         parts = self.module.split(".")
-        if len(parts) == 1:
-            return Path("index.html")
         return Path(*parts[:-1]) / f"{parts[-1]}.html"
 
 
@@ -53,49 +51,6 @@ class LabelTarget:
     source: Path
 
 
-def load_page(path: Path, project_root: Path) -> Page:
-    try:
-        data = json.loads(path.read_text(encoding = "utf-8"))
-    except (OSError, json.JSONDecodeError) as error:
-        raise PS4HTMLError(f"Failed to read page JSON {path}: {error}") from error
-
-    if not isinstance(data, dict):
-        raise PS4HTMLError(f"Page JSON must be an object: {path}")
-    module = data.get("module")
-    source = data.get("source")
-    components = data.get("components")
-    if not isinstance(module, str) or not module:
-        raise PS4HTMLError(f"Page module must be a non-empty string: {path}")
-    if not isinstance(source, str) or not source:
-        raise PS4HTMLError(f"Page source must be a non-empty string: {path}")
-    if not isinstance(components, list):
-        raise PS4HTMLError(f"Page components must be an array: {path}")
-
-    source_path = Path(source)
-    if not source_path.is_absolute():
-        source_path = project_root / source_path
-    return Page(path, module, source_path, components)
-
-
-def discover_pages(project_root: Path, export_root: Path | None = None, *, bundle=None) -> list[Page]:
-    output_root = (export_root or project_root / ".ProofScript") / "pages"
-    if not output_root.is_dir() and bundle is None:
-        raise PS4HTMLError(f"ProofScript output directory not found: {output_root}")
-    bundle = bundle or InfoBundle(export_root or project_root / ".ProofScript")
-    pages = []
-    for artifact in bundle.artifacts.values():
-        if artifact["kind"] == "page":
-            relative = Path(bundle.relative(artifact["path"]))
-            page = load_page(bundle.root / relative, project_root)
-            pages.append(replace(page, exported_path=relative.relative_to("pages")))
-    for page in pages:
-        page.declarations.update({artifact["path"]: name_text(artifact["declaration"])
-                                  for artifact in bundle.artifacts.values()
-                                  if artifact["module"] == page.module and artifact["declaration"] is not None})
-    pages.sort(key = lambda page: page.module)
-    return pages
-
-
 def build_label_index(pages: list[Page]) -> dict[tuple[str, str], LabelTarget]:
     labels = {}
     for page in pages:
@@ -103,13 +58,15 @@ def build_label_index(pages: list[Page]) -> dict[tuple[str, str], LabelTarget]:
             data = component.get("data", {}) if isinstance(component, dict) else {}
             if "title" in data:
                 value = data.get("title", {}).get("value", {})
-                label = value.get("label")
+                label = value.get("label") if isinstance(value, dict) else None
                 if isinstance(label, str):
                     _add_label(labels, "heading", label, page, f"heading-{label}")
             elif "theorem" in data or "lemma" in data:
                 declaration_kind = "theorem" if "theorem" in data else "lemma"
                 value = data.get(declaration_kind, {}).get("value", {})
                 proof = value.get("proof")
+                if isinstance(proof, dict):
+                    proof = proof.get("$resource", {}).get("path")
                 declaration = _declaration_name(page.module, proof, page.declarations)
                 if declaration is not None:
                     _add_label(labels, "theorem", declaration, page, _theorem_anchor(declaration))
@@ -137,12 +94,14 @@ class PageRenderer:
         self.labels = labels
         self.pages = list(pages or [])
         self.project_info = project_info or {}
+        self.project_by_module = {}
         self.default_language = default_language if default_language in ("zh", "en") else "zh"
         self.diagnostics = []
         self.resources = ResourceLoader(project_root, export_root)
-        self.bundle = bundle or InfoBundle(self.export_root)
-        self.theorem_graph = theorem_graph if theorem_graph is not None else TheoremGraph.from_bundle(
-            self.bundle, discover_pages(project_root, self.export_root, bundle=self.bundle))
+        if bundle is None or theorem_graph is None:
+            raise PS4HTMLError("A completed ProofScript target is required for rendering")
+        self.bundle = bundle
+        self.theorem_graph = theorem_graph
         self.rendered_outputs = frozenset(page.output_path for page in self.pages)
 
     def render(self, page: Page) -> str:
@@ -152,12 +111,16 @@ class PageRenderer:
         contents = self.render_components(page, current_output)
         contents.extend(self._descendant_index(page.module, current_output))
         index_href = os.path.relpath(self.build_root / "index.html", (self.build_root / current_output).parent)
+        package_href = os.path.relpath(self.build_root.parent / "index.html", (self.build_root / current_output).parent)
         pages = self.pages or [page]
         theorem_navigation = self._theorem_navigation(page, current_output)
-        navigation = render_module_navigation(pages, current_output, page.module, index_href, self.default_language, theorem_navigation, self.project_info)
+        project_info = self.project_by_module.get(page.module, self.project_info)
+        navigation = render_module_navigation(pages, current_output, page.module, package_href,
+                                              self.default_language, theorem_navigation, project_info, package_home=True)
         return render_page(page.module, "\n\n".join(contents), index_href, navigation,
                            self.default_language, self._expression_interactions,
-                           project_id=self.bundle.project_id)
+                           project_id=self.bundle.project_id, project_url=project_info.get("url", self.project_info.get("url", "")),
+                           asset_root=os.path.relpath(self.build_root.parent / "assets", (self.build_root / current_output).parent) + "/")
 
     def _theorem_navigation(self, page, current_output):
         templates = []
@@ -219,12 +182,14 @@ class PageRenderer:
         current_output = _module_output_path(module)
         contents = self._descendant_index(module, current_output)
         index_href = os.path.relpath(self.build_root / "index.html", (self.build_root / current_output).parent)
+        package_href = os.path.relpath(self.build_root.parent / "index.html", (self.build_root / current_output).parent)
         navigation = render_module_navigation(
-            self.pages, current_output, module, index_href, self.default_language,
-            project_info=self.project_info
+            self.pages, current_output, module, package_href, self.default_language,
+            project_info=self.project_info, package_home=True
         )
         return render_page(module, "\n\n".join(contents), index_href, navigation, self.default_language,
-                           project_id=self.bundle.project_id)
+                           project_id=self.bundle.project_id, project_url=self.project_info.get("url", ""),
+                           asset_root=os.path.relpath(self.build_root.parent / "assets", (self.build_root / current_output).parent) + "/")
 
     def _descendant_index(self, module, current_output):
         descendants = [
@@ -266,7 +231,7 @@ class PageRenderer:
             self.diagnostics.extend(diagnostics)
             return rendered
         if tag == "figure":
-            rendered, diagnostics = render_figure(value, self.project_root)
+            rendered, diagnostics = render_figure(value, self.project_root, self.export_root if hasattr(self.bundle, "infos") else None)
             self.diagnostics.extend(diagnostics)
             return rendered
         if tag == "computation":
@@ -299,7 +264,7 @@ class PageRenderer:
         if not isinstance(name, str) or not name:
             name = "Invalid theorem"
             state = ERROR
-        if not isinstance(proof, str) or not proof or not isinstance(sorry_ax, bool):
+        if not (isinstance(proof, str) and proof or isinstance(proof, dict) and "$resource" in proof) or not isinstance(sorry_ax, bool):
             state = ERROR
         elif sorry_ax:
             state = SORRY
@@ -307,7 +272,9 @@ class PageRenderer:
         proof_relative = self.bundle.relative(record.path)
         proof_path = self.bundle.file_path(proof_relative)
         proof_document = self.bundle.read(proof_relative)
-        expression_resolver = validate_document(proof_document)
+        if isinstance(proof, dict):
+            self.resources.read_text(proof, "application/vnd.proofscript.proof+json")
+        expression_resolver = validate_document(proof_document, module_protocol=hasattr(self.bundle, "infos"))
         if isinstance(proof_document, dict):
             if proof_document.get("schemaVersion") != PROOF_SCHEMA_VERSION:
                 state = ERROR
@@ -322,7 +289,7 @@ class PageRenderer:
                 highlighted_code, _applied = highlight_code(code, "lean4", theme="light")
                 from PS4HTML.statement import render_statement
                 artifact = self.bundle.artifact(proof_path)
-                config = self.bundle.configuration(snapshot_id=artifact["snapshotId"])
+                config = self.bundle.configuration(snapshot_id=proof_relative)
                 panels = []
                 for language in ("zh", "en"):
                     engine = ProofEngine([], language=language, expression_resolver=expression_resolver,
@@ -355,7 +322,7 @@ class PageRenderer:
             artifact = self.bundle.artifact(proof_path)
             step_rules = self.bundle.proof_rules(artifact)
             try:
-                lean2tex_config = self.bundle.configuration(snapshot_id=artifact["snapshotId"])
+                lean2tex_config = self.bundle.configuration(snapshot_id=proof_relative)
             except (OSError, ValueError, json.JSONDecodeError) as error:
                 raise PS4HTMLError(f"Invalid Lean2TeX configuration for {page.module}: {error}") from error
         for language in ("zh", "en"):
@@ -426,12 +393,12 @@ def directory_modules(pages: list[Page]) -> list[str]:
 
 def _module_output_path(module: str) -> Path:
     parts = module.split(".")
-    if len(parts) == 1:
-        return Path("index.html")
     return Path(*parts[:-1]) / f"{parts[-1]}.html"
 
 
 def _declaration_name(module, proof, declarations=None) -> str | None:
+    if isinstance(proof, dict):
+        proof = proof.get("$resource", {}).get("path")
     if declarations and isinstance(proof, str):
         normalized = Path(proof).as_posix()
         if normalized in declarations:

@@ -2,7 +2,7 @@ import ProofScript.Script.Command
 import ProofScript.Info.Commands
 
 
-script_macro «exists» (clear := [data])
+script_macro «exists»
 "exists " data:term => `(tactic| focus
   first
   | guard_target =~ (∃ _, _)
@@ -10,6 +10,8 @@ script_macro «exists» (clear := [data])
   refine ⟨$data, ?_⟩
   try trivial
 )
+
+script_recorder «exists» auto (clear := [data])
 
 script_info «exists» {
   template := [{
@@ -21,7 +23,7 @@ script_info «exists» {
   }]
 }
 
-script_macro «existsWith»  (clear := [data, cond])
+script_macro «existsWith»
 "exists " data:term "with" cond:term => `(tactic| focus
   first
   | guard_target =~ (∃ _, _ ∧ _)
@@ -29,6 +31,8 @@ script_macro «existsWith»  (clear := [data, cond])
   refine ⟨$data, $cond, ?_⟩
   try trivial
 )
+
+script_recorder «existsWith» auto (clear := [data, cond])
 
 script_info «existsWith» {
   template := [{

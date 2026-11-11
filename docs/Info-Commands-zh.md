@@ -21,7 +21,7 @@ operator_info HAdd.hAdd {
 
 | 想配置什么 | 命令 | 目标 |
 | --- | --- | --- |
-| 项目标题、作者等 | `project_info { ... }` | 当前 Lake 库；每库至多登记一次 |
+| 项目标题、作者等 | `project_info { ... }` | 当前 Lake 库；沿 imports 可见并支持多次更新 |
 | 定理的展示名、标签 | `theorem_info 声明名 { ... }` | 已存在的 Lean 声明 |
 | 证明步骤、策略的文案及配色 | `script_info 注册ID { ... }` | 已注册的脚本规则 |
 | 表达式模板、符号、别名或变量名前缀 | `decl_info 声明名 { ... }` | 已存在的 Lean 声明 |
@@ -34,7 +34,7 @@ operator_info HAdd.hAdd {
 
 ## 项目：`project_info`
 
-项目身份由 Lake 的包和库确定，无须把库名传给命令。把配置放在所属库的一个模块中；同一库登记多次会在导出时报错。
+项目身份由 Lake 的包和库确定，无须把库名传给命令。可以在一个或多个模块中多次更新；当前模块只读取自身及 imports 中属于同一库的记录。独立上游对同一字段写入不同值时，固化会报告冲突。
 
 ```lean
 project_info {
@@ -91,6 +91,7 @@ script_info «finishDoc» {
 | `renderer` | 渲染器枚举 | `none`，表示由模板自动渲染 |
 | `display` | Bool | `true`；`false` 隐藏整个步骤及其分支 |
 | `color` | `ScriptColor` | 标签、边框、背景均为 `none` |
+| `board` | `List (String × String)` | `[]`；普通步骤仪表盘下部的展示名与 recorder 字段名 |
 
 普通模板的 `lang`、`tag`、`content` 都必须填写；`tag`、`content` 可以是空字符串。相同语言再次配置会**替换该语言的整条模板**，其它语言保留。例如：
 
@@ -102,6 +103,31 @@ script_info «exact» {
 ```
 
 `color` 也可写成 `(标签, 边框, 背景)` 三元组，例如 `(some "#166a80", none, none)`；颜色支持 `#RGB`、`#RGBA`、`#RRGGBB`、`#RRGGBBAA`。整个颜色对象在再次赋值时被替换，省略的分量恢复为 `none`。
+
+### 普通步骤仪表盘：`board`
+
+页面中点击普通 script 步骤的头部会展开仪表盘；再次点击、按 Enter 或空格可收起。左右栏分别显示「原状态」和「新状态」：上下文取自 recorder 的 `$context_before` / `$context_after`（局部声明名称到其**类型表达式引用**的 JSON 对象），目标取自 `$goal_before` / `$goal_after`。未记录上下文时不显示该侧上下文；目标缺失或为 `null` 时显示「✓目标已完成」。自动 recorder 已在目标录制前后同步录制上下文；手写 recorder 可使用 `record_context "键名"` 或 `record_context "键名" (goal := `标签)` 指定目标。没有剩余目标时上下文为空对象 `{}`。已有的表达式高亮、公式交互也适用于仪表盘。
+
+下方信息由 `board` 指定，例如：
+
+```lean
+script_recorder snapshotRule => do
+  record_goal "$goal_before"
+  record_context "$context_before"
+  record_param "evidence" h
+  record_value "label" "captured"
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
+
+script_info snapshotRule {
+  board := [("使用的证据", "evidence"), ("记录标签", "label")]
+}
+```
+
+元组第一项为原样展示的名称，第二项为 recorder 对象中的**字面键名**（`"foo.bar"` 不代表嵌套路径）。可以重复展示名和指定同一个字段；显示顺序就是列表顺序。重复配置 `board` 会整体替换，`board := []` 清空并隐藏下部区域。指定字段不存在时显示「未记录」，字段值为 `null` 时显示 `—`。表达式引用通过现有表达式解析器展示，文本会转义。JSON 导出格式为 `"board": [{"name": "使用的证据", "value": "evidence"}, ...]`，保留顺序和重复名。完整示例见[录制 API](../examples/recording/RecordingAPI.lean)，字段和交互约定见[仪表盘协议](Proof-Step-Dashboard-Protocol-zh.md)。
+
+`board` 可以配置在 strategy 或元数据的 `script_info` 上，但当前仅普通 script 的自动模板步骤启用仪表盘；`unknown`、`calc`、`infer`、`introducer` 等特殊步骤暂不支持。
 
 ### 模板中的 `${...}`
 
@@ -141,9 +167,11 @@ script_info «splitAnd» {
 | 普通二元关系符号 | `relation_info ...` |
 | 隐藏应用外壳，仅显示一个原始参数 | `wrapper_info ...` |
 | 复用另一声明的展示规则 | `alias_info ...` |
-| 仅配置匿名变量前缀或参数描述 | `decl_info ...` |
+| 配置常量展示名、匿名变量前缀或参数描述 | `decl_info ...` |
 
 五种 `kind` 分别是 `concept`（默认）、`operator`、`relation`、`wrapper`、`«alias»`。专用命令会同时设置 `kind` 与对应的 `*_info` 对象。例如 `relation_info Eq { symbol := "=" }` 等价于 `decl_info Eq { kind := relation, relation_info := { symbol := "=" } }`。专用命令的字段**数量和顺序固定**，需要只更新部分字段时用 `decl_info`。
+
+`decl_info.name` 是保留的字符串字段，用于显示裸常量和普通应用回退时的常量头；省略或重置时默认使用完整 Lean 声明名。例如 `decl_info Nat.succ { name := "后继" }`。这些 `const` 节点不使用常量模板；参数齐全且匹配规则的应用仍使用 `concept`、`operator` 或 `relation` 排版。原生 Lean 定理（含 lemma）的常量节点归为独立的“定理”类别，显示 `theorem_info.name`；未配置或名称为空时使用完整声明名。命题证明类型的普通 `def` 仍按常量处理。名称来自各证明的冻结 Info 快照。
 
 ### `concept`：需要模板的展示
 
@@ -245,9 +273,9 @@ reset theorem_info add_self                  -- 恢复默认值
 theorem_info add_self { name := "加法示例" }
 ```
 
-支持 `reset project_info`、`reset theorem_info 名称`、`reset script_info 注册ID`、`reset decl_info 名称`。重置会清除目标已有的字段和附加信息；`reset project_info` 不允许通过再次登记绕过“每库一次”的限制。
+支持 `reset project_info`、`reset theorem_info 名称`、`reset script_info 注册ID`、`reset decl_info 名称`。重置会清除目标已有的字段和附加信息；此后可以继续提交新的配置记录。
 
-页面导出以**产物所属模块及其传递导入的最终配置**为准：同模块后写覆盖先写，下游模块覆盖所导入模块；互不导入的分支若对同一字段写入不同值，会在消费时报告冲突，不能靠调整 `import` 顺序解决。`#page end` 后仍可更新 Info，且会影响本模块先前创建的页面内容；下游更新不会反向改写上游已导出的证明。
+页面导出以**产物所属模块及其传递导入的最终配置**为准：同模块后写覆盖先写，下游模块覆盖所导入模块；互不导入的分支若对同一字段写入不同值，会在固化时报告冲突，不能靠调整 `import` 顺序解决。任意位置的后续 Info 更新都可影响本模块先前添加的组件；下游更新不会反向改写上游已导出的证明。`pageBuild = false` 区间仍校验字段但不记录更新，重新开启不会补录。可用 `#preview project_info`、`#preview theorem_info <声明>`、`#preview decl_info <声明>`、`#preview script_info <ID>` 检查命令位置的配置。
 
 ### 附加信息 `extra`
 

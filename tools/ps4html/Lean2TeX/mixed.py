@@ -55,18 +55,8 @@ def eligible_literals(root, registry, language: str, selections=None) -> set[int
     for child in root.children:
         if child.kind == "literal" and child.metadata.get("literalKind") == "literal.str":
             continue
-        if child.kind not in ("const", "literal", "fvar", "bvar", "binder", "sort", "metavariable"):
+        if child.kind not in ("const", "theorem", "literal", "fvar", "bvar", "binder", "sort", "metavariable"):
             return set()
-        if child.kind == "const":
-            configured = registry.get(child.macro_name)
-            if configured is not None:
-                try:
-                    child_label = (selections or {}).get(RenderTarget("constant", child.metadata.get("leanName", child.macro_name)))
-                    style = registry.template_for(configured, requested=child_label, node=child, language=language)
-                except ValueError:
-                    return set()
-                if style.mode != "formula" or "$" in style.content:
-                    return set()
     return {id(child) for child in root.children if child.kind == "literal"
             and child.metadata.get("literalKind") == "literal.str"}
 

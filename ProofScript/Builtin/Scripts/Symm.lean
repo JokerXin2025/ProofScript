@@ -4,8 +4,10 @@ import ProofScript.Info.Commands
 open Lean.Parser.Tactic (location)
 
 
-script_macro «symm» (clear := [loc])
+script_macro «symm»
 "symm" loc:(location)? => `(tactic| symm $[$loc]?)
+
+script_recorder «symm» auto (clear := [loc])
 
 script_info «symm» {
   template := [{

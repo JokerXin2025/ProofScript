@@ -4,9 +4,9 @@
     const base = new URL(document.documentElement.dataset.projectBaseUrl || "./", window.location.href);
     const project = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
     const projectId = document.documentElement.dataset.projectId || project;
-    const storageKey = `ps4html-templates:${base.origin}${project}:${projectId}`;
+    const pageParameters = [parameter, "ps-display-wrappers", "ps4html-language", "ps4html-sidebar-width"];
     const limit = 8192;
-    // Mirror Lean2TeX/builtin_styles.py. These identities may be persisted before
+    // Mirror Lean2TeX/builtin_styles.py. These identities may appear in a URL before
     // their rendering implementations become available in a page catalog.
     const builtinLabels = {
         lambda: ["mapsto", "fun", "typed"],
@@ -56,9 +56,7 @@
     }
     function read() {
         const url = new URL(window.location.href);
-        if (url.searchParams.has(parameter)) return decode(url.searchParams.get(parameter)) || Object.create(null);
-        try { return decode(window.localStorage.getItem(storageKey)) || Object.create(null); }
-        catch (_) { return Object.create(null); }
+        return decode(url.searchParams.get(parameter)) || Object.create(null);
     }
     function destination(link) {
         const raw = link.getAttribute("href");
@@ -70,25 +68,36 @@
         if (link.dataset?.psProjectId && link.dataset.psProjectId !== projectId) return null;
         return url;
     }
-    function carryToLinks(choices) {
+    function carryToUrl(url, choices = read()) {
+        const current = new URL(window.location.href);
+        for (const key of pageParameters) {
+            if (current.searchParams.has(key)) url.searchParams.set(key, current.searchParams.get(key));
+            else url.searchParams.delete(key);
+        }
         const encoded = encode(choices);
-        if (encoded.length > limit) return;
+        if (Object.keys(choices).length && encoded.length <= limit) url.searchParams.set(parameter, encoded);
+        else url.searchParams.delete(parameter);
+        return url;
+    }
+    function carryToLinks(choices = read()) {
         document.querySelectorAll("a[href]").forEach(link => {
             const url = destination(link);
             if (!url) return;
-            url.searchParams.set(parameter, encoded);
-            link.setAttribute("href", `${url.pathname}${url.search}${url.hash}`);
+            carryToUrl(url, choices);
+            link.setAttribute("href", url.protocol === "file:" ? url.href : `${url.pathname}${url.search}${url.hash}`);
         });
     }
     function save(choices) {
         const encoded = encode(choices);
         if (encoded.length > limit || Object.keys(choices).length > 128) return false;
         const url = new URL(window.location.href);
-        url.searchParams.set(parameter, encoded);
+        if (Object.keys(choices).length) url.searchParams.set(parameter, encoded);
+        else url.searchParams.delete(parameter);
         window.history.replaceState(window.history.state, "", url);
-        try { window.localStorage.setItem(storageKey, encoded); } catch (_) { /* URL remains authoritative. */ }
         carryToLinks(choices);
         return true;
     }
-    window.PS4HTMLNavigationState = {read, save, carryToLinks, project};
+    window.PS4HTMLNavigationState = {read, save, carryToLinks, carryToUrl, project};
+    document.addEventListener("DOMContentLoaded", () => carryToLinks());
+    window.addEventListener("popstate", () => carryToLinks());
 })();

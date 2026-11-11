@@ -22,7 +22,17 @@
         if (key !== literalKey) return true;
         return !!node?.metadata?.htmlEligible && root?.parentMode === "text";
     }
-    const catalogsFor = key => Object.values(roots).filter(root => root.catalog[key]).map(root => root.catalog[key]);
+    // Render catalogs are immutable. Index once instead of scanning every root
+    // for every expression each time interaction styles are refreshed.
+    const catalogsByKey = new Map();
+    for (const root of Object.values(roots)) {
+        for (const [key, catalog] of Object.entries(root.catalog)) {
+            if (!catalogsByKey.has(key)) catalogsByKey.set(key, []);
+            catalogsByKey.get(key).push(catalog);
+        }
+    }
+    const catalogsFor = key => catalogsByKey.get(key) || [];
+    const choicesByLanguage = new Map();
     const eligible = (catalog, lang) => catalog.templates.filter(template =>
         template.available !== false && (!template.lang || template.lang === lang));
     function replaceSelections(next) {
@@ -50,10 +60,14 @@
     }
     function close() { menu?.remove(); menu = null; }
     function hasChoices(key, occurrence) {
+        if (["const", "theorem", "wrapper", "expression"].includes(occurrence?.kind)) return false;
         if (key === literalKey && !occurrence?.details?.htmlEligible) return false;
-        const catalog = catalogsFor(key);
-        if (!catalog.length) return false;
-        return catalog.some(entry => new Set(eligible(entry, language()).map(template => template.label)).size > 1);
+        const lang = language();
+        if (!choicesByLanguage.has(lang)) choicesByLanguage.set(lang, new Map());
+        const choices = choicesByLanguage.get(lang);
+        if (!choices.has(key)) choices.set(key, catalogsFor(key).some(entry =>
+            new Set(eligible(entry, lang).map(template => template.label)).size > 1));
+        return choices.get(key);
     }
     function chainHead(root, target) {
         const path = [];
@@ -96,7 +110,7 @@
                 const id = `p${++counter}`;
                 fragments[id] = owner;
                 return id;
-            });
+            }, root.names);
         return {tex, fragments, parentMode};
     }
     function materialize(tex, fragments, parentMode) {
@@ -200,7 +214,7 @@
         const {rootElement, root, node, previewNode} = effectiveTarget(target.anchor, target.id);
         const catalog = root?.catalog[key];
         if (!catalog) return false;
-        if (target.occurrence.kind === "wrapper" || target.occurrence.kind === "expression") return false;
+        if (["const", "theorem", "wrapper", "expression"].includes(target.occurrence.kind)) return false;
         if (!literalEligible(key, target.occurrence, root, node)) return false;
         const choices = [...new Set(eligible(catalog, language())
             .map(template => template.label))];

@@ -23,8 +23,7 @@ including formatting, math, links, and references. Block syntax is not parsed in
 ProofText no longer has heading blocks: `=` has no special block meaning, and normal paragraph
 and inline rules apply.
 
-Title parsing and registration run only during page builds. A title after `#page end` is rejected
-in both verification and page modes.
+Title parsing and registration run only during page builds. A title can appear at any valid command position.
 
 [Test/PageTitle.lean](../Test/PageTitle.lean) checks the component and provides a visual gallery:
 
@@ -32,5 +31,5 @@ in both verification and page modes.
 lake build +Test.PageTitle:ps4html
 ```
 
-Open `.PS4HTML/build/ProofScript/.modules/Test.PageTitle/Test/PageTitle.html` to review the result.
+Open `.PS4HTML/build/Test/Test/PageTitle.html` to review the result.
 Run the automated checks with `lake build ProofScript Test` and `python3 Test/test_page_title.py`.

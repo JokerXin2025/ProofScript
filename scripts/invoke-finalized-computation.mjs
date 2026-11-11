@@ -2,17 +2,20 @@
 
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const [pageArgument, entryArgument, inputArgument] = process.argv.slice(2);
 if (!pageArgument || !entryArgument || inputArgument === undefined) {
   throw new Error("usage: invoke-finalized-computation.mjs <page.json> <entry> <input-json>");
 }
-const root = process.cwd();
+const root = resolve(process.env.PROOF_SCRIPT_PROJECT_ROOT || process.cwd());
 const resolvedPage = resolve(root, pageArgument);
-const snapshot = resolvedPage.includes("/.PS4HTML/inputs/")
-  ? resolvedPage.slice(0, resolvedPage.indexOf("/.ProofScript/pages/")) : root;
+const outputRoot = join(root, ".ProofScript");
+const pageRoot = join(outputRoot, "pages") + sep;
+if (!resolvedPage.startsWith(pageRoot)) {
+  throw new Error(`page must be an exported .ProofScript/pages/... JSON: ${resolvedPage}`);
+}
 const page = JSON.parse(await readFile(resolve(root, pageArgument), "utf8"));
 const value = page.components
   .map(component => component.data?.computation?.value)
@@ -22,7 +25,14 @@ if (value.execution.status !== "ready") throw new Error(`computation is ${value.
 
 async function verifiedPath(reference) {
   const descriptor = reference.$resource;
-  const path = resolve(snapshot, descriptor.path);
+  if (!descriptor.path.startsWith(".ProofScript/resources/")) {
+    throw new Error(`invalid computation resource path: ${descriptor.path}`);
+  }
+  const path = resolve(outputRoot,
+    descriptor.path.slice(".ProofScript/".length));
+  if (!path.startsWith(join(outputRoot, "resources") + sep)) {
+    throw new Error(`computation resource escapes export root: ${descriptor.path}`);
+  }
   const bytes = await readFile(path);
   if (descriptor.byteSize !== undefined && descriptor.byteSize !== bytes.length) {
     throw new Error(`byte size mismatch: ${descriptor.path}`);

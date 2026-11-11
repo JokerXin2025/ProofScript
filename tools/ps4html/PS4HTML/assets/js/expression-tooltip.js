@@ -12,6 +12,7 @@
         universe: ["display", "level"],
         localDefinition: common,
         constant: ["expression", "type", "leanName", "declarationKind", "declarationType", "argumentCount"],
+        theorem: ["expression", "type", "leanName", "declarationKind", "declarationType"],
         lambda: ["expression", "type", "binderInfo"],
         implication: common,
         forall: ["expression", "type", "binderInfo"],
@@ -38,7 +39,7 @@
         return ({ fvar: "freeVariable", bvar: "boundVariable", binder: "binder",
             metavariable: "unknownVariable", sort: "universe", let: "localDefinition",
             lambda: "lambda", projection: "projection", wrapper: "wrapper",
-            const: "constant", concept: "constant", application: "application", operator: "operator",
+            const: "constant", theorem: "theorem", concept: "constant", application: "application", operator: "operator",
             relation: "relation" })[kind] || (detail.headConst && kind !== "unknown" ? "constant" : "expression");
     }
 

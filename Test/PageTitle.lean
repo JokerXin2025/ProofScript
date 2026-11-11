@@ -83,18 +83,18 @@ run_cmd do
   unless state.components.back?.any (·.kind == "title") do
     throwError "the title was reordered relative to the text components"
 
-#page end
-
 run_cmd do
   let some page := modulePageDraft? (← getEnv) (← getMainModule)
     | throwError "the title gallery was not persisted"
   unless page.components.size == 15 do
     throwError m!"failed title commands changed the page: {page.components.size} components"
 
-/-- error: page component appears after #page end -/
-#guard_msgs in
-#page title "关闭页面后的标题"
+#page title "页面末尾的标题"
 
-/-- error: page component appears after #page end -/
-#guard_msgs in
-#page sub sub sub title "关闭页面后的深层标题"
+#page sub sub sub title "页面末尾的深层标题"
+
+run_cmd do
+  let some page := modulePageDraft? (← getEnv) (← getMainModule)
+    | throwError "components appended after the previous check were not persisted"
+  unless page.components.size == 17 do
+    throwError "the module page did not accept later components"

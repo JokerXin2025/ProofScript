@@ -7,6 +7,7 @@ import html
 import json
 import re
 from contextvars import ContextVar
+from itertools import count
 from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
 from Lean2TeX.interactions import ExpressionInteractions
@@ -15,6 +16,7 @@ from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, UNRECORDED_RULE_ID,
 from PS4HTML.schema import Expression
 
 _CURRENT_LANGUAGE = ContextVar("ps4html_language", default="zh")
+_DASHBOARD_IDS = count(1)
 
 PASS = 0
 SORRY = 1
@@ -30,12 +32,21 @@ TEMPLATE_PAGE = Template((CURRENT_DIR / "Templates/page.html").read_text())
 TEMPLATE_ANNOTATION = Template((CURRENT_DIR / "Templates/annotation.html").read_text())
 
 
-def render_step(tag, content, sort = "", style = ""):
+def render_step(tag, content, sort = "", style = "", dashboard = ""):
+    dashboard_id = f"ps-proof-dashboard-{next(_DASHBOARD_IDS)}" if dashboard else ""
     return TEMPLATE_STEP.substitute(
         tag = tag,
         content = content,
         sort = sort,
         style = style,
+        dashboard_class = " has-dashboard" if dashboard else "",
+        header_open = (f'<div class="proof-step-header" role="button" tabindex="0" '
+                       f'aria-expanded="false" aria-controls="{dashboard_id}" '
+                       f'aria-label="证明步骤：{html.escape(html.unescape(re.sub(r"<[^>]*>", "", tag)), quote=True)}">'
+                       if dashboard else ""),
+        header_close = '</div>' if dashboard else "",
+        dashboard = (f'<div class="proof-dashboard-reveal" id="{dashboard_id}" aria-hidden="true" inert>'
+                     f'<div class="proof-dashboard-overflow">{dashboard}</div></div>' if dashboard else ""),
     )
 
 def render_cal_step(tag, lhs, rel, rhs):
@@ -88,7 +99,7 @@ def render_proof(proof_state, title, content, lines_count, code, anchor = "", la
     )
 
 def render_page(title, contents, index_href, navigation = "", default_language="zh", interactions=None,
-                project_id=""):
+                project_id="", project_url="", asset_root=None):
     language = normalize_language(default_language)
     index_path = Path(index_href)
     project_base_url = index_path.parent.as_posix().rstrip("/") + "/" if index_path.parent.as_posix() != "." else "./"
@@ -110,7 +121,7 @@ def render_page(title, contents, index_href, navigation = "", default_language="
         ) if match[2] in interactions.render_roots else match[0], contents)
         contents = interactions.materialize_text(contents)
     return TEMPLATE_PAGE.substitute(
-        asset_root = html.escape(project_base_url + "assets/", quote=True),
+        asset_root = html.escape(asset_root or project_base_url + "assets/", quote=True),
         title = html.escape(title),
         index_href = html.escape(index_href, quote = True),
         navigation = indent(navigation, "        "),
@@ -118,16 +129,51 @@ def render_page(title, contents, index_href, navigation = "", default_language="
         default_language = default_language,
         html_language = "zh-CN" if language == "zh" else "en",
         project_base_url = html.escape(project_base_url, quote=True),
+        package_base_url = html.escape((asset_root or project_base_url + "assets/").removesuffix("assets/"), quote=True),
         project_id = html.escape(project_id, quote=True),
+        project_url = html.escape(project_url if isinstance(project_url, str) else "", quote=True),
         mobile_title = tr("page.mobile_title", language),
         mobile_desc = tr("page.mobile_desc", language),
         resize_sidebar = tr("page.resize_sidebar", language),
         interaction_data = interaction_data,
+        share_dialog = _render_share_dialog(language),
     )
 
 
+def _share_label(key, language, *, tag="span", attributes=""):
+    return (f'<{tag}{attributes} data-share-zh="{html.escape(tr(key, "zh"), quote=True)}" '
+            f'data-share-en="{html.escape(tr(key, "en"), quote=True)}">'
+            f'{html.escape(tr(key, language))}</{tag}>')
+
+
+def _render_share_dialog(language):
+    title = _share_label("share.title", language, tag="h2", attributes=' id="share-dialog-title"')
+    description = _share_label("share.description", language, tag="p", attributes=' id="share-dialog-description" class="share-dialog-description"')
+    local = _share_label("share.local", language)
+    public = _share_label("share.public", language)
+    local_hint = _share_label("share.local_unavailable", language, attributes=' class="share-unavailable" data-share-hint="local" hidden')
+    public_hint = _share_label("share.public_unavailable", language, attributes=' class="share-unavailable" data-share-hint="public" hidden')
+    return f'''<dialog class="share-dialog" aria-labelledby="share-dialog-title" aria-describedby="share-dialog-description"
+  data-local-unavailable-zh="{html.escape(tr('share.local_unavailable', 'zh'), quote=True)}" data-local-unavailable-en="{html.escape(tr('share.local_unavailable', 'en'), quote=True)}"
+  data-public-unavailable-zh="{html.escape(tr('share.public_unavailable', 'zh'), quote=True)}" data-public-unavailable-en="{html.escape(tr('share.public_unavailable', 'en'), quote=True)}"
+  data-copied-zh="{html.escape(tr('share.copied', 'zh'), quote=True)}" data-copied-en="{html.escape(tr('share.copied', 'en'), quote=True)}"
+  data-failed-zh="{html.escape(tr('share.failed', 'zh'), quote=True)}" data-failed-en="{html.escape(tr('share.failed', 'en'), quote=True)}"
+  data-close-zh="{html.escape(tr('share.close', 'zh'), quote=True)}" data-close-en="{html.escape(tr('share.close', 'en'), quote=True)}">
+  <div class="share-dialog-heading">
+    {title}
+    <button class="share-dialog-close" type="button" data-share-close aria-label="{html.escape(tr('share.close', language), quote=True)}" title="{html.escape(tr('share.close', language), quote=True)}"><i class="codicon codicon-close" aria-hidden="true"></i></button>
+  </div>
+  {description}
+  <div class="share-dialog-actions">
+    <div><button type="button" data-share-copy="local"><i class="codicon codicon-desktop-download" aria-hidden="true"></i>{local}</button>{local_hint}</div>
+    <div><button type="button" data-share-copy="public"><i class="codicon codicon-vm-connect" aria-hidden="true"></i>{public}</button>{public_hint}</div>
+  </div>
+  <p class="share-dialog-status" role="status" aria-live="polite" data-share-zh="" data-share-en=""></p>
+</dialog>'''
+
+
 def render_index(pages, default_language="zh", module_contents="", theorem_navigation="", project_info=None,
-                 project_id=""):
+                 project_id="", asset_root=None, package_home_href=None):
     roots = sorted({page.module.split(".")[0] for page in pages})
     root_module = roots[0] if len(roots) == 1 else None
     items = _render_project_index_tree(pages, root_module)
@@ -143,10 +189,11 @@ def render_index(pages, default_language="zh", module_contents="", theorem_navig
 </header>'''
     contents = f'{project}{module_contents}<ul class="module-index-tree">{items}</ul>'
     navigation = render_module_navigation(
-        pages, Path("index.html"), root_module, "index.html", default_language, theorem_navigation, project_info
+        pages, Path("index.html"), root_module, package_home_href or "index.html",
+        default_language, theorem_navigation, project_info, package_home=package_home_href is not None
     )
     return render_page(title, contents, "index.html", navigation, default_language,
-                       project_id=project_id)
+                       project_id=project_id, project_url=project_info.get("url", ""), asset_root=asset_root)
 
 
 def _render_project_index_tree(pages, root_module):
@@ -183,7 +230,7 @@ def _render_project_index_nodes(nodes, current_dir, prefix):
     return "".join(items)
 
 
-def render_module_navigation(pages, current_output: Path, current_module: str | None, index_href: str, language="zh", theorem_navigation="", project_info=None):
+def render_module_navigation(pages, current_output: Path, current_module: str | None, index_href: str, language="zh", theorem_navigation="", project_info=None, extra_nodes="", package_home=False):
     tree = {}
     for page in pages:
         children = tree
@@ -225,7 +272,7 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
         path_prefix += "/"
     path_html = f'''<div class="module-path-row">
       <div class="module-path-prefix" aria-hidden="true">{html.escape(path_prefix)}</div>
-      <a class="module-home-button" href="{html.escape(index_href, quote=True)}" aria-label="{html.escape(tr("page.project_home", language), quote=True)}" title="{html.escape(tr("page.project_home", language), quote=True)}">
+      <a class="module-home-button" href="{html.escape(index_href, quote=True)}"{' data-ps-package-home' if package_home else ''} aria-label="{html.escape(tr("page.project_home", language), quote=True)}" title="{html.escape(tr("page.project_home", language), quote=True)}">
         <i class="codicon codicon-home" aria-hidden="true"></i>
       </a>
     </div>'''
@@ -255,14 +302,35 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
         </label>
       </div>
     </div>
+    <button class="share-button" type="button" data-share-open aria-haspopup="dialog" aria-label="{html.escape(tr('share.title', language), quote=True)}" title="{html.escape(tr('share.title', language), quote=True)}">
+      <i class="codicon codicon-share" aria-hidden="true"></i>
+    </button>
     </div>
     {path_html}
     <nav class="module-directory-scroll" aria-label="{html.escape(tr("page.nearby_modules", language), quote=True)}">
-      <ul class="module-context-tree">{tree_html}</ul>
+      <ul class="module-context-tree">{tree_html}{extra_nodes}</ul>
     </nav>
     {theorem_navigation}
   </div>
 </aside>'''
+
+
+def render_package_index(package, libraries, default_language="zh"):
+    """Render the package landing page with the same layout as library indexes."""
+    language = normalize_language(default_language)
+    nodes = "".join(
+        f'<li><a class="module-tree-node" href="{html.escape(quote_url_path(name) + "/index.html", quote=True)}">'
+        f'<span class="module-tree-node-mark" aria-hidden="true"></span>{html.escape(name)}</a></li>'
+        for name in sorted(libraries)
+    )
+    contents = (f'<header class="project-header"><h1>{html.escape(package)}</h1></header>'
+                f'<ul class="module-index-tree">'
+                + "".join(f'<li><a href="{html.escape(quote_url_path(name) + "/index.html", quote=True)}">'
+                          f'<span class="module-index-tree-mark" aria-hidden="true"></span>{html.escape(name)}</a></li>'
+                          for name in sorted(libraries)) + '</ul>')
+    navigation = render_module_navigation([], Path("index.html"), None, "index.html", language,
+                                          project_info={"title": package}, extra_nodes=nodes, package_home=True)
+    return render_page(package, contents, "index.html", navigation, language, project_id=package)
 
 
 def _render_context_siblings(nodes, current_dir: Path, current_parts, parent_path):

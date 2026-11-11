@@ -21,9 +21,11 @@
 .proof-step.calc {
     align-items: center;
 }
-.proof-step:hover {
+.proof-step:hover,
+.proof-step.is-dashboard-open {
     border-color: var(--current-step-color);
     box-shadow: 0 2px 4px rgba(0,0,0,0.04);
+    background-color: rgba(37, 99, 235, 0.012);
 }
 
 .proof-step.unknown {
@@ -32,6 +34,7 @@
 
 .proof-step.unknown:hover {
     border-color: var(--current-step-color);
+    background-color: rgba(37, 99, 235, 0.012);
 }
 
 .proof-step-label.unknown {

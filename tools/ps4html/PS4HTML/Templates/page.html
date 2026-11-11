@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="${html_language}" data-default-language="${default_language}" data-project-base-url="${project_base_url}" data-project-id="${project_id}">
+<html lang="${html_language}" data-default-language="${default_language}" data-project-base-url="${project_base_url}" data-package-base-url="${package_base_url}" data-project-id="${project_id}" data-project-url="${project_url}">
 
 <head>
 
@@ -12,6 +12,7 @@
     <link rel="stylesheet" href="${asset_root}css/proof.css">
     <link rel="stylesheet" href="${asset_root}css/theorem-statement.css">
     <link rel="stylesheet" href="${asset_root}css/proof-step.css">
+    <link rel="stylesheet" href="${asset_root}css/proof-dashboard.css">
     <link rel="stylesheet" href="${asset_root}css/proof-branch.css">
     <link rel="stylesheet" href="${asset_root}css/proof-strategy.css">
     <link rel="stylesheet" href="${asset_root}css/proof-motion.css">
@@ -28,6 +29,7 @@
     <script defer src="${asset_root}js/katex.js"></script>
     <script defer src="${asset_root}js/diagram.js?v=4"></script>
     <script defer src="${asset_root}js/animation.js"></script>
+    <script defer src="${asset_root}js/proof-dashboard.js"></script>
     <script defer src="${asset_root}js/equation_size.js"></script>
     <script defer src="${asset_root}js/code-flip.js"></script>
     <script defer src="${asset_root}js/references.js"></script>
@@ -35,11 +37,14 @@
     <script defer src="${asset_root}js/lean2tex.js"></script>
     <script defer src="${asset_root}js/render-tree.js"></script>
     <script defer src="${asset_root}js/navigation-state.js"></script>
+    <script defer src="${asset_root}js/libraries.js"></script>
+    <script defer src="${asset_root}js/package-navigation.js"></script>
     <script defer src="${asset_root}js/proof-indent.js"></script>
     <script defer src="${asset_root}js/page-splitter.js"></script>
     <script defer src="${asset_root}js/language-switcher.js"></script>
     <script defer src="${asset_root}js/template-switcher.js"></script>
     <script defer src="${asset_root}js/display-options.js"></script>
+    <script defer src="${asset_root}js/share-link.js"></script>
     <script defer src="${asset_root}js/theorem-dependencies.js"></script>
     <script defer src="${asset_root}js/computation.js?v=5"></script>
     <script defer src="${asset_root}js/fibonacci-computation.js?v=5"></script>
@@ -73,6 +78,8 @@ ${contents}
 
         </main>
     </div>
+
+${share_dialog}
 
 ${interaction_data}
 

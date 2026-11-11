@@ -81,6 +81,36 @@ initialize artifactExt : SimplePersistentEnvExtension Artifact Unit ←
     addEntryFn := fun _ _ => ()
     addImportedFn := fun _ => () }
 
+structure ProofDocument where
+  key : ArtifactKey
+  value : Json
+  deriving Inhabited
+
+initialize proofDocumentExt : SimplePersistentEnvExtension ProofDocument Unit ←
+  registerSimplePersistentEnvExtension {
+    name := `ProofScript.proofDocuments
+    addEntryFn := fun _ _ => ()
+    addImportedFn := fun _ => () }
+
+def moduleProofDocuments (env : Environment) (owner : Name) : Array ProofDocument :=
+  moduleExtensionEntries proofDocumentExt env owner
+
+/-- Recorder keys may be relative to their module; public theorem names are qualified. -/
+def moduleProofDocument? (env : Environment) (owner declaration : Name) : Option Json :=
+  (moduleProofDocuments env owner).find? (fun entry =>
+    entry.key.name == declaration || (entry.key.name.getPrefix == .anonymous &&
+      owner ++ entry.key.name == declaration)) |>.map (·.value)
+
+def registerProofDocument (env : Environment) (artifact : Artifact) (value : Json) :
+    Except String Environment := do
+  unless artifact.key.owner == env.mainModule && artifact.key.kind == .proof &&
+      artifact.contentDigest == value.sha256 do
+    throw "proof document disagrees with its artifact"
+  if let some previous := (moduleProofDocuments env env.mainModule).find? (·.key == artifact.key) then
+    if previous.value.sha256 == value.sha256 then return env
+    throw "duplicate proof document"
+  return proofDocumentExt.addEntry env { key := artifact.key, value }
+
 def moduleArtifacts (env : Environment) (owner : Name) : Array Artifact := Id.run do
   let entries := moduleExtensionEntries artifactExt env owner
   let mut artifacts := #[]
@@ -88,10 +118,10 @@ def moduleArtifacts (env : Environment) (owner : Name) : Array Artifact := Id.ru
     artifacts := (artifacts.filter (·.key != artifact.key)).push artifact
   return artifacts
 
-/-- Only recorded proof files are persisted. Page artifacts are built from closed drafts at export. -/
+/-- Only recorded proof files are persisted. Page artifacts are built from components at export. -/
 def registerProofArtifact (env : Environment) (artifact : Artifact) : Except String Environment := do
   unless artifact.schemaVersion == manifestSchemaVersion do throw "unsupported artifact manifest version"
-  unless artifact.key.kind == .proof do throw "page artifacts are generated from closed page drafts"
+  unless artifact.key.kind == .proof do throw "page artifacts are generated from persisted components"
   unless artifact.key.owner == env.mainModule do throw "artifacts must be committed by their defining module"
   let existing := moduleArtifacts env artifact.key.owner
   if let some previous := existing.find? (·.key == artifact.key) then

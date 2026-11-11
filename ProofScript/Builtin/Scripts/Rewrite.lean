@@ -4,10 +4,12 @@ import ProofScript.Info.Commands
 open Lean.Parser.Tactic (optConfig rwRuleSeq location)
 
 
-script_macro «rewrite» (clear := [config, rules, loc])
+script_macro «rewrite»
 "rewrite" config:optConfig rules:rwRuleSeq loc:(location)? => `(tactic|
   rewrite $config:optConfig $rules $[$loc]?
 )
+
+script_recorder «rewrite» auto (clear := [config, rules, loc])
 
 script_info «rewrite» {
   template := [{
@@ -19,10 +21,12 @@ script_info «rewrite» {
   }]
 }
 
-script_macro «rw» (clear := [config, rules, loc])
+script_macro «rw»
 "rw " config:optConfig rules:rwRuleSeq loc:(location)? => `(tactic|
   rw $config:optConfig $rules $[$loc]?
 )
+
+script_recorder «rw» auto (clear := [config, rules, loc])
 
 script_info «rw» {
   template := [{
@@ -40,8 +44,10 @@ macro "rw_pos " h:term loc:(location)? : tactic => `(tactic|
   rw [if_pos $h] $[$loc]?
 )
 
-script_macro «rwPos»  (clear := [h, loc])
+script_macro «rwPos»
 "rw_pos " h:term loc:(location)? => `(tactic| rw_pos $h $[$loc]?)
+
+script_recorder «rwPos» auto (clear := [h, loc])
 
 script_info «rwPos» {
   template := [{
@@ -59,8 +65,10 @@ macro "rw_neg " h:term loc:(location)? : tactic => `(tactic|
   rw [if_neg $h] $[$loc]?
 )
 
-script_macro «rwNeg»  (clear := [h, loc])
+script_macro «rwNeg»
 "rw_neg " h:term loc:(location)? => `(tactic| rw_neg $h $[$loc]?)
+
+script_recorder «rwNeg» auto (clear := [h, loc])
 
 script_info «rwNeg» {
   template := [{

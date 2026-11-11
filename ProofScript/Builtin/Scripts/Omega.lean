@@ -4,8 +4,10 @@ import ProofScript.Info.Commands
 open Lean.Parser.Tactic (optConfig)
 
 
-script_macro «omega» (clear := [config])
+script_macro «omega»
 "omega" config:optConfig => `(tactic| omega $config)
+
+script_recorder «omega» auto (clear := [config])
 
 script_info «omega» {
   template := [{

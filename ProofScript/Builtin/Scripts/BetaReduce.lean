@@ -5,8 +5,10 @@ import Mathlib.Tactic.DefEqTransformations
 open Lean.Parser.Tactic (location)
 
 
-script_macro «betaReduce» (clear := [loc])
+script_macro «betaReduce»
 "beta_reduce" loc:(location)? => `(tactic| beta_reduce $[$loc]?)
+
+script_recorder «betaReduce» auto (clear := [loc])
 
 script_info «betaReduce» {
   template := [{

@@ -4,6 +4,7 @@
     const selector = ".ps-fit-viewport";
     let scheduled = false;
     let notifying = false;
+    let fitted = new WeakMap();
 
     function alignCalculations() {
         const groups = new Map();
@@ -38,6 +39,10 @@
     function fit(viewport) {
         const content = viewport.querySelector(":scope > .ps-fit-content");
         if (!content || !viewport.clientWidth) return;
+        const previous = fitted.get(viewport);
+        if (previous?.width === viewport.clientWidth && previous.content === content &&
+                previous.naturalWidth === content.scrollWidth &&
+                previous.naturalHeight === content.scrollHeight) return;
         content.style.transform = "";
         viewport.style.height = "";
         // scrollWidth measures untransformed KaTeX and other unbreakable children.
@@ -48,6 +53,8 @@
             content.style.transform = `scale(${scale})`;
             viewport.style.height = `${content.scrollHeight * scale}px`;
         }
+        fitted.set(viewport, {width: viewport.clientWidth, content,
+            naturalWidth: content.scrollWidth, naturalHeight: content.scrollHeight});
     }
 
     function alignAndScaleMath() {
@@ -57,6 +64,12 @@
         notifying = true;
         document.dispatchEvent(new Event("ps4html:layoutchange"));
         notifying = false;
+    }
+
+    // DOM changes may replace content while preserving the same dimensions.
+    function changed() {
+        fitted = new WeakMap();
+        schedule();
     }
 
     function schedule() {
@@ -80,7 +93,7 @@
             }).observe(main);
         }
         if (main && typeof MutationObserver !== "undefined") {
-            new MutationObserver(schedule).observe(main, {subtree: true, childList: true, characterData: true});
+            new MutationObserver(changed).observe(main, {subtree: true, childList: true, characterData: true});
         }
         document.fonts?.addEventListener("loadingdone", schedule);
     });

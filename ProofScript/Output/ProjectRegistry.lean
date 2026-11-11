@@ -1,5 +1,5 @@
 import ProofScript.Output.Dependencies
-import ProofScript.Info.Project
+import ProofScript.Info.Freeze
 
 namespace ProofScript
 
@@ -37,25 +37,16 @@ def ProjectRegistry.declarationProject? (registry : ProjectRegistry) (env : Envi
 def ProjectKey.projectId (project : ProjectKey) : String :=
   (toJson project).compress
 
-/-- Read the one project declaration in the imported library view. -/
-def ProjectRegistry.metadata (registry : ProjectRegistry) (env : Environment) :
+/-- Resolve project updates only from the owner's import closure and
+    only from modules owned by this Lake library. -/
+def ProjectRegistry.metadataFor (registry : ProjectRegistry) (env : Environment)
+    (owner : Name) :
     Except Diagnostic ProjectInfo := do
-  let mut events := #[]
-  for owner in registry.libraryModules do
-    events := events ++ (moduleEvents env owner).filter (·.identity.kind == projectSpec.kind)
-  let declarations := events.filter (!·.reset)
-  if declarations.size > 1 then
-    let error : Diagnostic := {
-      message := s!"project_info may only appear once in {registry.selected.library}" }
-    throw error
-  let some declaration := declarations[0]? | return { title := registry.selected.library }
-  let schema : InfoSchema ProjectInfo := inferInstance
-  let mut json := json% {}
-  let updates := (events.filter (·.owner == declaration.owner)).qsort (·.sequence < ·.sequence)
-  for event in updates do
-    if event.reset then json := json% {}
-    json ← applyPatch schema json event.assignments
-  schema.decode json
+  let query : Query := { moduleName := owner }
+  let resolved ← freezeProjectInfo env query registry.selected.projectId fun moduleName =>
+    registry.projectFor? moduleName == some registry.selected
+  return if resolved.value.title.isEmpty then
+    { resolved.value with title := registry.selected.library } else resolved.value
 
 private def field [FromJson α] (value : Json) (key : String) : IO α :=
   match value.getObjValAs? α key with

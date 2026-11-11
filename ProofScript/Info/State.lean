@@ -56,6 +56,7 @@ structure InfoEvent where
   identity : InfoTarget
   owner : Name
   sequence : Nat
+  source : String := ""
   assignments : Patch := #[]
   reset : Bool := false
   bindings : Array ContextBinding := #[]
@@ -104,7 +105,8 @@ def validatePatch (schema : InfoSchema Record) (patch : Patch) : Except Diagnost
 /-- Construct the entire new environment before the elaborator installs it once. -/
 def commitInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) (target : Name ⊕ String)
     (patch : Patch)
-    (bindings : Array ContextBinding := #[]) (reset : Bool := false) :
+    (bindings : Array ContextBinding := #[]) (reset : Bool := false)
+    (source : String := "") :
     Except Diagnostic Environment := do
   let schema : InfoSchema Record := inferInstance
   schema.validateDefinition
@@ -118,7 +120,7 @@ def commitInfo [InfoSchema Record] (spec : InfoSpec Record) (env : Environment) 
     keys := keys.push binding.key
   let event : InfoEvent := {
     schemaId := schema.id, schemaVersion := schema.version, identity
-    owner := env.mainModule, sequence := infoEventExt.getState env
+    owner := env.mainModule, sequence := infoEventExt.getState env, source
     assignments := patch, reset, bindings }
   return infoEventExt.addEntry env event
 

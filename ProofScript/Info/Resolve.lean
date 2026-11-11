@@ -8,6 +8,7 @@ open Lean
 structure WriteId where
   owner : Name
   sequence : Nat
+  source : String := ""
   deriving Inhabited, Repr, BEq
 
 inductive UnitKey where
@@ -53,9 +54,11 @@ private def UnitState.hasValue (state : UnitState) : Bool :=
 def UnitState.conflict? (state : UnitState) : Option Diagnostic := do
   let first ← state.candidates[0]?
   if state.candidates.all (·.value == first.value) then none else
-    some {
-      message := "conflicting independent writes"
-      path := state.key.path }
+    let origins := state.candidates.map fun candidate =>
+      s!"{candidate.write.owner} #{candidate.write.sequence}" ++
+      (if candidate.write.source.isEmpty then "" else s!" ({candidate.write.source})")
+    some { message := "conflicting independent writes: " ++
+      String.intercalate ", " origins.toList, path := state.key.path }
 
 def UnitState.value (state : UnitState) : Except Diagnostic (Option Json) :=
   match state.conflict? with
@@ -95,7 +98,7 @@ def selectEvents (graph : ModuleGraph) (events : Array InfoEvent) (query : Query
 
 private def writes (events : Array InfoEvent) : Array (Option Assignment × WriteId) :=
   events.flatMap fun event =>
-    let write : WriteId := ⟨event.owner, event.sequence⟩
+    let write : WriteId := ⟨event.owner, event.sequence, event.source⟩
     (if event.reset then #[(none, write)] else #[]) ++
       event.assignments.map fun assignment =>
         (some assignment, write)
@@ -267,7 +270,7 @@ def resolveContextEvents (graph : ModuleGraph) (events : Array InfoEvent)
     for binding in event.bindings do
       if binding.key == key then
         state := state.add graph { value := some binding.value, write := {
-          owner := event.owner, sequence := event.sequence } }
+          owner := event.owner, sequence := event.sequence, source := event.source } }
   return state
 
 def resolveContext (env : Environment) (query : Query) (key : String) : Except Diagnostic UnitState := do

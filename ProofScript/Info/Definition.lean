@@ -9,8 +9,12 @@ namespace ProofScript
 open Lean
 
 inductive DefinitionKind where
-  | concept | wrapper | relation | operator | alias
-  deriving Inhabited, Repr, BEq
+| concept
+| wrapper
+| relation
+| operator
+| alias
+deriving Inhabited, Repr, BEq
 
 instance : InfoCodec DefinitionKind := enumCodec #[
   ("concept", .concept), ("wrapper", .wrapper), ("relation", .relation), ("operator", .operator),
@@ -24,8 +28,14 @@ deriving Inhabited, Repr, BEq
 instance : InfoCodec StyleMode := enumCodec #[("formula", .formula), ("text", .text)]
 
 inductive StyleFixity where
-  | atom | prefix | postfix | infix | binder | application | custom
-  deriving Inhabited, Repr, BEq
+| atom
+| prefix
+| postfix
+| infix
+| binder
+| application
+| custom
+deriving Inhabited, Repr, BEq
 
 instance : InfoCodec StyleFixity := enumCodec #[
   ("atom", .atom), ("prefix", .prefix), ("postfix", .postfix), ("infix", .infix),
@@ -45,7 +55,7 @@ private def uniqueIndices (values : Array Nat) : Except String Unit :=
 structure BinderSelector where
   argument : Nat
   count : Nat
-  deriving Inhabited, Repr, BEq
+deriving Inhabited, Repr, BEq
 
 instance : InfoCodec BinderSelector where
   parse stx := do
@@ -99,7 +109,7 @@ structure ConceptInfo where
   auto_arity : Bool := true
   templates : Array DefinitionTemplate := #[]
   default : String := "formula"
-  deriving Inhabited, InfoSchema
+deriving Inhabited, InfoSchema
 
 /-- Symbolic operator layout. -/
 structure OperatorInfo where
@@ -107,7 +117,7 @@ structure OperatorInfo where
   fixity : StyleFixity := .infix
   precedence : Nat := 100
   associativity : StyleAssociativity := .none
-  deriving Inhabited, InfoSchema
+deriving Inhabited, InfoSchema
 
 instance : InfoSchema OperatorInfo :=
   (inferInstance : InfoSchema OperatorInfo).withOverrides! {
@@ -116,17 +126,19 @@ instance : InfoSchema OperatorInfo :=
 
 structure RelationInfo where
   symbol : String := ""
-  deriving Inhabited, InfoSchema
+deriving Inhabited, InfoSchema
 
 structure WrapperInfo where
   index : Option Nat := none
-  deriving Inhabited, InfoSchema
+deriving Inhabited, InfoSchema
 
 structure AliasInfo where
   target : Option DeclarationRef := none
-  deriving Inhabited, InfoSchema
+deriving Inhabited, InfoSchema
 
 structure DefinitionInfo where
+  /-- Display name; empty uses the declaration's full Lean name when frozen. -/
+  name : String := ""
   /-- Variable-name prefix for this type; an empty string requests automatic naming. -/
   var_name : String := ""
   kind : DefinitionKind := .concept
@@ -139,14 +151,14 @@ structure DefinitionInfo where
       Formula fragments use dollar delimiters. -/
   parameter_template : Option String := none
   extra : ExtraFields := {}
-  deriving Inhabited, InfoSchema
+deriving Inhabited, InfoSchema
 
 /-- Concept templates and argument selection. -/
 structure DefinitionDisplay where
   kind : DefinitionKind
   auto_arity : Bool
   templates : Array DefinitionTemplate
-  deriving Inhabited
+deriving Inhabited
 
 private def definitionConstraint (name message : String) : Diagnostic :=
   { message, path := #[.key name] }
@@ -237,7 +249,7 @@ def validateDefinitionInfo (value : DefinitionInfo) : Except Diagnostic Unit := 
 
 instance : InfoSchema DefinitionInfo :=
   { (inferInstance : InfoSchema DefinitionInfo).withOverrides! {
-    validateRecord := validateDefinitionInfo } with version := "8.0.0" }
+    validateRecord := validateDefinitionInfo } with version := "9.0.0" }
 
 def definitionSpec : InfoSpec DefinitionInfo := {
   kind := "definition"

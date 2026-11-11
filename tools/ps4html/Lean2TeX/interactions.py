@@ -31,16 +31,25 @@ class ExpressionInteractions:
         self.enable_render_roots = False
         self._render_depth = 0
 
-    def add_root(self, root, mapping, registry, language, parent_mode):
+    def add_root(self, root, mapping, registry, language, parent_mode,
+                 definition_names=None, theorem_names=None):
         self._root_count += 1
         root_id = f"r{self._root_count}"
         dependencies = set()
+        names = {"definition": {}, "theorem": {}}
+        template_keys = set()
         html_literals = eligible_literals(root, registry, language) if parent_mode == "text" else set()
 
         def serialize(node):
             key = self._key(node, "")
             if key and json.loads(key)[0] in ("constant", "builtin"):
                 dependencies.add(key)
+                if node.kind in ("concept", "operator", "relation") and node.metadata.get("originalExprKind") == "app":
+                    template_keys.add(key)
+            if node.kind in ("const", "theorem"):
+                original = node.metadata.get("leanName", node.macro_name)
+                source = theorem_names if node.kind == "theorem" else definition_names
+                names["theorem" if node.kind == "theorem" else "definition"][original] = (source or {}).get(original) or original
             metadata = {name: value for name, value in node.metadata.items() if name in (
                 "leanName", "headConst", "originalExprKind", "isArrow", "literalKind",
                 "fvarId", "bindId", "bindRef")}
@@ -79,6 +88,8 @@ class ExpressionInteractions:
                                   for label in family.labels],
                 }
                 continue
+            if key not in template_keys:
+                continue
             macro = registry.get(name)
             if macro is None:
                 continue
@@ -96,6 +107,7 @@ class ExpressionInteractions:
             }
         self.render_roots[root_id] = {
             "tree": tree, "dependencies": sorted(dependencies), "catalog": catalog,
+            "names": names,
             "language": language, "parentMode": parent_mode,
         }
         return root_id
@@ -113,7 +125,7 @@ class ExpressionInteractions:
         if builtin is not None:
             return builtin.as_key()
         name = node.metadata.get("leanName")
-        if name and (node.kind == "const" or node.metadata.get("headConst") or node.kind == "wrapper"):
+        if name and (node.kind in ("const", "theorem") or node.metadata.get("headConst") or node.kind == "wrapper"):
             return RenderTarget("constant", name).as_key()
         if node.kind == "fvar" and node.metadata.get("fvarId"):
             return json.dumps(["fvar", theorem, node.metadata["fvarId"]], ensure_ascii=False)

@@ -5,18 +5,18 @@ Lean2TeX 是 PS4HTML 的 Python 语义渲染模块。ProofScript 导出原生表
 
     **接收已解析的表达式 occurrence，输出对应的 TeX 代码。**
 
-渲染配置由 Lean 冻结并导出到 `.ProofScript/info/snapshots/`，完成清单为 `info/index.json`。
+渲染配置由 Lean 固化并按模块导出到 `.ProofScript/info/<模块路径>.json`。
 
 典型用法（作为 PS4HTML 的接口）：
 
     from Lean2TeX import load
 
-    renderer = load(export_root, proof_module, snapshot_id=artifact["snapshotId"])
+    renderer = load(export_root, proof_module)
     tex = renderer.render(node)                # node 由 ExpressionResolver 解析
     display = renderer.convert(node)
     tex = renderer.render_display(display)
 
-模块只有一个消费快照时可省略 snapshot_id；存在多个快照时必须明确选择。
+每个页面模块拥有独立的最终配置视图。
 每个定理渲染前应调用 `renderer.reset()` 清空变量分配状态。
 """
 

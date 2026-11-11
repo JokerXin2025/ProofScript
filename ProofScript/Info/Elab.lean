@@ -84,14 +84,16 @@ def parsePatch (schema : InfoSchema Record) (fields : Array InputField) : Comman
 def commitInfoCommand [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String) (patch : Patch)
     (ref : Syntax)
     (bindings : Array ContextBinding := #[]) : CommandElabM Unit := do
-  match commitInfo spec (← getEnv) target patch bindings with
+  let source := s!"{← getFileName}:{(← getFileMap).toPosition (ref.getPos?.getD 0)}"
+  match commitInfo spec (← getEnv) target patch bindings false source with
   | .error error => throwErrorAt ref error.render
   | .ok env => setEnv env
 
 /-- Record a single whole-target reset. -/
 def resetInfo [InfoSchema Record] (spec : InfoSpec Record) (target : Name ⊕ String)
     (ref : Syntax) : CommandElabM Unit := do
-  match commitInfo spec (← getEnv) target #[] #[] true with
+  let source := s!"{← getFileName}:{(← getFileMap).toPosition (ref.getPos?.getD 0)}"
+  match commitInfo spec (← getEnv) target #[] #[] true source with
   | .error error => throwErrorAt ref error.render
   | .ok env => setEnv env
 

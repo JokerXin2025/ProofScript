@@ -5,12 +5,11 @@ Lean/Wasm bundle，并将计算结果交给具体页面组件。
 
 当前内置实现位于 `tools/ps4html/PS4HTML/assets/js/computation.js`，注册入口为
 `PS4HTMLComputation.register`。本文 TypeScript/React 片段为下游接入参考，不表示内置实现使用 React。
-component、pending 和 bundle 的 `schemaVersion` 仍为 `0.0.0`，执行 ABI 为 `proofscript-json-v1`。函数来源信息单独采用 `function.recordingVersion = "0.3.0"`；缺失或旧版本必须重新运行 `lake build MyLibrary:ps4html`。缓存读取不会迁移旧来源数据。
+component、pending 和 bundle 的 `schemaVersion` 仍为 `0.0.0`，执行 ABI 为 `proofscript-json-v1`。函数来源信息采用 `function.recordingVersion = "0.4.0"`；缺失或旧版本必须重新运行 `lake build MyLibrary:proofscriptExport`。缓存读取不会迁移旧来源数据。
 
 ## 站点构建器职责
 
-前端仓库或页面渲染器不只负责读取已经存在的 JSON。负责发布网站的 build pipeline 必须先编译
-Lean/ProofScript 项目，再构建和 finalize 计算资源。标准入口会依次完成页面编译、Wasm 构建、finalize、Info 完成清单校验和站点发布：
+ProofScript 独立导出负责页面编译、Wasm 构建和资源封存；PS4HTML 只读取已完成的模块清单并渲染。标准入口依次完成模块导出和站点发布：
 
 ```sh
 # 配置与当前 Lean commit 匹配的 Wasm runtime，然后构建页面
@@ -18,7 +17,7 @@ PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
   lake build MyLibrary:ps4html
 ```
 
-普通 `lake build` 只验证证明，不产生页面录制。自定义管线也必须先执行页面模式编译，取得包含页面草稿的 `.olean`、pending/wrapper/C IR；再从 `.olean` 导出最终页面与 Info 清单，以同一 `PROOF_SCRIPT_OUTPUT_ROOT` 调用 `build-computations.mjs` 和 `finalize-computations.mjs`，最后更新页面和资源摘要。标准 facet 已处理这些步骤；发布输入位于 `.PS4HTML/inputs/<包>/<库>/.ProofScript/`。
+普通 `lake build` 只验证证明，不产生页面录制。`lake build MyLibrary:proofscriptExport` 从页面模式 `.olean` 导出最终页面和固化 Info，使用独立工具构建、封存 Wasm；各类发布输入按模块路径存放在 `.ProofScript/pages/`、`.ProofScript/resources/` 和 `.ProofScript/info/`。PS4HTML 不构建 Wasm，也不修改这些文件。
 
 渲染器的生产构建必须在任一步失败时停止发布。标准构建入口在发布前校验完成清单与资源摘要。
 
@@ -26,12 +25,9 @@ PROOF_SCRIPT_LEAN_WASM_PREFIX=/path/to/lean-wasm-prefix \
 
 - `#page computation` 在 Lean elaboration 时登记 wrapper，但模块 C IR 在 elaboration 完成后才写出，所以
   不能省略第一步，也不能在 command elaborator 中同步链接 Wasm。
-- Lake 若复用未变化的 `.olean`，证明和外部资源的编译期文件副作用不一定重新执行。清空这些文件后
-  应确保页面模块被重新 elaboration。页面 JSON 由导出器从持久化草稿生成，`#page end` 不写页面文件。
-- Finalize 之后再次导出页面，会从草稿重新生成 `pending` 页面。发布流程中 finalize
-  必须位于最后一次 Lean 页面导出之后。
-- 只有 `.ProofScript/pages/` 和 `.ProofScript/resources/` 是前端部署输入；pending 和 bundles 是
-  构建中间产物。
+- 页面、证明和生成资源内容在 `.olean` 中持久化；删除导出文件后可从页面模式编译产物重新导出，无需重新 elaboration。外部图片单独修改不触发重导出，下次导出时重新复制。
+- Wasm finalize 属于模块导出准备阶段；只有页面、Info 和计算资源均就绪后才发布该模块。
+- `.ProofScript/manifests/modules/` 与 `manifests/targets/` 用于验证和选择页面；pending 是构建中间数据，最终页面引用就绪的资源。
 - `PROOF_SCRIPT_LEAN_WASM_PREFIX` 必须指向与项目 Lean commit 匹配的 Emscripten Lean runtime，
   不能指向 macOS/Linux 宿主 toolchain。
 
@@ -67,7 +63,7 @@ Finalized component 示例：
         },
         "renderer": "proofscript/test-json-v1",
         "function": {
-          "recordingVersion": "0.3.0",
+          "recordingVersion": "0.4.0",
           "declaration": "Demo.compute",
           "type": "Bool → Nat",
           "expression": {"$ref": "e1"},

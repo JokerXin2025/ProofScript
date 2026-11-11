@@ -2,7 +2,6 @@
     const options = {
         wrappers: {
             parameter: "ps-display-wrappers",
-            storage: "ps4html-display-wrappers",
             defaultValue: false,
         },
     };
@@ -10,8 +9,7 @@
     function readValue(option) {
         const url = new URL(window.location.href);
         const raw = url.searchParams.get(option.parameter);
-        if (raw === "1" || raw === "0") return raw === "1";
-        return window.localStorage.getItem(option.storage) === "1";
+        return raw === "1";
     }
 
     function currentState() {
@@ -27,46 +25,23 @@
         window.history.replaceState(window.history.state, "", url);
     }
 
-    function persist(state) {
-        Object.entries(options).forEach(([key, option]) => {
-            window.localStorage.setItem(option.storage, state[key] ? "1" : "0");
-        });
-    }
-
-    function carryToLinks(state) {
-        document.querySelectorAll("a[href]").forEach(link => {
-            const raw = link.getAttribute("href");
-            if (!raw || raw.startsWith("#") || raw.startsWith("mailto:") || raw.startsWith("javascript:")) return;
-            let url;
-            try { url = new URL(raw, window.location.href); } catch (_) { return; }
-            if (url.origin !== window.location.origin) return;
-            Object.entries(options).forEach(([key, option]) => {
-                if (state[key] === option.defaultValue) url.searchParams.delete(option.parameter);
-                else url.searchParams.set(option.parameter, state[key] ? "1" : "0");
-            });
-            link.setAttribute("href", url.pathname + url.search + url.hash);
-        });
-    }
-
-    function setOption(key, value, announce = true) {
+    function setOption(key, value, announce = true, writeUrl = true) {
         if (!options[key]) return;
         const state = currentState();
         state[key] = Boolean(value);
-        persist(state);
-        updateUrl(state);
+        if (writeUrl) updateUrl(state);
         document.documentElement.dataset.displayWrappers = state.wrappers ? "on" : "off";
         document.querySelectorAll(`[data-display-option="${key}"]`).forEach(item => {
             item.setAttribute("aria-checked", state[key] ? "true" : "false");
             item.classList.toggle("is-enabled", state[key]);
         });
-        carryToLinks(state);
+        window.PS4HTMLNavigationState?.carryToLinks();
         if (announce) document.dispatchEvent(new CustomEvent("ps4html:displaychange", { detail: state }));
     }
 
     window.PS4HTMLDisplayOptions = {
         getState: currentState,
         setOption,
-        carryToLinks,
     };
 
     function closeMenus() {
@@ -110,12 +85,11 @@
 
     window.addEventListener("popstate", () => {
         const state = currentState();
-        Object.keys(options).forEach(key => setOption(key, state[key], false));
+        Object.keys(options).forEach(key => setOption(key, state[key], false, false));
     });
 
     window.addEventListener("DOMContentLoaded", () => {
         const state = currentState();
-        Object.keys(options).forEach(key => setOption(key, state[key], false));
-        carryToLinks(state);
+        Object.keys(options).forEach(key => setOption(key, state[key], false, false));
     });
 })();

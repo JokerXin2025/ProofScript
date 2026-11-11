@@ -11,9 +11,10 @@ page_component "references" => do
     let references : Array RefInfo := (← getTheoremRefs).toArray
     let component : Component := {
       kind := "references", value := toJson references, references }
-    match addComponent (← getEnv) component with
+    let requests := references.map fun reference =>
+      (⟨⟨"theorem", .inl reference.name⟩, false, "references component", none⟩ : InfoRequest)
+    match addComponent (← getEnv) component requests with
     | .error message => throwError message
-    | .ok (env, added) =>
-      unless added do logWarning "page component appears after #page end and was ignored"
+    | .ok env =>
       setEnv env
     clearTheoremRefs

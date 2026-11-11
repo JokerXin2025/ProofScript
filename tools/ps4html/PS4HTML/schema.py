@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import re
 from dataclasses import dataclass
 from pathlib import Path
@@ -275,14 +276,15 @@ class ExpressionResolver:
                     for key, child in value.items()}
         return value
 
-def validate_document(document):
+def validate_document(document, *, module_protocol=False):
     """Validate the recording envelope and expression root ownership."""
     if not isinstance(document, dict):
         _fail("Proof document must be an object")
     if document.get("schemaVersion") != PROOF_SCHEMA_VERSION:
         _fail(f"Unsupported recording schema version: {document.get('schemaVersion')!r}. {REBUILD_HINT}")
     base = {"schemaVersion", "module", "code", "statement", "expressions", "expressionRoots"}
-    if not base <= set(document) or set(document) - (base | {"proof"}):
+    extras = {"proof", "bindings"} if module_protocol else {"proof"}
+    if not base <= set(document) or set(document) - (base | extras):
         _fail(f"Proof document requires the reserved statement and expression graph fields. {REBUILD_HINT}")
     if not isinstance(document["module"], str) or not document["module"] or not isinstance(document["code"], str):
         _fail("Proof document requires a module and source code")
@@ -429,6 +431,11 @@ class ResourceLoader:
                 self.text_cache[key] = path.read_text(encoding="utf-8")
             except (OSError, UnicodeError) as error:
                 raise PS4HTMLError(f"Unable to read ProofScript resource {path}: {error}") from error
+            content = self.text_cache[key]
+            actual = hashlib.sha256(json.dumps(content, ensure_ascii=False,
+                separators=(",", ":")).encode("utf-8")).hexdigest()
+            if actual != expected_hash:
+                raise PS4HTMLError(f"ProofScript resource hash mismatch: {path}")
         return self.text_cache[key]
 
     def load_proof(self, value) -> LoadedProof:

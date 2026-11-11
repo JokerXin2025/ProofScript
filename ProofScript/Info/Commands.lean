@@ -1,16 +1,18 @@
 import ProofScript.Info.Theorem
 import ProofScript.Info.Definition
 import ProofScript.Info.Script
+import ProofScript.Info.Freeze
 import ProofScript.Core.BuildMode
+import ProofScript.Utils.Linter
 
-open Lean Elab Command ProofScript
+open Lean
+open ProofScript
 
 
 elab "project_info" fields:infoFields : command => do
   let pageBuild ← pageBuild?
   addInfoFieldInfos (inferInstance : InfoSchema ProjectInfo) fields
   let patch ← parsePatch (inferInstance : InfoSchema ProjectInfo) (← readFields fields)
-  validateProjectInfo patch (← getRef)
   if pageBuild then
     updateProjectInfo patch (← getRef)
 
@@ -30,62 +32,64 @@ elab "decl_info" target:ident fields:infoFields : command => do
   if pageBuild then
     commitInfoCommand definitionSpec declaration patch (← getRef)
 
-/-- Shorthands for the specialized definition display kinds. -/
-private def specializedFields (fields : TSyntax ``infoFields) (expected : Array String) : MacroM (Array (TSyntax `term)) := do
+/-- Split root fields by schema: definition fields, kind-specific fields, then extensions.
+The kind is fixed by the command, while omitted kind-specific fields use schema defaults. -/
+private def specializedDefinitionFields (kind : DefinitionKind)
+    (declaration : TSyntax `ident) (fields : TSyntax ``infoFields)
+    : MacroM (TSyntax `command) := do
+  let (kindName, specific) : String × Array String := match kind with
+  | .concept =>
+      ("concept", (inferInstance : InfoSchema ConceptInfo).fields.map (·.name))
+  | .wrapper =>
+      ("wrapper", (inferInstance : InfoSchema WrapperInfo).fields.map (·.name))
+  | .relation =>
+      ("relation", (inferInstance : InfoSchema RelationInfo).fields.map (·.name))
+  | .operator =>
+      ("operator", (inferInstance : InfoSchema OperatorInfo).fields.map (·.name))
+  | .alias =>
+      ("alias", (inferInstance : InfoSchema AliasInfo).fields.map (·.name))
+  let common := (inferInstance : InfoSchema DefinitionInfo).fields.filter fun field =>
+    field.name != "kind" && !field.name.endsWith "_info"
   let `(infoFields| { $[$entries:infoField],* }) := fields
-    | Macro.throwErrorAt fields "expected field assignments"
-  let mut values := #[]
+  | Macro.throwErrorAt fields "expected field assignments"
+  let mut root : Array (TSyntax ``infoField) := #[]
+  let mut specialized : Array (TSyntax ``infoField) := #[]
+  let mut extensions : Array (TSyntax ``infoField) := #[]
   for entry in entries do
-    let `(infoField| $key:infoKey := $value:term) := entry
-      | Macro.throwErrorAt entry "expected field := value"
+    let `(infoField| $key:infoKey := $_:term) := entry
+    | Macro.throwErrorAt entry "expected field := value"
     let name := match key with
-      | `(infoKey| $id:ident) => id.getId.eraseMacroScopes.toString
-      | `(infoKey| $text:str) => text.getString
-      | _ => ""
-    unless expected[values.size]? == some name do
-      Macro.throwErrorAt key s!"expected `{(expected[values.size]?).getD "end of fields"}`"
-    values := values.push value
-  unless values.size == expected.size do
-    Macro.throwErrorAt fields s!"expected fields: {String.intercalate ", " expected.toList}"
-  return values
+    | `(infoKey| $id:ident) => id.getId.eraseMacroScopes.toString
+    | `(infoKey| $text:str) => text.getString
+    | _ => ""
+    if name == "kind" then
+      Macro.throwErrorAt key "kind is fixed by the specialized info command"
+    else if common.any (·.name == name) then
+      root := root.push entry
+    else if specific.contains name then
+      specialized := specialized.push entry
+    else
+      extensions := extensions.push entry
+  let categoryKey ← `(infoKey| $(mkIdent (Name.mkSimple (kindName ++ "_info"))):ident)
+  let nested ← `(infoField| $categoryKey:infoKey := { $[$specialized:infoField],* })
+  let assignments := root ++ #[nested] ++ extensions
+  let kindId := mkIdent (Name.mkSimple kindName)
+  `(command| decl_info $declaration:ident { kind := $kindId, $[$assignments],* })
 
-/-- Parse the command head as an identifier so field names remain usable as identifiers everywhere. -/
-macro (name := specializedDefinitionInfo) (priority := low) commandName:ident declaration:ident
-    fields:infoFields : command => do
-  match commandName.getId.eraseMacroScopes.toString with
-  | "wrapper_info" =>
-    let values ← specializedFields fields #["index"]
-    let index := values[0]!
-    `(command| decl_info $declaration:ident {
-      kind := wrapper, wrapper_info := { index := $index:term } })
-  | "relation_info" =>
-    let values ← specializedFields fields #["symbol"]
-    let symbol := values[0]!
-    `(command| decl_info $declaration:ident {
-      kind := relation, relation_info := { symbol := $symbol:term } })
-  | "operator_info" =>
-    let values ← specializedFields fields #["symbol", "fixity", "precedence", "associativity"]
-    let symbol := values[0]!
-    let fixity := values[1]!
-    let precedence := values[2]!
-    let associativity := values[3]!
-    `(command| decl_info $declaration:ident {
-      kind := operator, operator_info := { symbol := $symbol:term, fixity := $fixity:term,
-        precedence := $precedence:term, associativity := $associativity:term } })
-  | "concept_info" =>
-    let values ← specializedFields fields #["auto_arity", "templates", "default"]
-    let arity := values[0]!
-    let templates := values[1]!
-    let default := values[2]!
-    `(command| decl_info $declaration:ident {
-      kind := concept, concept_info := { auto_arity := $arity:term,
-        templates := $templates:term, default := $default:term } })
-  | "alias_info" =>
-    let values ← specializedFields fields #["target"]
-    let aliasTarget := values[0]!
-    `(command| decl_info $declaration:ident {
-      kind := «alias», alias_info := { target := $aliasTarget:term } })
-  | _ => Macro.throwErrorAt commandName "expected concept_info, wrapper_info, relation_info, operator_info or alias_info"
+macro "wrapper_info" declaration:ident fields:infoFields : command => do
+  specializedDefinitionFields .wrapper declaration fields
+
+macro "relation_info" declaration:ident fields:infoFields : command => do
+  specializedDefinitionFields .relation declaration fields
+
+macro "operator_info" declaration:ident fields:infoFields : command => do
+  specializedDefinitionFields .operator declaration fields
+
+macro "concept_info" declaration:ident fields:infoFields : command => do
+  specializedDefinitionFields .concept declaration fields
+
+macro "alias_info" declaration:ident fields:infoFields : command => do
+  specializedDefinitionFields .alias declaration fields
 
 elab "script_info" target:ident fields:infoFields : command => do
   let pageBuild ← pageBuild?
@@ -98,7 +102,8 @@ elab "script_info" target:ident fields:infoFields : command => do
 elab "reset" "project_info" : command => do
   let pageBuild ← pageBuild?
   if pageBuild then
-    resetInfo projectSpec (← getEnv).mainModule.toString (← getRef)
+    let env ← getEnv
+    resetInfo projectSpec env.mainModule.toString (← getRef)
 
 elab "reset" "theorem_info" target:ident : command => do
   let pageBuild ← pageBuild?
@@ -114,3 +119,37 @@ elab "reset" "script_info" target:ident : command => do
   let pageBuild ← pageBuild?
   let ruleId ← resolveScriptTarget target
   if pageBuild then resetInfo scriptSpec ruleId (← getRef)
+
+open Elab.Command in section
+
+private def previewInfo (identity : InfoTarget) : CommandElabM Unit := do
+  let env ← getEnv
+  match freezeInfo env { moduleName := env.mainModule } identity with
+  | .error diagnostic => throwError diagnostic.render
+  | .ok record =>
+    logInfo m!"{record.identity.kind} {toString record.identity.target}: {record.value.pretty}"
+
+elab "#preview" "project_info" : command => do
+  allowHashCommandLint do
+    let env ← getEnv
+    let library := env.mainModule.components.head?.getD env.mainModule |>.toString
+    let libraryPrefix := Name.mkSimple library
+    match freezeInfo env { moduleName := env.mainModule }
+        ⟨projectSpec.kind, .inr library⟩
+        (some fun owner => owner == libraryPrefix || libraryPrefix.isPrefixOf owner) with
+    | .error diagnostic => throwError diagnostic.render
+    | .ok record => logInfo m!"project {library}: {record.value.pretty}"
+
+elab "#preview" "theorem_info" target:ident : command => do
+  allowHashCommandLint do
+    previewInfo { kind := theoremSpec.kind, target := .inl (← resolveDeclaration target) }
+
+elab "#preview" "decl_info" target:ident : command => do
+  allowHashCommandLint do
+    previewInfo { kind := definitionSpec.kind, target := .inl (← resolveDeclaration target) }
+
+elab "#preview" "script_info" target:ident : command => do
+  allowHashCommandLint do
+    previewInfo { kind := scriptSpec.kind, target := .inl (← resolveScriptTarget target) }
+
+end

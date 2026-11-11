@@ -228,11 +228,48 @@ instance : InfoCodec ScriptTemplate where
       else
         annotateInfoFields (inferInstance : InfoSchema OrdinaryScriptTemplate) fields
 
+/-- Keep duplicate display names and order while exposing named fields on the wire. -/
+instance (priority := high) : InfoCodec (List (String × String)) where
+  parse stx := do
+    let `(term| [$[$items:term],*]) := stx
+      | throwErrorAt stx "expected a list of (name, value) pairs"
+    return (← items.mapM fun item => do
+      let `(term| ($name:term, $value:term)) := item
+        | throwErrorAt item "expected (name, value)"
+      return (← InfoCodec.parse name, ← InfoCodec.parse value)).toList
+  toJson entries := toJson (entries.map fun (name, value) => json% {
+    name: $name, value: $value })
+  decode json := do
+    let entries ← json.getArr?.mapError fun message => { message }
+    entries.toList.zipIdx.mapM fun (entry, index) =>
+      (do
+        let object ← entry.getObj?.mapError fun message => { message }
+        unless object.toList.all (fun (key, _) => key == "name" || key == "value") do
+          throw ({ message := "unknown board entry field" } : Diagnostic)
+        return (← decodeField entry "name", ← decodeField entry "value") : Except Diagnostic (String × String))
+        |>.mapError (Diagnostic.atIndex index)
+  jsonSchema := json% {
+    type: "array",
+    items: {
+      type: "object",
+      properties: { name: { type: "string" }, value: { type: "string" } },
+      required: ["name", "value"],
+      additionalProperties: false
+    }
+  }
+  annotate
+  | `(term| [$[$items:term],*]) => items.forM fun item => do
+      if let `(term| ($name:term, $value:term)) := item then
+        InfoCodec.annotate (α := String) name
+        InfoCodec.annotate (α := String) value
+  | _ => pure ()
+
 structure ScriptInfo where
   renderer : ScriptRenderer := .automatic
   template : Array ScriptTemplate := #[]
   display : Bool := true
   color : ScriptColor := {}
+  board : List (String × String) := []
   extra : ExtraFields := {}
   deriving Inhabited, InfoSchema
 
@@ -244,17 +281,17 @@ instance : InfoSchema ScriptInfo :=
         let error : Diagnostic := {
           message := "automatic script rendering requires a template"
           path := #[.key ScriptInfo.infoFields.template.name] }
-        throw error } with version := "2.0.0" }
+        throw error } with version := "2.1.0" }
 
 def scriptSpec : InfoSpec ScriptInfo := { kind := "script" }
 
-def validateScriptContract (registration : ScriptTacticRegistration) (value : ScriptInfo) :
+def validateScriptContract (kind : ScriptKind) (value : ScriptInfo) :
     Except Diagnostic Unit := do
-  if value.renderer == .strategy && !registration.config.isStrategy then
+  if value.renderer == .strategy && kind != .strategy then
     throw { message := "strategy renderer requires a strategy registration", path := #[.key ScriptInfo.infoFields.renderer.name] }
   for index in [:value.template.size] do
     let template := value.template[index]!
-    if template.isStrategy != registration.config.isStrategy then
+    if template.isStrategy != (kind == .strategy) then
       throw { message := "template kind does not match the script registration", path := #[.key ScriptInfo.infoFields.template.name, .index index] }
 
 /-- Callers with an actual invocation's selected registration can validate that exact contract.
@@ -269,7 +306,7 @@ def resolveScriptInfoWithRegistration (env : Environment) (query : Query)
         else if registration.config.isStrategy then { renderer := .strategy } else
         { template := #[.ordinary { lang := .zh, tag := registration.name, content := "" }] }
       pure { value := fallback, dependencies := scriptSpec.dependencies fallback }
-    (validateScriptContract registration result.value).mapError view.attach
+    (validateScriptContract registration.config.kind result.value).mapError view.attach
     return result : Except Diagnostic (ResolvedInfo ScriptInfo)).mapError fun error =>
       { error with kind := some scriptSpec.kind, target := some registration.ruleId.toString }
 

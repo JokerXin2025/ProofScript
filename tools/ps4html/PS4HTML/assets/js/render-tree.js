@@ -35,7 +35,7 @@
         }
         return parens ? `\\left(${tex}\\right)` : tex;
     }
-    function render(tree, catalog, selections, language, parentMode, fragments) {
+    function render(tree, catalog, selections, language, parentMode, fragments, names = {}) {
         let visits = 0, length = 0;
         const literalFragments = new Map();
         const result = (tex, mode = "formula", fixity = "atom", precedence = 100, associativity = "none") => {
@@ -58,14 +58,18 @@
                 template.label === selections[builtinKey(builtinName)] && template.available !== false)
                 ? selections[builtinKey(builtinName)] : builtinCatalog?.default;
             const key = JSON.stringify(["constant", node.metadata.leanName || node.name]).replace(",", ", ");
-            const macro = (node.kind === "const" ||
-                ["concept", "operator", "relation"].includes(node.kind) ||
+            const macro = (["concept", "operator", "relation"].includes(node.kind) ||
                 (node.kind === "projection" && node.metadata.headConst))
                 ? catalog[key] : null;
-            if (macro) {
+            if (["const", "theorem"].includes(node.kind)) {
+                const original = node.metadata.leanName || node.name;
+                const category = node.kind === "theorem" ? "theorem" : "definition";
+                const name = names[category]?.[original] || original;
+                output = result(`\\operatorname{${escapeText(name)}}`);
+            } else if (macro) {
                 if (macro.kind === "operator" || macro.kind === "relation") {
                     const arity = macro.fixity === "infix" ? 2 : 1;
-                    if (node.metadata.originalExprKind === "const" || node.children.length !== arity) {
+                    if (node.children.length !== arity) {
                         output = result(`\\operatorname{${node.name.split(".").pop()}}`);
                     } else {
                         const layout = {mode: "formula", fixity: macro.fixity,
@@ -97,13 +101,10 @@
                         || macro.templates.find(item => matching(item, "formula"))
                         || macro.templates.find(item => matching(item, macro.default, "en"));
                     if (!template) throw Error(`no template for ${key}`);
-                    if (node.metadata.originalExprKind === "const" && /#\d+|@\d+/.test(template.content)) {
-                        output = result(`\\operatorname{${node.name.split(".").pop()}}`);
-                    } else {
-                        // Binder selectors expose a lambda's binder/body, not the
-                        // lambda itself. Only render whole arguments used by #n.
-                        const children = new Map();
-                        const tex = template.content.replace(selector, (match, ats, atIndex, index, offset) => {
+                    // Binder selectors expose a lambda's binder/body, not the
+                    // lambda itself. Only render whole arguments used by #n.
+                    const children = new Map();
+                    const tex = template.content.replace(selector, (match, ats, atIndex, index, offset) => {
                             const i = Number(atIndex || index);
                             if (!node.children[i]) throw Error(`missing argument ${i}`);
                             // A text template may already be inside $...$ at this
@@ -122,16 +123,13 @@
                             if (child.kind === "lambda") child = child.children[0];
                             if (ats.length > count + 1) throw Error("invalid binder selector");
                             return childTex(renderNode(child, depth + 1), layout, i);
-                        });
-                        output = result(tex, template.mode, template.fixity, template.precedence, template.associativity);
-                    }
+                    });
+                    output = result(tex, template.mode, template.fixity, template.precedence, template.associativity);
                 }
             } else if (["fvar", "bvar", "binder"].includes(node.kind)) {
                 let tex = node.generated ? `\\textcolor{gray}{${node.name}}` : node.name;
                 if (node.metadata.reference) tex = `\\htmlData{l2t-kind=${node.kind},l2t-ref=${node.metadata.reference}${node.generated ? ",l2t-generated=true" : ""}}{${tex}}`;
                 output = result(tex);
-            } else if (node.kind === "const") {
-                output = result(`\\operatorname{${node.name.split(".").pop()}}`);
             } else if (node.kind === "literal") {
                 output = node.metadata.literalKind === "literal.str" && node.metadata.htmlEligible && parentMode === "text"
                     ? result(literalAtom(node.name, builtinStyle || "plain", fragments

@@ -16,10 +16,21 @@ import { basename, dirname, join, relative, resolve } from "node:path";
 const root = process.cwd();
 const outputRoot = resolve(process.env.PROOF_SCRIPT_OUTPUT_ROOT || join(root, ".ProofScript"));
 const pendingRoot = join(outputRoot, "computations", "pending");
-const bundlesRoot = join(outputRoot, "computations", "bundles");
+const resourceModule = process.env.PROOF_SCRIPT_RESOURCE_MODULE;
+if (resourceModule && (!resourceModule.split("/").every(part =>
+    part && part !== "." && part !== ".." && !part.includes("\\")))) {
+  throw new Error("invalid ProofScript computation resource module path");
+}
+const bundlesRoot = resourceModule
+  ? join(outputRoot, "computations", "bundles", resourceModule)
+  : join(outputRoot, "computations", "bundles");
 const pagesRoot = join(outputRoot, "pages");
-const resourcesRoot = join(outputRoot, "resources", "computation");
-const indexPath = join(outputRoot, "computations", "index.json");
+const resourcesRoot = resourceModule
+  ? join(outputRoot, "resources", resourceModule, "computation")
+  : join(outputRoot, "resources", "computation");
+const indexPath = resourceModule
+  ? join(outputRoot, "computations", "indices", `${resourceModule}.json`)
+  : join(outputRoot, "computations", "index.json");
 
 function filesBelow(path, suffix) {
   if (!existsSync(path)) return [];

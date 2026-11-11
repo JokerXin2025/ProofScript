@@ -3,8 +3,10 @@ import ProofScript.Info.Commands
 
 
 /-- Describe the proof in natural language. -/
-script_macro «admit» (clear := [reason])
+script_macro «admit»
 "admit" reason:str => `(tactic| sorry)
+
+script_recorder «admit» auto (clear := [reason])
 
 script_info «admit» {
   renderer := «admit»

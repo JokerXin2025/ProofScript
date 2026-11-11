@@ -3,6 +3,7 @@ import Lean.Data.Json
 import ProofScript.Output.Path
 import ProofScript.Page.Model
 import ProofScript.Script.Recording.ComputationEncoding
+import ProofScript.Core.ModuleExtensionEntries
 
 open Lean
 open System
@@ -55,13 +56,18 @@ def pendingEntryPath (moduleName declaration : String) : FilePath :=
   outputRoot / "computations" / "pending" /
     FilePath.mk modulePath / s!"{declarationPath}.json"
 
-def writePendingEntry (entry : PendingEntry) : IO FilePath := do
+initialize pendingEntryExt : SimplePersistentEnvExtension PendingEntry Unit ←
+  registerSimplePersistentEnvExtension {
+    name := `ProofScript.pendingComputations
+    addEntryFn := fun _ _ => ()
+    addImportedFn := fun _ => () }
+
+def modulePendingEntries (env : Environment) (owner : Name) : Array PendingEntry :=
+  moduleExtensionEntries pendingEntryExt env owner
+
+def recordPendingEntry (env : Environment) (entry : PendingEntry) : Environment × FilePath := Id.run do
   let reference := pendingEntryPath entry.module entry.entry
-  let path ← activeOutputPath reference
-  path.ensureParentDir
-  IO.FS.writeFile path (toJson entry).pretty
-  -- Persist a logical reference; a staging directory must not change page content digests.
-  return reference
+  return (pendingEntryExt.addEntry env entry, reference)
 
 
 end ProofScript.Computation
@@ -192,7 +198,7 @@ private def parseJsonAt (stx : Syntax) (source : String) : CommandElabM Json :=
   | .ok value => pure value
   | .error message => throwErrorAt stx s!"invalid #page computation payload JSON: {message}"
 
-private def resolveDeclaration (stx : Syntax) (name : Name) : CommandElabM Name := do
+private def resolveComputationDeclaration (stx : Syntax) (name : Name) : CommandElabM Name := do
   let env ← getEnv
   let candidates := ((← getCurrNamespace) ++ name) :: (← getOpenDecls).filterMap fun
     | .simple ns _ => some (ns ++ name)
@@ -210,7 +216,7 @@ private def addComputationComponent (metadataStx : Syntax)
   let metadata ←  match parseComponentMetadata metadataStx with
                   | .ok metadata => pure metadata
                   | .error message => throwErrorAt metadataStx message
-  let declaration ← resolveDeclaration functionStx.raw functionStx.getId
+  let declaration ← resolveComputationDeclaration functionStx.raw functionStx.getId
   Elab.addConstInfo functionStx.raw declaration
   let env ← getEnv
   let info := env.constants.find! declaration
@@ -237,7 +243,7 @@ private def addComputationComponent (metadataStx : Syntax)
     module := moduleName.toString
     functionType := { input := inputType, output := outputType, errorMode := shape.errorMode }
   }
-  let manifest ← liftIO <| Computation.writePendingEntry pending
+  let manifest := Computation.pendingEntryPath pending.module pending.entry
   let labels := match metadata.label with
     | some label => #[(("figure" : ReferenceKind), label)]
     | none => #[]
@@ -254,7 +260,13 @@ private def addComputationComponent (metadataStx : Syntax)
     payload
   }
   let encoded ← ofExcept <| value.encode
-  addPageComponent functionStx.raw "computation" encoded labels
+  let requests : Array InfoRequest := #[⟨⟨"definition", .inl declaration⟩,
+    false, s!"computation {declaration}", none⟩]
+  -- If validation fails, neither the pending task nor its component reaches the environment.
+  let (env, _) := Computation.recordPendingEntry (← getEnv) pending
+  match addComponent env { kind := "computation", value := encoded } requests labels with
+  | .ok env => setEnv env
+  | .error message => throwErrorAt functionStx message
 
 /--
 Adds an interactive computation backed by a Lean declaration.
@@ -291,7 +303,7 @@ private def annotateComputationFunction (fields : Array (TSyntax ``computationFi
         if key.getId == `function then
           if let `(computationFieldValue| $functionStx:ident) := value then
             try
-              let declaration ← resolveDeclaration functionStx.raw functionStx.getId
+              let declaration ← resolveComputationDeclaration functionStx.raw functionStx.getId
               Elab.addConstInfo functionStx.raw declaration
             catch error =>
               if error.isInterrupt || error.isMaxHeartbeat || error.isMaxRecDepth then

@@ -6,7 +6,7 @@ from pathlib import Path
 from types import MappingProxyType
 from typing import Iterable
 
-from PS4HTML.info import InfoBundle, LeanName, TheoremKey, TheoremRecord, digest, name_key, name_text
+from PS4HTML.info import LeanName, TheoremKey, TheoremRecord, digest, name_text
 from PS4HTML.project import PS4HTMLError
 
 
@@ -65,36 +65,6 @@ class TheoremGraph:
         self.destinations = MappingProxyType(destinations)
         # Coverage describes this bundle, never all modules of a ProjectId.
         self.modules = tuple(modules)
-
-    @classmethod
-    def from_bundle(cls, bundle: InfoBundle, pages=()):
-        destinations = {}
-        for page in pages:
-            page_artifact = bundle.artifact(page.path)
-            if page_artifact["kind"] != "page" or page_artifact["module"] != page.module:
-                raise PS4HTMLError(f"Page does not match its bundle artifact: {page.path}")
-            for order, component in enumerate(page.components):
-                data = component.get("data", {}) if isinstance(component, dict) else {}
-                if not isinstance(data, dict) or not ({"theorem", "lemma"} & data.keys()):
-                    continue
-                tag = "theorem" if "theorem" in data else "lemma"
-                envelope = data[tag]
-                value = envelope.get("value") if isinstance(envelope, dict) else None
-                if not isinstance(value, dict) or not isinstance(value.get("proof"), str) or not value["proof"]:
-                    raise PS4HTMLError(f"Theorem page component lacks an explicit proof artifact: {page.path}")
-                try:
-                    record = bundle.theorem_component(component, page.module)
-                except ValueError as error:
-                    raise PS4HTMLError(f"Invalid theorem page reference {value['proof']}: {error}") from error
-                if record.key in destinations:
-                    raise PS4HTMLError(f"Ambiguous theorem page destination: {record.key}")
-                title = value.get("name")
-                if not isinstance(title, str) or not title:
-                    raise PS4HTMLError(f"Theorem page component lacks a title: {value['proof']}")
-                destinations[record.key] = TheoremDestination(
-                    page.output_path, f"theorem-{name_text(list(record.declaration))}", title, order)
-        modules = tuple(name_key(entry["name"]) for entry in bundle.index["modules"])
-        return cls(bundle.theorems.values(), destinations=destinations, modules=modules)
 
     def title(self, key: TheoremKey) -> str:
         destination = self.destinations.get(key)

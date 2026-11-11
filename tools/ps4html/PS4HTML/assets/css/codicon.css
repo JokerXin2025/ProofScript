@@ -53,6 +53,11 @@
 .codicon-chevron-down:before { content: "\eab4" }
 .codicon-triangle-right:before { content: "\eb70" }
 .codicon-symbol-color:before { content: "\eb5c" }
-.codicon-globe:before { content: "\eb01" }
 .codicon-home:before { content: "\eb06" }
+.codicon-globe:before { content: "\eb01" }
 .codicon-settings:before { content: "\eb52" }
+.codicon-share:before { content: "\ec25" }
+.codicon-desktop-download:before { content: "\ea78" }
+.codicon-vm-connect:before { content: "\eba9" }
+.codicon-add:before { content: "\ea60" }
+.codicon-remove:before { content: "\eb3b" }

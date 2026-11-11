@@ -1,5 +1,7 @@
 import Lean
 import ProofScript.Utils.FileSystem
+import ProofScript.Utils.SHA256
+import ProofScript.Core.ModuleExtensionEntries
 
 open Lean System
 
@@ -8,13 +10,6 @@ namespace ProofScript
 
 
 def outputRoot : FilePath := ".ProofScript"
-
-def activeOutputRoot : IO FilePath := do
-  return FilePath.mk ((← IO.getEnv "PROOF_SCRIPT_OUTPUT_ROOT").getD outputRoot.toString)
-
-def activeOutputPath (path : FilePath) : IO FilePath := do
-  let root ← activeOutputRoot
-  return root / FilePath.mk ((path.toString.drop ".ProofScript/".length).toString)
 
 private def encodePathComponent (name : Name) : String := match name with
   | .num _ index => "%N" ++ toString index
@@ -28,19 +23,21 @@ private def encodePathComponent (name : Name) : String := match name with
     return result
   | .anonymous => ""
 
-private def modulePath (moduleName : Name) : FilePath :=
+def modulePath (moduleName : Name) : FilePath :=
   FilePath.mk <|
     String.intercalate "/" <|
       moduleName.components.map encodePathComponent
 
 private def relativeDeclarationPath (moduleName declName : Name) : FilePath :=
+  -- Always encode the full identity: stripping a module prefix makes distinct
+  -- names such as `foo` and `Project.A.foo` collide.
   let components := if moduleName.isPrefixOf declName then
     declName.components.drop moduleName.components.length
   else
     declName.components
   FilePath.mk <|
-    String.intercalate "/" <|
-      components.map encodePathComponent
+    (if moduleName.isPrefixOf declName then "" else "%X/") ++
+      String.intercalate "/" (components.map encodePathComponent)
 
 def pageOutputPath (moduleName : Name) : FilePath :=
   let path := modulePath moduleName
@@ -61,7 +58,7 @@ def resourceOutputPath (kind hash extension : String) : FilePath :=
   outputRoot / "resources" / kind / s!"{hash}.{extension}"
 
 def contentHash (content : String) : String :=
-  toString (hash content)
+  Json.sha256 (toJson content)
 
 def resourceJson (path : FilePath) (content mediaType : String) := json% {
   "$resource": {
@@ -72,33 +69,34 @@ def resourceJson (path : FilePath) (content mediaType : String) := json% {
   }
 }
 
-def resourceReferencePath (path : FilePath) : IO FilePath := do
-  let root ← activeOutputRoot
-  let rootPrefix := root.toString ++ "/"
-  if path.toString.startsWith rootPrefix then
-    return outputRoot / FilePath.mk ((path.toString.drop rootPrefix.length).toString)
-  return path
+structure TextResource where
+  path : FilePath
+  content : String
+  deriving Inhabited
 
-private partial def chooseResourcePath (kind extension content hash : String)
-    (suffix : Nat) : IO FilePath := do
-  let name := if suffix == 0 then hash else s!"{hash}-{suffix}"
-  let path ← activeOutputPath (resourceOutputPath kind name extension)
-  if !(← path.pathExists) then return path
-  if (← IO.FS.readFile path) == content then return path
-  chooseResourcePath kind extension content hash (suffix + 1)
+initialize textResourceExt : SimplePersistentEnvExtension TextResource Unit ←
+  registerSimplePersistentEnvExtension {
+    name := `ProofScript.textResources
+    addEntryFn := fun _ _ => ()
+    addImportedFn := fun _ => () }
 
-def writeTextResource (kind extension mediaType content : String) : IO Json := do
-  let hash := contentHash content
-  let path ← chooseResourcePath kind extension content hash 0
-  path.ensureParentDir
-  unless ← path.pathExists do
-    IO.FS.writeFile path content
-  return resourceJson (← resourceReferencePath path) content mediaType
+def moduleTextResources (env : Environment) (owner : Name) : Array TextResource :=
+  moduleExtensionEntries textResourceExt env owner
 
-def existingTextResource (path : FilePath) (mediaType : String) : IO Json := do
-  let active ← activeOutputPath path
-  let content ← IO.FS.readFile active
-  return resourceJson (← resourceReferencePath active) content mediaType
+/-- A deterministic descriptor can be prepared before the caller commits the
+    resource and its owning component together. -/
+def textResourceDescriptor (kind extension mediaType content : String) : Json :=
+  resourceJson (resourceOutputPath kind (contentHash content) extension)
+    content mediaType
 
+/-- Persist content; export writes the resource only after module compilation. -/
+def recordTextResource (env : Environment) (kind extension mediaType content : String) :
+    Environment × Json := Id.run do
+  let path := resourceOutputPath kind (contentHash content) extension
+  let resource := { path, content : TextResource }
+  let entries := moduleTextResources env env.mainModule
+  let updated := if entries.any (fun entry => entry.path == path && entry.content == content) then env
+    else textResourceExt.addEntry env resource
+  return (updated, resourceJson path content mediaType)
 
 end ProofScript

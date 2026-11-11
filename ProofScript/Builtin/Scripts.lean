@@ -49,83 +49,83 @@ import ProofScript.Builtin.Scripts.Svg
 
 #page text r#"
 These are provided as *built-in tactics*:
-+ *«admit»*
++ *admit*
   - Lean syntax: `"admit" reason:str`
   - clear: `reason`
-+ *«assumption»*
++ *assumption*
   - Lean syntax: `"assumption"`
-+ *«betaReduce»*
++ *betaReduce*
   - Lean syntax: `"beta_reduce" loc:(location)?`
   - clear: `loc`
-+ *«by»*
++ *by*
   - Lean syntax: `"by " tac:tactic decr:(str)?`
   - clear: `tac`, `decr`
-+ *«change»*
++ *change*
   - Lean syntax: `"change " eq:term loc:(location)?`
   - clear: `eq`, `loc`
-+ *«congr»*
++ *congr*
   - Lean syntax: `"congr" num:(ppSpace num)?`
   - clear: `num`
-+ *«contradiction»*
++ *contradiction*
   - Lean syntax: `"contradiction"`
-+ *«decide»*
++ *decide*
   - Lean syntax: `"decide" config:optConfig`
   - clear: `config`
-+ *«nativeDecide»*
++ *nativeDecide*
   - Lean syntax: `"native_decide" config:optConfig`
   - clear: `config`
-+ *«exfalso»*
++ *exfalso*
   - Lean syntax: `"exfalso"`
-+ *«exists»*
++ *exists*
   - Lean syntax: `"exists " data:term`
   - clear: `data`
-+ *«existsWith»*
++ *existsWith*
   - Lean syntax: `"exists " data:term "with" cond:term`
   - clear: `data`, `cond`
-+ *«left»*
++ *left*
   - Lean syntax: `"left"`
-+ *«right»*
++ *right*
   - Lean syntax: `"right"`
-+ *«omega»*
++ *omega*
   - Lean syntax: `"omega" config:optConfig`
   - clear: `config`
-+ *«bvOmega»*
++ *bvOmega*
   - Lean syntax: `"bv_omega"`
-+ *«pointwise»*
++ *pointwise*
   - Lean syntax: `"pointwise" loc:(location)?`
   - clear: `loc`
-+ *«quotInduction»*
++ *quotInduction*
   - Lean syntax: `"quot_induction " q:term "with" a:ident`
-+ *«rewrite»*
++ *rewrite*
   - Lean syntax: `"rewrite" config:optConfig rules:rwRuleSeq loc:(location)?`
   - clear: `config`, `rules`, `loc`
-+ *«rw»*
++ *rw*
   - Lean syntax: `"rw " config:optConfig rules:rwRuleSeq loc:(location)?`
   - clear: `config`, `rules`, `loc`
-+ *«rwPos»*
++ *rwPos*
   - Lean syntax: `"rw_pos " h:term loc:(location)?`
   - clear: `h`, `loc`
-+ *«rwNeg»*
++ *rwNeg*
   - Lean syntax: `"rw_neg " h:term loc:(location)?`
   - clear: `h`, `loc`
-+ *«rfl»*
++ *rfl*
   - Lean syntax: `"rfl"`
-+ *«rfl'»*
++ *rfl'*
   - Lean syntax: `"rfl'"`
-+ *«eqRefl»*
++ *eqRefl*
   - Lean syntax: `"eq_refl"`
-+ *«applyRfl»*
++ *applyRfl*
   - Lean syntax: `"apply_rfl"`
-+ *«acRfl»*
++ *acRfl*
   - Lean syntax: `"ac_rfl"`
-+ *«symm»*
++ *symm*
   - Lean syntax: `"symm" loc:(location)?`
   - clear: `loc`
-+ *«symmSaturate»*
++ *symmSaturate*
   - Lean syntax: `"symm_saturate"`
-+ *«trivial»*
++ *trivial*
   - Lean syntax: `"trivial"`
-+ *«unfold»*
++ *unfold*
   - Lean syntax: `"unfold" defs:(ppSpace colGt ident)+ loc:(location)?`
   - clear: `defs`, `loc`
 "#
@@ -136,10 +136,10 @@ These are provided as *built-in tactics*:
 
 #page text r#"
 These are provided as *built-in strategies*:
-+ *«splitAnd»*
++ *splitAnd*
   - Lean syntax: `"split_and"`
   - branches: `left`, `right`
-+ *«splitAnd!»*
++ *splitAnd!*
   - Lean syntax: `"split_and!"`
   - branches: `goalI`, `goalII`, `goalIII`, etc.
 "#
@@ -150,23 +150,24 @@ These are provided as *built-in strategies*:
 
 #page text r#"
 These are provided as *built-in metadata collectors*:
-+ *«cite»*
++ *cite*
   - Lean syntax: `"cite " thm:ident`
   - clear: `thm`
-+ *«remark»*
++ *remark*
   - Lean syntax: `"remark" text:str`
   - clear: `text`
-+ *«svg»*
++ *svg*
   - Lean syntax: `"svg" code:str`
   - clear: `code`
 "#
+
 
 #page sub title (label := "RestrictedMathlibTactics")
 "Restricted Native Tactics"
 
 #page text r#"
 These Lean native tactics are supported but restricted:
-+ *«exists»*
++ *exists*
   - origin Lean syntax: `"exists " es:term,+`
   - restriction: Only one parameter can be provided at a time
 "#
@@ -177,73 +178,73 @@ These Lean native tactics are supported but restricted:
 
 #page text r#"
 These Lean native tactics are *not supported*:
-+ *«allGoals»*
++ *allGoals*
   - Lean syntax: `"all_goals " tacticSeq`
   - reason: For metaprogramming only
-+ *«anyGoals»*
++ *anyGoals*
   - Lean syntax: `"any_goals " tacticSeq`
   - reason: For metaprogramming only
-+ *«dbgTrace»*
++ *dbgTrace*
   - Lean syntax: `"dbg_trace " str`
   - reason: For debugging purposes only
-+ *«done»*
++ *done*
   - Lean syntax: `"done"`
   - reason: For metaprogramming only
-+ *«fail»*
++ *fail*
   - Lean syntax: `"fail" (ppSpace str)?`
   - reason: For metaprogramming only
-+ *«failIfSuccess»*
++ *failIfSuccess*
   - Lean syntax: `"fail_if_success " tacticSeq`
   - reason: For metaprogramming only
-+ *«first»*
++ *first*
   - Lean syntax: `"first " withPosition((ppDedent(ppLine) colGe "| " tacticSeq)+)`
   - reason: For metaprogramming only
-+ *«focus»*
++ *focus*
   - Lean syntax: `"focus " tacticSeq`
   - reason: For metaprogramming only
-+ *«repeat»*
++ *repeat*
   - Lean syntax: `"repeat " tacticSeq`
   - reason: For metaprogramming only
-+ *«repeat'»*
++ *repeat'*
   - Lean syntax: `"repeat' " tacticSeq`
   - reason: For metaprogramming only
-+ *«repeat1'»*
++ *repeat1'*
   - Lean syntax: `"repeat1' " tacticSeq`
   - reason: For metaprogramming only
-+ *«rotateLeft»*
++ *rotateLeft*
   - Lean syntax: `"rotate_left" (ppSpace num)?`
   - reason: No corresponding semantics
-+ *«rotateRight»*
++ *rotateRight*
   - Lean syntax: `"rotate_right" (ppSpace num)?`
   - reason: No corresponding semantics
-+ *«skip»*
++ *skip*
   - Lean syntax: `"skip"`
   - reason: For metaprogramming only
-+ *«sleep»*
++ *sleep*
   - Lean syntax: `"sleep " num`
   - reason: For debugging purposes only
-+ *«traceMessage»*
++ *traceMessage*
   - Lean syntax: `"trace " str`
   - reason: For debugging purposes only
-+ *«traceState»*
++ *traceState*
   - Lean syntax: `"trace_state"`
   - reason: For debugging purposes only
-+ *«try»*
++ *try*
   - Lean syntax: `"try " t:tacticSeq`
   - reason: For metaprogramming only
-+ *«unhygienic»*
++ *unhygienic*
   - Lean syntax: `"unhygienic " t:tacticSeq`
   - reason: Not recommended for use
-+ *«withReducible»*
++ *withReducible*
   - Lean syntax: `"with_reducible " tacticSeq`
   - reason: For metaprogramming only
-+ *«withReducibleAndInstances»*
++ *withReducibleAndInstances*
   - Lean syntax: `"with_reducible_and_instances " tacticSeq`
   - reason: For metaprogramming only
-+ *«withUnfoldingAll»*
++ *withUnfoldingAll*
   - Lean syntax: `"with_unfolding_all " tacticSeq`
   - reason: For metaprogramming only
-+ *«withUnfoldingNone»*
++ *withUnfoldingNone*
   - Lean syntax: `"with_unfolding_none " tacticSeq`
   - reason: For metaprogramming only
 "#
@@ -251,12 +252,14 @@ These Lean native tactics are *not supported*:
 open Lean Meta Parser Elab Tactic
 open ProofScript
 
-script_macro «simp» (clear := [config, args])
+script_macro «simp»
 "simp" config:optConfig args:simpArgs loc:(location)? =>
   match args with
   | `(simpArgs| [$rules,*]) => `(tactic|
       simp $config:optConfig only [$rules,*] $[$loc:location]?)
   | _ => Macro.throwUnsupported
+
+script_recorder «simp» auto (clear := [config, args])
 
 script_info «simp» {
   template := [{
@@ -286,7 +289,7 @@ private def rejectProofParameters (term : TSyntax `term) (value : Expr) : Tactic
   if ← hasProofParameter functionType then
     throwErrorAt term "`have` and `exact` cannot apply a function with proof parameters"
 
-script_elab «have» (intro := [h])
+script_elab «have»
 "have" h:ident ":=" term:term => withMainContext do
   let expression ← elabTerm term none
   let expression ← instantiateMVars expression
@@ -298,6 +301,8 @@ script_elab «have» (intro := [h])
   rest.withContext do
     Elab.Term.addLocalVarInfo h (mkFVar fvarId)
   replaceMainGoal [rest]
+
+script_recorder «have» auto (intro := [h])
 
 script_info «have» {
   template := [{
@@ -311,7 +316,7 @@ script_info «have» {
 
 /-- Introduce a local definition. Its type and value are recorded by the `let`
     recorder at this step, rather than attached to later variable occurrences. -/
-script_elab «let» (intro := [h])
+script_elab «let»
 "let" h:ident type:(group(":" term))? ":=" term:term => withMainContext do
   let type ← type.mapM fun type => Term.elabType type.raw[1]
   let expression ← match type with
@@ -329,6 +334,7 @@ script_elab «let» (intro := [h])
 
 script_recorder «let» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   withMainContext do
     let declaration ← getLocalDeclFromUserName h.getId
@@ -337,6 +343,7 @@ script_recorder «let» => do
     let value ← recordExpression declaration.value
     record_value "value" value
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «let» {
   template := [{
@@ -348,7 +355,7 @@ script_info «let» {
   }]
 }
 
-script_elab «exact» (clear := [value])
+script_elab «exact»
 "exact" value:term => withMainContext do
   let goal ← getMainGoal
   let expression ← Elab.Tactic.elabTermEnsuringType value <| ← goal.getType
@@ -356,6 +363,8 @@ script_elab «exact» (clear := [value])
   rejectProofParameters value expression
   goal.assign expression
   replaceMainGoal []
+
+script_recorder «exact» auto (clear := [value])
 
 script_info «exact» {
   template := [{
@@ -384,7 +393,7 @@ private partial def exactAndProj? (value target : Expr) : MetaM (Option Expr) :=
       saved.restore
     return none
 
-script_elab «exact_proj» (clear := [value])
+script_elab «exact_proj»
 "exact_proj" value:term => withMainContext do
   let goal ← getMainGoal
   let target ← goal.getType
@@ -404,6 +413,8 @@ script_elab «exact_proj» (clear := [value])
   goal.assign proof
   replaceMainGoal []
 
+script_recorder «exact_proj» auto (clear := [value])
+
 script_info «exact_proj» {
   template := [{
     lang := zh, tag := "投影",
@@ -414,7 +425,7 @@ script_info «exact_proj» {
   }]
 }
 
-script_elab «intro» (intro := [h])
+script_elab «intro»
 "intro" h:(colGt ident)+ => do
   for h in h do withMainContext do
     let goal ← getMainGoal
@@ -429,6 +440,8 @@ script_elab «intro» (intro := [h])
       replaceMainGoal [newMVarId]
     | _ =>
       throwError "intro failed: the current goal has no binder to introduce."
+
+script_recorder «intro» auto (intro := [h])
 
 script_info «intro» {
   template := [{
@@ -451,7 +464,7 @@ private def unpackProof (h : TSyntax `term) : TacticM (MVarId × FVarId) := with
     return (rest, id)
 
 -- Split n - 1 times down the right spine; a singleton renames the whole conjunction.
-script_elab «unpack_and» (intro := [names], clear := [h])
+script_elab «unpack_and»
 "unpack_and" "⟨" names:sepBy1(ident, ",") "⟩" ":=" h:term => withMainContext do
   let names := names.getElems
   let (initialGoal, initialRemainder) ← unpackProof h
@@ -481,6 +494,8 @@ script_elab «unpack_and» (intro := [names], clear := [h])
     remainder := nextRemainder
   replaceMainGoal [goal]
 
+script_recorder «unpack_and» auto (intro := [names], clear := [h])
+
 script_info «unpack_and» {
   template := [{
     lang := zh, tag := "拆解",
@@ -491,7 +506,7 @@ script_info «unpack_and» {
   }]
 }
 
-script_elab «unpack_iff» (intro := [h₁, h₂], clear := [h])
+script_elab «unpack_iff»
 "unpack_iff" "⟨" h₁:ident "," h₂:ident "⟩" ":=" h:term => withMainContext do
   let (goal, fvarId) ← unpackProof h
   let subgoal ← goal.withContext do
@@ -509,6 +524,8 @@ script_elab «unpack_iff» (intro := [h₁, h₂], clear := [h])
     Elab.Term.addLocalVarInfo h₂ second
   replaceMainGoal [subgoal.mvarId]
 
+script_recorder «unpack_iff» auto (intro := [h₁, h₂], clear := [h])
+
 script_info «unpack_iff» {
   template := [{
     lang := zh, tag := "拆解",
@@ -519,7 +536,7 @@ script_info «unpack_iff» {
   }]
 }
 
-script_elab «obtain_exist» (intro := [h₁, h₂], clear := [h])
+script_elab «obtain_exist»
 "obtain_exist" "⟨" h₁:ident "," h₂:ident "⟩" ":=" h:term => withMainContext do
   let (goal, fvarId) ← unpackProof h
   let subgoal ← goal.withContext do
@@ -537,6 +554,8 @@ script_elab «obtain_exist» (intro := [h₁, h₂], clear := [h])
     Elab.Term.addLocalVarInfo h₂ second
   replaceMainGoal [subgoal.mvarId]
 
+script_recorder «obtain_exist» auto (intro := [h₁, h₂], clear := [h])
+
 script_info «obtain_exist» {
   template := [{
     lang := zh, tag := "拆解",
@@ -547,11 +566,13 @@ script_info «obtain_exist» {
   }]
 }
 
-script_macro «obtain_exist'» (intro := [h₁, h₂, h₃], clear := [h])
+script_macro «obtain_exist'»
 "obtain_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":=" h:term => `(tactic| focus
   script_obtain_exist ⟨$h₁, existBody⟩ := $h
   script_unpack_and ⟨$h₂, $h₃⟩ := existBody
 )
+
+script_recorder «obtain_exist'» auto (intro := [h₁, h₂, h₃], clear := [h])
 
 script_info «obtain_exist'» {
   template := [{
@@ -563,7 +584,7 @@ script_info «obtain_exist'» {
   }]
 }
 
-script_elab «funext» (intro := [arg])
+script_elab «funext»
 "funext" arg:ident => withMainContext do
   let target ← getMainGoalExpr'
   unless target.isAppOfArity ``Eq 3 do
@@ -577,6 +598,8 @@ script_elab «funext» (intro := [arg])
     evalTactic <| ← `(tactic| funext $arg:ident)
   | _, _ => throwError "`funext` can only be used on function equality goals"
 
+script_recorder «funext» auto (intro := [arg])
+
 script_info «funext» {
   template := [{
     lang := zh, tag := "外延性",
@@ -587,7 +610,7 @@ script_info «funext» {
   }]
 }
 
-script_elab «provide» (clear := [data])
+script_elab «provide»
 "provide" data:term => withMainContext do
   let target ← getMainGoalExpr'
   let expectedType := if target.isAppOfArity ``Exists 2 then target.getArg! 0 else target
@@ -600,6 +623,8 @@ script_elab «provide» (clear := [data])
   else
     evalTactic (← `(tactic| exact $data))
 
+script_recorder «provide» auto (clear := [data])
+
 script_info «provide» {
   template := [{
     lang := zh, tag := "选取",
@@ -610,7 +635,7 @@ script_info «provide» {
   }]
 }
 
-script_elab «apply» (clear := [h])
+script_elab «apply»
 "apply" h:term => withMainContext do
   let hExpr ← instantiateMVars <| ← Elab.Tactic.elabTermForApply h
   let hType ← whnf <| ← inferType hExpr
@@ -641,6 +666,8 @@ script_elab «apply» (clear := [h])
   goal.assign (mkApp applied premiseMVar)
   replaceMainGoal [premiseMVar.mvarId!]
 
+script_recorder «apply» auto (clear := [h])
+
 script_info «apply» {
   template := [{
     lang := zh, tag := "应用定理",
@@ -655,7 +682,7 @@ script_info «apply» {
 
 /-! ### Assertions -/
 
-script_elab «claim» (intro := [h], kind := strategy, continuation := `rest)
+script_elab «claim» (kind := strategy, continuation := `rest)
 "claim" h:ident ":" type:term => focus <| withMainContext do
   -- A natural metavariable preserves the original elaboration of the proof branch.
   let proofMVar ← mkFreshExprMVar (← elabTerm type none)
@@ -665,8 +692,11 @@ script_elab «claim» (intro := [h], kind := strategy, continuation := `rest)
   setGoals [proofMVar.mvarId!, rest]
   evalTactic (← `(tactic| set_goal_tags [`proof, `rest]))
 
+script_recorder «claim» auto (intro := [h])
+
 script_recorder «claim» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_param "h" h (goal := `rest)
 
@@ -703,12 +733,15 @@ private def claimExist (names : Array (TSyntax `ident)) (type : TSyntax `term) :
   setGoals (proofMVar.mvarId! :: (← getGoals))
   evalTactic (← `(tactic| set_goal_tags [`proof, `rest]))
 
-script_elab «claimExistTwo» (intro := [h₁, h₂], kind := strategy, continuation := `rest)
+script_elab «claimExistTwo» (kind := strategy, continuation := `rest)
 "claim_exist" "⟨" h₁:ident "," h₂:ident "⟩" ":" type:term =>
   claimExist #[h₁, h₂] type
 
+script_recorder «claimExistTwo» auto (intro := [h₁, h₂])
+
 script_recorder «claimExistTwo» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_param "h₁" h₁ (goal := `rest)
   record_param "h₂" h₂ (goal := `rest)
@@ -723,12 +756,15 @@ script_info «claimExistTwo» {
   }]
 }
 
-script_elab «claimExistThree» (intro := [h₁, h₂, h₃], kind := strategy, continuation := `rest)
+script_elab «claimExistThree» (kind := strategy, continuation := `rest)
 "claim_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":" type:term =>
   claimExist #[h₁, h₂, h₃] type
 
+script_recorder «claimExistThree» auto (intro := [h₁, h₂, h₃])
+
 script_recorder «claimExistThree» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_param "h₁" h₁ (goal := `rest)
   record_param "h₂" h₂ (goal := `rest)
@@ -825,6 +861,7 @@ script_macro «cases_by» (kind := strategy)
 script_recorder «cases_by» => do
   withRollback do
     record_goal "$goal_before"
+    record_context "$context_before"
     record_param "h" h
     record_value "subject" (← recordValueFrom "subject" (expressionType h.raw))
   execute
@@ -890,7 +927,7 @@ script_info «cases_on» {
 
 /-! ### Proof by Contradiction -/
 
-script_macro «contra» (intro := [h], kind := strategy)
+script_macro «contra» (kind := strategy)
 "contra" h:ident => `(tactic| focus
   first
   | guard_target =~ (_ → False)
@@ -900,8 +937,11 @@ script_macro «contra» (intro := [h], kind := strategy)
   set_goal_tags [`proof]
 )
 
+script_recorder «contra» auto (intro := [h])
+
 script_recorder «contra» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   withRollback <| withMainContext do
     let some localDecl := (← getLCtx).findFromUserName? h.getId
@@ -1039,6 +1079,7 @@ script_macro «renderCalc»
     `{relation, rhs, proof}` entries, with proofs containing `?_` recorded as holes. -/
 script_recorder «renderCalc» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   -- Replay native step elaboration in temporary state, retaining each expected
   -- type and proof. Temporary goals, nested recordings, and info trees are
   -- discarded before the original script executes below.
@@ -1100,6 +1141,7 @@ script_recorder «renderCalc» => do
   record_value "chain" chain
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «renderCalc» {
   renderer := «calc»
@@ -1264,10 +1306,12 @@ script_recorder «infer» => do
     return .array values
   withRollback do
     record_goal "$goal_before"
+    record_context "$context_before"
     record_value "init" (← expression init.raw)
     record_value "chain" (← recordChain)
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «infer» {
   renderer := «infer»
@@ -1287,11 +1331,15 @@ open Lean Parser Mathlib Tactic
 script_macro «continuity»
 "continuity" => `(tactic| continuity)
 
-script_macro «exact_mod_cast» (clear := [proof])
+script_macro «exact_mod_cast»
 "exact_mod_cast" proof:term => `(tactic| exact_mod_cast $proof:term)
 
-script_macro «field» (clear := [args])
+script_recorder «exact_mod_cast» auto (clear := [proof])
+
+script_macro «field»
 "field" args:(simpArgs)? => `(tactic| field $[$args:simpArgs]?)
+
+script_recorder «field» auto (clear := [args])
 
 script_macro «gcongr»
 "gcongr" template:(ppSpace colGt term)? names:("with" (ppSpace colGt rintroPat)*)? =>
@@ -1304,8 +1352,10 @@ script_macro «gcongr»
 
 script_recorder «gcongr» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 declare_syntax_cat scriptITautoArgs
 syntax "*" : scriptITautoArgs
@@ -1324,8 +1374,10 @@ script_macro «itauto»
 
 script_recorder «itauto» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «itauto!»
 "itauto!" args:(scriptITautoArgs)? =>
@@ -1340,24 +1392,30 @@ script_macro «itauto!»
 
 script_recorder «itauto!» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «linarith»
 "linarith" args:linarithArgsRest => `(tactic| linarith $args:linarithArgsRest)
 
 script_recorder «linarith» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «linarith!»
 "linarith!" args:linarithArgsRest => `(tactic| linarith! $args:linarithArgsRest)
 
 script_recorder «linarith!» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «measurability»
 "measurability" => `(tactic| measurability)
@@ -1367,16 +1425,20 @@ script_macro «nlinarith»
 
 script_recorder «nlinarith» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «nlinarith!»
 "nlinarith!" args:linarithArgsRest => `(tactic| nlinarith! $args:linarithArgsRest)
 
 script_recorder «nlinarith!» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «norm_cast»
 "norm_cast" loc:(location)? => `(tactic| norm_cast $[$loc:location]?)
@@ -1390,8 +1452,10 @@ script_macro «norm_num»
 
 script_recorder «norm_num» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «positivity»
 "positivity" => `(tactic| positivity)
@@ -1412,8 +1476,10 @@ script_macro «push_cast»
 
 script_recorder «push_cast» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «qify»
 "qify" args:(simpArgs)? loc:(location)? =>
@@ -1464,8 +1530,10 @@ script_macro «wlog»
 
 script_recorder «wlog» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «wlog!»
 "wlog!" cfg:optConfig h:ident ":" proposition:term
@@ -1483,8 +1551,10 @@ script_macro «wlog!»
 
 script_recorder «wlog!» => do
   record_goal "$goal_before"
+  record_context "$context_before"
   execute
   record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «zify»
 "zify" args:(simpArgs)? loc:(location)? =>
@@ -1569,6 +1639,3 @@ script_info «tauto_set» {
     content := ""
   }]
 }
-
-
-#page end

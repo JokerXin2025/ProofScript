@@ -24,9 +24,11 @@ structure ScriptRecordingConfig where
   kind : ScriptKind := .tactic
   /-- The named goal which continues the parent recording, when present. -/
   continuation : Option Lean.Name := none
-  /-- Parameters introduced by the tactic and therefore unavailable before it runs. -/
+  deriving Inhabited, Repr, BEq
+
+/-- Parameter timing for one explicitly generated automatic recorder. -/
+structure AutoRecordingConfig where
   intro : Array Lean.Name := #[]
-  /-- Parameters that are only available before the tactic runs. -/
   clear : Array Lean.Name := #[]
   deriving Inhabited, Repr, BEq
 
@@ -36,36 +38,32 @@ def ScriptRecordingConfig.isStrategy (config : ScriptRecordingConfig) : Bool :=
 def ScriptRecordingConfig.isMetadata (config : ScriptRecordingConfig) : Bool :=
   config.kind == .metadata
 
+/-- One generated recorder; the array index is its version number. -/
+structure ScriptRecorderVersion where
+  kind : Name
+  label : Option String := none
+  deriving Inhabited, Repr, BEq
+
 structure ScriptTacticRegistration where
   ruleId : Lean.Name
   name : String
   sourceKind : Lean.Name
   executionKind : Lean.Name
-  /-- Recorder generated from the declaration's automatic parameter recorder. -/
-  automaticRecordingKind : Option Lean.Name
-  /-- Body corresponding to the automatic recorder entry. -/
-  automaticRecordingBody : Option Lean.Name := none
-  /-- Per-registration execution-only recorder for unsupported automatic parameters. -/
-  fallbackRecordingKind : Option Lean.Name := none
-  /-- Body corresponding to the fallback recorder entry. -/
-  fallbackRecordingBody : Option Lean.Name := none
-  /-- Most recently declared handwritten recorder, if any. -/
-  explicitRecordingKind : Option Lean.Name := none
-  /-- Callable body of the latest handwritten recorder. -/
-  explicitRecordingBody : Option Lean.Name := none
-  /-- The handwritten recorder that the current explicit recorder supersedes. -/
-  explicitRecordingParent : Option Lean.Name := none
-  autoRecordingError : Option String := none
+  /-- Version zero is created with the script; later declarations append versions. -/
+  recorders : Array ScriptRecorderVersion := #[]
   config : ScriptRecordingConfig := {}
   /-- The original declaration arguments, the sole source for recorder bindings. -/
   arguments : Array (TSyntax ``Lean.Parser.Command.macroArg) := #[]
   deriving Inhabited, Repr, BEq
 
+/-- Recorder bodies are generated under a deterministic name from their parser kind. -/
+def recorderBodyName (kind : Name) : Name := kind ++ `body
+
 /-- The Environment is the source of truth. Editor re-elaboration rolls back the
     Environment, whereas process-wide IO refs survive the rollback. -/
 inductive ScriptRegistrationEntry where
   | register (registration : ScriptTacticRegistration)
-  | setRecorder (ruleId recorderKind recorderBody : Name) (parentKind : Option Name)
+  | addRecorder (ruleId : Name) (recorder : ScriptRecorderVersion)
   deriving Inhabited
 
 initialize scriptRegistrationExt : SimplePersistentEnvExtension ScriptRegistrationEntry
@@ -81,13 +79,10 @@ def scriptRegistrationsFromEntries (entries : Array ScriptRegistrationEntry) : L
     match entry with
     | .register registration =>
         registrations := registrations.filter (·.ruleId != registration.ruleId) ++ [registration]
-    | .setRecorder ruleId recorderKind recorderBody parentKind =>
+    | .addRecorder ruleId recorder =>
         registrations := registrations.map fun registration =>
           if registration.ruleId == ruleId then
-            { registration with
-              explicitRecordingKind := some recorderKind
-              explicitRecordingBody := some recorderBody
-              explicitRecordingParent := parentKind }
+            { registration with recorders := registration.recorders.push recorder }
           else registration
   return registrations
 
@@ -95,9 +90,7 @@ def scriptTacticRegistrations (env : Environment) : List ScriptTacticRegistratio
   scriptRegistrationsFromEntries (scriptRegistrationExt.getState env)
 
 def ScriptTacticRegistration.recordingKind (registration : ScriptTacticRegistration) : Option Name :=
-  match registration.explicitRecordingKind with
-  | some kind => some kind
-  | none => registration.automaticRecordingKind.or registration.fallbackRecordingKind
+  registration.recorders.back?.map (·.kind)
 
 /-- Explicit module closure supplied by the caller; the exporter environment is not the view. -/
 def scriptRegistrationsInModules (env : Environment) (modules : Array Name) : List ScriptTacticRegistration :=

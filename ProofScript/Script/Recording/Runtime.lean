@@ -55,15 +55,10 @@ def recorderPredecessorCall (call : Syntax) (sourceName targetName : String)
 def withRecordingRule (ruleId : Name) (action : TacticM α) : TacticM α := withRollback do
   let some registration := (scriptTacticRegistrations (← getEnv)).find? (·.ruleId == ruleId)
     | throwError "unknown script recording rule `{ruleId}`"
-  let fallback := registration.explicitRecordingKind.isNone && registration.automaticRecordingKind.isNone
-  let contract := if fallback then { registration with ruleId := unrecordedRuleId } else registration
   let previous ← selectedRecordingContract
-  selectRecordingContract (some (.ofRegistration contract))
+  selectRecordingContract (some (.ofRegistration registration))
   try
-    withOptions (·.set recordingRuleOption contract.ruleId) do
-      if fallback then
-        logWarningAt (← getRef) m!"{registration.autoRecordingError.getD s!"script strategy `{ruleId}` has no recorder"}；未导出数据"
-      action
+    withOptions (·.set recordingRuleOption registration.ruleId) action
   finally
     selectRecordingContract previous
 
@@ -101,8 +96,14 @@ def withRecordingStep (action : RecordingStep → TacticM α) : TacticM α := wi
   let step := RecordingStep.mk slot
   let result ← action step
   step.ensureOpen
+  unless ← initialRecorderExecuted slot do
+    throwError "script recorder completed without executing its initial version (missing `execute`)"
   closeRecordingSlot slot
   return result
+
+def RecordingStep.markInitialExecuted (step : RecordingStep) : TacticM Unit := do
+  step.ensureOpen
+  markInitialRecorder step.slot
 
 /-- Commit a value without collecting references. -/
 def RecordingStep.recordValue (step : RecordingStep) (field : String) (value : RecordedValue)

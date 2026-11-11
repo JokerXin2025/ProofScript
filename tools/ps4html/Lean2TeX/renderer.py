@@ -38,8 +38,11 @@ class LayoutRenderer:
     MAX_OUTPUT_CHARACTERS = 1_048_576
     MAX_INTERMEDIATE_CHARACTERS = 8_388_608
 
-    def __init__(self, registry: MacroRegistry):
+    def __init__(self, registry: MacroRegistry, definition_names: dict[str, str] | None = None,
+                 theorem_names: dict[str, str] | None = None):
         self.registry = registry
+        self.definition_names = definition_names if definition_names is not None else {}
+        self.theorem_names = theorem_names if theorem_names is not None else {}
         self.diagnostics: list[RenderDiagnostic] = []
 
     def render(
@@ -132,14 +135,15 @@ class LayoutRenderer:
         if kind == "metavariable":
             return _Rendered(r"\textcolor{gray}{?}" if self._builtin_style(node, requested) == "question"
                              else r"\operatorname{未知}")
+        if kind in ("const", "theorem"):
+            name = node.metadata.get("leanName", node.macro_name)
+            names = self.theorem_names if kind == "theorem" else self.definition_names
+            return _Rendered(self._constant(names.get(name) or name))
         # A built-in display kind must not accidentally use a same-named declaration.
-        macro = self.registry.get(node.macro_name) if kind == "const" or (
-            kind not in ("application", "lambda", "forall", "let", "sort", "literal", "metavariable")
-            and node.metadata.get("headConst")) else None
+        macro = self.registry.get(node.macro_name) if node.metadata.get("headConst") and kind in (
+            "concept", "operator", "relation", "projection") else None
         if macro is not None:
             if macro.kind in ("operator", "relation"):
-                if node.metadata.get("originalExprKind") == "const":
-                    return _Rendered(self._constant(node.macro_name))
                 return self._render_symbolic(node, macro, requested)
             try:
                 key = RenderTarget("constant", node.metadata.get("leanName", node.macro_name))
@@ -148,15 +152,9 @@ class LayoutRenderer:
             except ValueError:
                 self.diagnostics.append(RenderDiagnostic("error", "L2T006", "no template matches expression structure", node.macro_name))
                 return _Rendered(f"\\operatorname{{{self._short_name(node.macro_name)}}}")
-            # Bare function constants, including fallback application heads,
-            # cannot fill argument selectors. Constant templates remain valid.
-            if node.metadata.get("originalExprKind") == "const" and _SELECTOR.search(style.content):
-                return _Rendered(self._constant(node.macro_name))
             return self._render_macro(node, style, requested)
-        if kind in ("const", "literal"):
-            if kind == "const":
-                return _Rendered(self._constant(node.macro_name))
-            if kind == "literal" and node.metadata.get("literalKind") == "literal.str":
+        if kind == "literal":
+            if node.metadata.get("literalKind") == "literal.str":
                 if id(node) in self.html_literals:
                     fragment = self.literal_fragments.get(id(node))
                     if fragment is None:
@@ -164,7 +162,7 @@ class LayoutRenderer:
                         self.literal_fragments[id(node)] = fragment
                     return _Rendered(atom(node.macro_name, self._builtin_style(node, requested), fragment), mode="text")
                 return _Rendered(self._escape_text(node.macro_name), mode="text")
-            if kind == "literal" and node.metadata.get("literalKind") == "literal.nat":
+            if node.metadata.get("literalKind") == "literal.nat":
                 return _Rendered(numeral_styles(node.macro_name)[self._builtin_style(node, requested)])
             return _Rendered(node.macro_name)
         if kind == "sort":
@@ -449,7 +447,7 @@ class LayoutRenderer:
 
     @classmethod
     def _constant(cls, name: str) -> str:
-        return f"\\operatorname{{{cls._short_name(name)}}}"
+        return f"\\operatorname{{{cls._escape_text(name)}}}"
 
     @staticmethod
     def _short_name(name: str) -> str:

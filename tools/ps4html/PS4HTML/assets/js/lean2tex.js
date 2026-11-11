@@ -10,7 +10,15 @@
     const entities = data.entities || {};
     const fragmentOccurrences = new Map();
     const occurrenceNodes = new Map();
+    const entityOccurrences = new Map();
     const activeOccurrences = new Set();
+    const styledNodes = new Set();
+    const dashboardOf = new WeakMap();
+    function inactiveDashboard(node) {
+        if (!dashboardOf.has(node)) dashboardOf.set(node, node.closest(".proof-dashboard-reveal"));
+        const panel = dashboardOf.get(node);
+        return !!panel && !panel.classList.contains("is-dashboard-visible");
+    }
     let indexedNodes = [];
     const state = { anchor: null, candidates: [], selected: -1, pinned: null, tooltip: null, indicator: null };
     const highlights = document.createElement("div");
@@ -19,9 +27,23 @@
     document.body.append(highlights);
     let highlightFrame = null;
     let measuredRects = new WeakMap();
+    let rootFragments = new WeakMap();
     let pointerPosition = null;
+    let hoverFrame = null;
+
+    function scheduleHover() {
+        if (hoverFrame !== null) return;
+        hoverFrame = requestAnimationFrame(() => {
+            hoverFrame = null;
+            if (!state.pinned && pointerPosition) hoverAt(pointerPosition.x, pointerPosition.y);
+        });
+    }
 
     Object.entries(occurrences).forEach(([id, occurrence]) => {
+        if (occurrence.entityKey) {
+            if (!entityOccurrences.has(occurrence.entityKey)) entityOccurrences.set(occurrence.entityKey, []);
+            entityOccurrences.get(occurrence.entityKey).push(id);
+        }
         (occurrence.fragmentIds || []).forEach(fragment => {
             if (!fragmentOccurrences.has(fragment)) fragmentOccurrences.set(fragment, []);
             fragmentOccurrences.get(fragment).push(id);
@@ -50,7 +72,7 @@
     }
 
     function clearClasses() {
-        occurrenceNodes.forEach(nodes => nodes.forEach(node => {
+        styledNodes.forEach(node => {
             node.classList.remove("ps-expression-active", "ps-expression-selected", "ps-expression-wrapper",
                 "ps-expression-fvar", "ps-expression-bvar", "ps-expression-binder");
             node.querySelectorAll?.("[data-l2t-ref]").forEach(reference => {
@@ -58,17 +80,22 @@
                 reference.classList.remove("ps-expression-active", "ps-expression-selected",
                     "ps-expression-fvar", "ps-expression-bvar", "ps-expression-binder");
             });
-        }));
+        });
+        styledNodes.clear();
     }
 
     function visibleRects(node) {
+        if (inactiveDashboard(node)) return [];
         if (measuredRects.has(node)) return measuredRects.get(node);
         const math = node.closest(".katex")?.getBoundingClientRect();
         const bands = [...node.getClientRects()].filter(rect => rect.width > 0 && rect.height > 0 &&
             (!math || (rect.left >= math.left - 8 && rect.right <= math.right + 8)));
         const groups = bands.map(rect => ({left: rect.left, right: rect.right,
             top: rect.top, bottom: rect.bottom}));
-        if (!groups.length) return [];
+        if (!groups.length) {
+            measuredRects.set(node, groups);
+            return groups;
+        }
         const range = document.createRange();
         const walker = document.createTreeWalker(node, NodeFilter.SHOW_ELEMENT | NodeFilter.SHOW_TEXT, {
             acceptNode(part) {
@@ -118,7 +145,16 @@
     function invalidateRects() {
         measuredRects = new WeakMap();
         scheduleHighlights();
-        if (!state.pinned && pointerPosition) hoverAt(pointerPosition.x, pointerPosition.y);
+        if (!state.pinned && pointerPosition) scheduleHover();
+    }
+
+    let scrollFrame = null;
+    function onScroll() {
+        if (scrollFrame !== null) return;
+        scrollFrame = requestAnimationFrame(() => {
+            scrollFrame = null;
+            invalidateRects();
+        });
     }
 
     function containsPoint(rect, x, y) {
@@ -128,15 +164,18 @@
     function fragmentAt(x, y) {
         const underneath = document.elementFromPoint(x, y);
         if (!underneath || underneath.closest(".ps-expression-tooltip, .ps-template-menu")) return null;
+        if (inactiveDashboard(underneath)) return null;
         const root = underneath.closest("[data-ps-render-root]") || underneath.closest(".katex");
         const direct = fragmentTarget(underneath);
-        const candidates = root ? [...root.querySelectorAll("[data-ps-expr-fragment]")] :
-            indexedNodes.filter(node => {
-                const rect = node.getBoundingClientRect();
-                return x >= rect.left - 8 && x <= rect.right + 8 &&
-                    y >= rect.top - 120 && y <= rect.bottom + 120;
-            });
-        if (root?.hasAttribute("data-ps-expr-fragment")) candidates.push(root);
+        // Browser hit testing already identifies the local math/render island,
+        // including overflowing SVG leaves. Blank space must never scan the page.
+        if (!root) return direct;
+        if (!rootFragments.has(root)) {
+            const nodes = [...root.querySelectorAll("[data-ps-expr-fragment]")];
+            if (root.hasAttribute("data-ps-expr-fragment")) nodes.push(root);
+            rootFragments.set(root, nodes);
+        }
+        const candidates = rootFragments.get(root);
         let best = null;
         let bestArea = Infinity;
         for (const candidate of candidates) {
@@ -163,54 +202,38 @@
         highlightFrame = null;
         const marked = new Set();
         const boxes = [];
-        // Paint each semantic occurrence once. A text template may produce
-        // several math/text anchors for the same object; linked occurrences
-        // need exactly the same treatment as the hovered occurrence.
+        // Semantic occurrences select the anchors to highlight, but each
+        // rendered fragment owns its own geometry. Never bridge the space
+        // between separate anchors, even when they share an occurrence.
         for (const id of activeOccurrences) {
             const occurrence = occurrences[id];
             const style = isWrapper(id) ? "wrapper" : occurrence?.kind === "binder" ? "binder"
                 : ["fvar", "bvar"].includes(occurrence?.kind) ? "variable" : "expression";
-            const rects = [];
             for (const node of occurrenceNodes.get(id) || []) {
                 if (marked.has(node)) continue;
                 marked.add(node);
-                rects.push(...visibleRects(node));
-            }
-            for (const rect of mergeHighlightRects(rects)) {
-                const box = document.createElement("span");
-                box.className = `ps-expression-highlight ps-expression-highlight-${style}`;
-                if (state.pinned?.id === id) box.classList.add("is-selected");
-                box.style.left = `${rect.left}px`;
-                box.style.top = `${rect.top}px`;
-                box.style.width = `${rect.right - rect.left}px`;
-                box.style.height = `${rect.bottom - rect.top}px`;
-                boxes.push(box);
+                for (const rect of visibleRects(node)) {
+                    const box = document.createElement("span");
+                    box.className = `ps-expression-highlight ps-expression-highlight-${style}`;
+                    if (state.pinned?.id === id) box.classList.add("is-selected");
+                    box.style.left = `${rect.left}px`;
+                    box.style.top = `${rect.top}px`;
+                    box.style.width = `${rect.right - rect.left}px`;
+                    box.style.height = `${rect.bottom - rect.top}px`;
+                    boxes.push(box);
+                }
             }
         }
         highlights.replaceChildren(...boxes);
     }
 
-    function mergeHighlightRects(rects) {
-        const lines = [];
-        for (const rect of [...rects].sort((a, b) => a.top - b.top || a.left - b.left)) {
-            const line = lines.find(item => rect.top <= item.bottom + 2 && rect.bottom >= item.top - 2);
-            if (line) {
-                line.left = Math.min(line.left, rect.left);
-                line.right = Math.max(line.right, rect.right);
-                line.top = Math.min(line.top, rect.top);
-                line.bottom = Math.max(line.bottom, rect.bottom);
-            } else lines.push({...rect});
-        }
-        return lines;
-    }
-
     function scheduleHighlights() {
-        if (highlightFrame !== null) cancelAnimationFrame(highlightFrame);
-        highlights.replaceChildren();
+        if (highlightFrame !== null) return;
         highlightFrame = requestAnimationFrame(paintHighlights);
     }
 
     function addObjectClasses(node, id, active, selected) {
+        styledNodes.add(node);
         const occurrence = occurrences[id];
         const kindClass = occurrence?.kind === "fvar" ? "ps-expression-fvar"
             : occurrence?.kind === "bvar" ? "ps-expression-bvar"
@@ -237,10 +260,10 @@
         let category;
         try { category = JSON.parse(entityKey)[0]; } catch (_) { return; }
         if (!["constant", "fvar", "bvar"].includes(category)) return;
-        Object.entries(occurrences).forEach(([otherId, occurrence]) => {
-            if (occurrence.entityKey !== entityKey) return;
+        (entityOccurrences.get(entityKey) || []).forEach(otherId => {
             activeOccurrences.add(otherId);
             (occurrenceNodes.get(otherId) || []).forEach(node => {
+                if (inactiveDashboard(node)) return;
                 node.classList.toggle("ps-expression-wrapper", isWrapper(otherId));
                 addObjectClasses(node, otherId, true, selected && otherId === id);
             });
@@ -256,6 +279,7 @@
             activeOccurrences.add(id);
             const selected = id === state.pinned?.id;
             (occurrenceNodes.get(id) || []).forEach(node => {
+                if (inactiveDashboard(node)) return;
                 node.classList.toggle("ps-expression-wrapper", isWrapper(id));
                 addObjectClasses(node, id, true, selected);
             });
@@ -346,11 +370,14 @@
         updateIndicator();
     }
 
-    function enter(anchor) {
+    function enter(anchor, refresh = false) {
+        if (!refresh && state.anchor === anchor) return;
         const candidates = candidateIds(anchor);
-        if (!candidates.length) return;
+        if (!candidates.length) {
+            if (state.anchor) clearHover();
+            return;
+        }
         if (state.anchor === anchor && candidates.join("/") === state.candidates.join("/")) return;
-        clearHover();
         state.anchor = anchor;
         state.candidates = candidates;
         // Candidates are deepest-first; default selection skips wrappers.
@@ -360,11 +387,14 @@
     }
 
     function fragmentTarget(value) {
-        return value instanceof Element ? value.closest("[data-ps-expr-fragment]") : null;
+        return value instanceof Element && !inactiveDashboard(value)
+            ? value.closest("[data-ps-expr-fragment]") : null;
     }
 
     function refreshIndex() {
+        clearClasses();
         measuredRects = new WeakMap();
+        rootFragments = new WeakMap();
         fragmentOccurrences.clear();
         Object.entries(occurrences).forEach(([id, occurrence]) => {
             (occurrence.fragmentIds || []).forEach(fragment => {
@@ -398,7 +428,7 @@
             }
         }
         if (state.anchor && !document.contains(state.anchor)) clearHover();
-        else if (state.anchor) enter(state.anchor);
+        else if (state.anchor) enter(state.anchor, true);
         updateClasses();
         if (state.pinned) {
             showTooltip(state.pinned.id);
@@ -442,7 +472,7 @@
     document.addEventListener("pointermove", event => {
         if (!event.isPrimary || event.pointerType === "touch") return;
         pointerPosition = {x: event.clientX, y: event.clientY};
-        if (!state.pinned) hoverAt(event.clientX, event.clientY);
+        if (!state.pinned) scheduleHover();
     });
     document.addEventListener("pointerleave", () => {
         pointerPosition = null;
@@ -493,15 +523,33 @@
     window.addEventListener("resize", () => { positionOverlay(); invalidateRects(); });
     window.visualViewport?.addEventListener("resize", invalidateRects);
     window.visualViewport?.addEventListener("scroll", invalidateRects);
-    document.addEventListener("scroll", invalidateRects, true);
+    document.addEventListener("scroll", onScroll, true);
     document.fonts?.addEventListener?.("loadingdone", invalidateRects);
-    document.addEventListener("ps4html:layoutchange", () => { refreshIndex(); positionOverlay(); });
-    document.addEventListener("ps4html:displaychange", refreshIndex);
-    document.addEventListener("ps4html:languagechange", () => {
-        if (state.pinned) showTooltip(state.pinned.id);
+    // Geometry changes do not change semantic ownership or template choices.
+    document.addEventListener("ps4html:layoutchange", () => { invalidateRects(); positionOverlay(); });
+    document.addEventListener("ps4html:dashboardchange", () => {
+        if (state.anchor?.closest(".proof-dashboard-reveal:not(.is-dashboard-visible)")) clearHover();
+        if (state.pinned?.anchor?.closest(".proof-dashboard-reveal:not(.is-dashboard-visible)")) clearPinned();
+        invalidateRects();
     });
+    document.addEventListener("transitionend", event => {
+        if ((event.propertyName === "grid-template-rows" && event.target.classList.contains("proof-dashboard-reveal")) ||
+                (event.propertyName.startsWith("padding") && event.target.classList.contains("proof-step-header"))) {
+            invalidateRects();
+            positionOverlay();
+        }
+    });
+    document.addEventListener("ps4html:displaychange", refreshIndex);
+    document.addEventListener("ps4html:languagechange", refreshIndex);
     window.addEventListener("DOMContentLoaded", () => {
         refreshIndex();
+        const main = document.querySelector("#main-content");
+        if (main && typeof MutationObserver !== "undefined") {
+            new MutationObserver(() => {
+                refreshIndex();
+                if (pointerPosition) scheduleHover();
+            }).observe(main, {subtree: true, childList: true, characterData: true});
+        }
         // Initial script order may run before display-options.js applies its state.
         window.setTimeout(refreshIndex, 0);
     });

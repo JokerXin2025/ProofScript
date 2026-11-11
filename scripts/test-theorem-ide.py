@@ -24,7 +24,7 @@ theorem control : True := by trivial
 #page lemma goodScript : True := script trivial
 #page theorem openSorry : True := by sorry
 #page lemma openError : False := by exact True.intro
-#page end
+set_option pageBuild false
 #page theorem afterNative : True := by trivial
 #page lemma afterScript : True := script trivial
 #page theorem closedSorry : True := by sorry

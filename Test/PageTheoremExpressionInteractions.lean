@@ -18,44 +18,44 @@ namespace PageTheoremExpressionInteractions
 -- These are display configurations for genuine Mathlib declarations, not
 -- stand-in predicates. Automatic arity selects explicit arguments only; no
 -- template refers to typeclass instances or implicit type parameters.
-decl_info nhds { concept_info := { templates := [
+decl_info nhds { «concept_info» := { templates := [
   { label := "formula", content := "\\mathcal{N}(#0)" },
   { label := "neighborhood", lang := zh, content := "\\operatorname{nhds}(#0)" },
   { label := "neighborhood", lang := en, content := "\\operatorname{nhds}(#0)" }
 ] } }
-decl_info Filter.atTop { concept_info := { templates := [
+decl_info Filter.atTop { «concept_info» := { templates := [
   { label := "formula", content := "\\operatorname{atTop}" },
   { label := "symbol", lang := zh, content := "\\infty" },
   { label := "symbol", lang := en, content := "\\infty" }
 ] } }
-decl_info Finset.range { concept_info := { templates := [
+decl_info Finset.range { «concept_info» := { templates := [
   { label := "formula", content := "\\{0,\\ldots,#0-1\\}" },
   { label := "range", lang := zh, content := "\\operatorname{range}(#0)" },
   { label := "range", lang := en, content := "\\operatorname{range}(#0)" }
 ] } }
-decl_info abs { concept_info := { templates := [
+decl_info abs { «concept_info» := { templates := [
   { label := "formula", content := "\\left|#0\\right|", isolated_arguments := [0] },
   { label := "function", lang := zh, content := "\\operatorname{abs}(#0)" },
   { label := "function", lang := en, content := "\\operatorname{abs}(#0)" }
 ] } }
-decl_info MeasureTheory.MeasureSpace.volume { concept_info := { templates := [
+decl_info MeasureTheory.MeasureSpace.volume { «concept_info» := { templates := [
   { label := "formula", content := "\\mathrm{d}x" },
   { label := "measure", lang := zh, content := "\\operatorname{vol}" },
   { label := "measure", lang := en, content := "\\operatorname{vol}" }
 ] } }
-decl_info Filter.Tendsto { concept_info := { templates := [
+decl_info Filter.Tendsto { «concept_info» := { templates := [
   { label := "formula", content := "#0\\xrightarrow[#1]{}#2" },
   { label := "prose", lang := zh, mode := text, content := "#0沿着#1收敛到#2" },
   { label := "prose", lang := en, mode := text, content := "#0 converges to #2 along #1" }
 ] } }
-decl_info Finset.sum { concept_info := { default := "display", templates := [
+decl_info Finset.sum { «concept_info» := { default := "display", templates := [
   { label := "formula", content := "\\sum_{@1\\in #0}@@1", binders := [(1, 1)] },
   { label := "display", lang := zh, content := "\\displaystyle\\sum_{@1\\in #0}@@1", binders := [(1, 1)] },
   { label := "display", lang := en, content := "\\displaystyle\\sum_{@1\\in #0}@@1", binders := [(1, 1)] },
   { label := "function", lang := zh, content := "\\operatorname{sum}(#0,#1)" },
   { label := "function", lang := en, content := "\\operatorname{sum}(#0,#1)" }
 ] } }
-decl_info intervalIntegral { concept_info := { default := "display", templates := [
+decl_info intervalIntegral { «concept_info» := { default := "display", templates := [
   { label := "formula", content := "\\int_{#1}^{#2}@@0\\,\\mathrm{d}@0",
     binders := [(0, 1)] },
   { label := "display", lang := zh, content := "\\displaystyle\\int_{#1}^{#2}@@0\\,\\mathrm{d}@0",
@@ -65,17 +65,17 @@ decl_info intervalIntegral { concept_info := { default := "display", templates :
   { label := "function", lang := zh, content := "\\operatorname{integral}(#0,#1,#2)" },
   { label := "function", lang := en, content := "\\operatorname{integral}(#0,#1,#2)" }
 ] } }
-decl_info HasDerivAt { concept_info := { templates := [
+decl_info HasDerivAt { «concept_info» := { templates := [
   { label := "formula", content := "#0'(#2)=#1" },
   { label := "prose", lang := zh, mode := text, content := "函数#0在#2处的导数等于#1" },
   { label := "prose", lang := en, mode := text, content := "the derivative of #0 at #2 equals #1" }
 ] } }
-decl_info ContinuousAt { concept_info := { templates := [
+decl_info ContinuousAt { «concept_info» := { templates := [
   { label := "formula", content := "#0\\text{ 在 }#1\\text{ 处连续}" },
   { label := "prose", lang := zh, mode := text, content := "函数#0在#1处连续" },
   { label := "prose", lang := en, mode := text, content := "#0 is continuous at #1" }
 ] } }
-decl_info Continuous { concept_info := { templates := [
+decl_info Continuous { «concept_info» := { templates := [
   { label := "formula", content := "\\operatorname{Continuous}(#0)" },
   { label := "prose", lang := zh, mode := text, content := "函数#0连续" },
   { label := "prose", lang := en, mode := text, content := "#0 is continuous" }
@@ -159,6 +159,5 @@ decl_info Continuous { concept_info := { templates := [
         |(∑ k ∈ Finset.range n, a k) - L| < ε := by
   admit
 
-#page end
 
 end PageTheoremExpressionInteractions

@@ -43,8 +43,7 @@ Raw Lean strings are recommended for multiline text, LaTeX, and text containing 
 escapes. Increase the number of `#` characters around a raw string when its content contains the
 current closing sequence.
 
-Each successful `#page text` command before `#page end` adds one text component to the current page.
-A component after `#page end` fails before its body runs, in both verification and page builds.
+Each successful `#page text` command adds one text component to the current module when `pageBuild` is enabled. With `pageBuild` disabled, it does not record a component.
 
 ## 2. Complete Example
 
