@@ -10,9 +10,6 @@
   const formatRatio = value => value.denominator === 1 ? String(value.numerator) : `${value.numerator}/${value.denominator}`;
   const ratio = (numerator, denominator) => ({ numerator, denominator });
 
-  function versionOk(component) {
-    return String(component.payload?.contractVersion || "").split(".")[0] === "1";
-  }
   function readInteger(input, positive = false) {
     const value = Number(input.value);
     if (!safeInteger(value) || (positive && value === 0)) throw new Error("v1 JSON integer range exceeded or integer must be positive");
@@ -91,7 +88,6 @@
     return { form, output };
   }
   function attach(component, compute, element, setup) {
-    if (!versionOk(component)) throw new Error("Unsupported computation contract version");
     const ui = setup();
     let requestId = 0;
     async function run() {

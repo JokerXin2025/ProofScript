@@ -2,7 +2,7 @@
     const supported = ["zh", "en"];
     const parameter = "ps4html-language";
     const pageDefault = document.documentElement.dataset.defaultLanguage;
-    const fallback = supported.includes(pageDefault) ? pageDefault : "zh";
+    const fallback = supported.includes(pageDefault) ? pageDefault : "en";
     const currentLanguage = () => {
         const value = new URL(window.location.href).searchParams.get(parameter);
         return supported.includes(value) ? value : fallback;
@@ -18,6 +18,7 @@
         }
         document.documentElement.dataset.language = language;
         document.querySelectorAll("[data-language-panel]").forEach(panel => {
+            if (panel.classList.contains("theorem-dependency-navigation")) return;
             panel.hidden = panel.dataset.languagePanel !== language;
         });
         document.documentElement.lang = language === "en" ? "en" : "zh-CN";
@@ -30,6 +31,18 @@
         document.querySelectorAll(".language-menu [data-language]").forEach(item => {
             item.setAttribute("aria-checked", item.dataset.language === language ? "true" : "false");
         });
+        let hash;
+        try { hash = decodeURIComponent(window.location.hash.slice(1)); }
+        catch (_) { hash = ""; }
+        if (hash.startsWith("theorem-")) {
+            const base = hash.endsWith("-en") ? hash.slice(0, -3) : hash;
+            const anchor = language === "en" && document.getElementById(`${base}-en`) ? `${base}-en` : base;
+            if (anchor !== hash && document.getElementById(anchor)) {
+                const url = new URL(window.location.href);
+                url.hash = anchor;
+                window.history.replaceState(window.history.state, "", url);
+            }
+        }
         window.PS4HTMLNavigationState?.carryToLinks();
         document.dispatchEvent(new CustomEvent("ps4html:languagechange", {detail: {language}}));
         document.dispatchEvent(new Event("ps4html:layoutchange"));

@@ -64,8 +64,6 @@ class TheoremRecord:
     project_id: str
     proof_refs: tuple[RefInfo, ...]
     proof_dependencies: tuple[LeanName, ...]
-    artifact_id: str
-    snapshot_id: str
     owner: LeanName
     path: str
 

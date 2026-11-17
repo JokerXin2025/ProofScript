@@ -1,6 +1,6 @@
 # ProofScript 重构：第一阶段协议与构建设计
 
-本文是第一至六阶段的**历史实施记录**，其中“过渡期”和“下一阶段”的表述只反映当时进度，不描述当前构建入口。当前协议、目录和命令以 [导出布局](ProofScript-Export-Layout-zh.md)、[README](../README-zh.md) 为准；旧版数据不得混合读取。
+本文是第一至六阶段的**历史实施记录**，其中“过渡期”和“下一阶段”的表述只反映当时进度，不描述当前构建入口。当前格式、目录和命令以 [导出布局](ProofScript-Export-Layout-zh.md)、[README](../README-zh.md) 和 [PS4HTML 配置契约](PS4HTML-Config-Contract-zh.md)为准；历史项目 Info 命令与固化 API 已移除，当前导出不携带版本字段。下文的版本号和示例仅属于历史方案。
 
 ## 1. 责任和语义边界
 
@@ -113,7 +113,7 @@ ProofScript 导出器/协议版本及工具链 ──────────┼
 
 ## 8. 第二阶段的过渡接口（实施记录）
 
-`Info/Freeze.lean` 提供 `requestInfo` / `requestInfoCommand`、`moduleInfoRequests`、`freezeInfo`、`freezeProjectInfo` 和 `freezeRequestedInfo`。请求作为独立持久化扩展写入 `.olean`，不会当场固化；`#preview project_info`、`#preview theorem_info <声明>`、`#preview decl_info <声明>`、`#preview script_info <注册 ID>` 使用当前位置的环境只读固化。模块导出器可通过 `freezeModuleRequests` 在完成时固化。项目配置解析按照模块 imports 和 Lake 提供的 owner 过滤，排除其它 library 及未导入模块；编辑器没有 Lake registry 时，预览暂以模块名的首个组件识别同库导入。自定义 roots 或多库共享模块的精确归属仍需在后续阶段由 Lake 提供。`Test/InfoFreezePreview.lean`、`Test/InfoFreezeProjectView.lean` 及 `Test/InfoRefactorRegression.lean` 覆盖这些行为。
+`Info/Freeze.lean` 保留请求登记、去重和 `freezeRequestedInfo` 的跨领域依赖遍历；声明及脚本分别通过 `Info/Decl/Core.lean` 的 `freezeDeclInfo`、`Info/Script/Core.lean` 的 `freezeScriptInfo` 固化。对应的 `#preview` 和配置命令分别位于两个领域的 `Commands.lean`，模块导出器在完成编译后固化请求。请求作为独立持久化扩展写入 `.olean`，不会当场固化。
 
 旧导出协议的 `configured`、`SnapshotRecord`、Python 配置消费和全库 JSON 清单仍为**现行格式**。新接口不输出 `configured`，但删除旧协议字段需与后续 Output 和 PS4HTML 输入格式同时切换。第三阶段应让组件调用 `requestInfoCommand` 并在页面编译结束时消费请求；第四至六阶段替换旧快照协议、项目聚合出口及下游逻辑。阶段二的请求 API 尚未被组件调用，因此现有渲染结果仍采用旧快照模型。
 

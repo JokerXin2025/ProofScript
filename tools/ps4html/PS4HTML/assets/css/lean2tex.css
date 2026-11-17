@@ -176,6 +176,13 @@
     overflow-wrap: anywhere;
 }
 
+.ps-template-label {
+    display: block;
+    margin-bottom: 4px;
+    color: var(--text-secondary, #667085);
+    font-size: 0.8em;
+}
+
 .ps-expression-layer-indicator {
     position: fixed;
     z-index: 101;

@@ -1,3 +1,4 @@
+import Test.SharedDeclInfo
 import ProofScript
 import Lean
 
@@ -14,6 +15,17 @@ set_option pageBuild true
 open ProofScript
 
 namespace PageTheoremExpressionGallery
+
+-- The explicit Nat.add head and projections belong to this expression-shape fixture.
+decl_info infixl Nat.add "+" (mode := formula, precedence := 65)
+decl_info Prod.fst { templates := [
+  { label := "formula", content := template%:90 ${ "\\operatorname{first}(" arg(0) ")" }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{fst}(" arg(0) ")" }$ }
+] }
+decl_info Prod.snd { templates := [
+  { label := "formula", content := template%:90 ${ "\\operatorname{second}(" arg(0) ")" }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{snd}(" arg(0) ")" }$ }
+] }
 
 universe u v
 
@@ -35,119 +47,93 @@ elab "nativeFirst " p:term : term => do
   let pair ← Lean.Elab.Term.elabTerm p (some (Lean.mkConst ``GalleryPair))
   pure (.proj ``GalleryPair 0 pair)
 
-decl_info shift { name := "后继变换", «concept_info» := { templates := [
-  { label := "formula", content := "\\operatorname{shift}(#0)" },
-  { label := "call", lang := en, content := "\\operatorname{next}(#0)" },
-  { label := "call", lang := zh, content := "\\operatorname{后继}(#0)" }
-] } }
-decl_info combine { name := "合并", «concept_info» := { templates := [
-  { label := "formula", content := "#0\\oplus #1" },
-  { label := "call", lang := en, content := "\\operatorname{combine}(#0,#1)" },
-  { label := "call", lang := zh, content := "\\operatorname{合并}(#0,#1)" }
-] } }
--- Wrapper layouts and symbolic kinds are intentionally configured via their
--- dedicated commands; those kinds do not consume concept templates.
-wrapper_info boxed { index := some 0 }
-decl_info boxed { name := "装箱", «concept_info» := { templates := [
-  { label := "formula", content := "#0" },
-  { label := "call", lang := en, content := "\\operatorname{box}(#0)" }
-] } }
-decl_info startsWith { «concept_info» := { templates := [
-  { label := "formula", content := "\\operatorname{startsWith}(#0,#1)" },
-  { label := "prose", lang := en, mode := text, content := "#1 begins with #0" },
-  { label := "prose", lang := zh, mode := text, content := "#1以#0开头" }
-] } }
-decl_info pairLeft { «concept_info» := { templates := [
-  { label := "formula", content := "(#0,#1)" },
-  { label := "call", lang := en, content := "\\operatorname{pair}(#0,#1)" },
-  { label := "call", lang := zh, content := "\\operatorname{有序对}(#0,#1)" }
-] } }
-decl_info tagged { «concept_info» := { templates := [
-  { label := "formula", content := "\\langle #0\\rangle" },
-  { label := "call", lang := en, content := "\\operatorname{tag}(#0)" },
-  { label := "call", lang := zh, content := "\\operatorname{标记}(#0)" }
-] } }
-relation_info agrees { symbol := "\\simeq" }
-decl_info agrees { «concept_info» := { templates := [
-  { label := "formula", content := "#0\\simeq #1" },
-  { label := "call", lang := en, content := "\\operatorname{agrees}(#0,#1)" }
-] } }
-operator_info Nat.add { symbol := "+", fixity := «infix», precedence := 65, associativity := left }
-decl_info Nat.add { «concept_info» := { templates := [
-  { label := "formula", content := "#0+#1" },
-  { label := "call", lang := en, content := "\\operatorname{add}(#0,#1)" }
-] } }
-decl_info Eq { «concept_info» := { templates := [
-  { label := "formula", content := "#0=#1" },
-  { label := "call", lang := en, content := "\\operatorname{equal}(#0,#1)" },
-  { label := "call", lang := zh, content := "\\operatorname{等于}(#0,#1)" }
-] } }
-decl_info Prod.fst { «concept_info» := { templates := [
-  { label := "formula", content := "\\operatorname{first}(#0)" },
-  { label := "call", lang := en, content := "\\operatorname{fst}(#0)" }
-] } }
-decl_info Prod.snd { «concept_info» := { templates := [
-  { label := "formula", content := "\\operatorname{second}(#0)" },
-  { label := "call", lang := en, content := "\\operatorname{snd}(#0)" }
-] } }
-decl_info GalleryPair.first { «concept_info» := { templates := [
-  { label := "formula", content := "\\operatorname{first}(#0)" },
-  { label := "call", lang := en, content := "\\operatorname{field}(#0)" }
-] } }
-decl_info And { «concept_info» := { templates := [
-  { label := "formula", content := "#0\\land #1" },
-  { label := "call", lang := en, content := "\\operatorname{both}(#0,#1)" },
-  { label := "call", lang := zh, content := "\\operatorname{同时}(#0,#1)" }
-] } }
+decl_info shift { names := [{ lang := zh, value := "后继变换" }], templates := [
+  { label := "formula", content := template%:90 ${ "\\operatorname{shift}(" arg(0) ")" }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{next}(" arg(0) ")" }$ },
+  { label := "call", lang := zh, content := template%:90 ${ "\\operatorname{后继}(" arg(0) ")" }$ }
+] }
+decl_info combine { names := [{ lang := zh, value := "合并" }], templates := [
+  { label := "formula", content := template%:65 ${ arg(0) "\\oplus " arg(1) }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{combine}(" arg(0) "," arg(1) ")" }$ },
+  { label := "call", lang := zh, content := template%:90 ${ "\\operatorname{合并}(" arg(0) "," arg(1) ")" }$ }
+] }
+-- A wrapper ignores its own templates. Symbolic kinds below share the
+-- ordinary template list and retain the shorthand-generated first choice.
+decl_info wrapper boxed 0
+decl_info boxed { names := [{ lang := zh, value := "装箱" }], templates := [
+  { label := "formula", content := template% ${ arg(0) }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{box}(" arg(0) ")" }$ }
+] }
+decl_info startsWith { templates := [
+  { label := "formula", content := template%:50 ${ "\\operatorname{startsWith}(" arg(0) "," arg(1) ")" }$ },
+  { label := "prose", lang := en, content := template%:50 { arg(1) " begins with " arg(0) } },
+  { label := "prose", lang := zh, content := template%:50 { arg(1) "以" arg(0) "开头" } }
+] }
+decl_info pairLeft { templates := [
+  { label := "formula", content := template%:100 ${ "(" arg(0) "," arg(1) ")" }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{pair}(" arg(0) "," arg(1) ")" }$ },
+  { label := "call", lang := zh, content := template%:90 ${ "\\operatorname{有序对}(" arg(0) "," arg(1) ")" }$ }
+] }
+decl_info tagged { templates := [
+  { label := "formula", content := template%:100 ${ "\\langle " arg(0) "\\rangle" }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{tag}(" arg(0) ")" }$ },
+  { label := "call", lang := zh, content := template%:90 ${ "\\operatorname{标记}(" arg(0) ")" }$ }
+] }
+decl_info relation agrees "\\simeq" (mode := formula)
+decl_info agrees { calc_symbol := "≃" }
+decl_info GalleryPair.first { templates := [
+  { label := "formula", content := template%:90 ${ "\\operatorname{first}(" arg(0) ")" }$ },
+  { label := "call", lang := en, content := template%:90 ${ "\\operatorname{field}(" arg(0) ")" }$ }
+] }
 
 -- Ordinary and higher-order lambdas: bound indices and free parameters coexist.
 #page theorem nested_lambdas (f : Nat → Nat) (x : Nat) :
     (fun a : Nat => fun b : Nat => fun c : Nat => f (combine (a + b) c)) x x x = f (combine (x + x) x) := by sorry
-theorem_info nested_lambdas { name := "多层（元）常规lambda函数" }
+theorem_info nested_lambdas { names := [{ lang := zh, value := "多层（元）常规lambda函数" }] }
 
 -- Dependent binders alternate with non-dependent implication arrows.
 #page theorem alternating_binders (x : Nat) (h : x = x) :
     (∀ a : Nat, a = a → ∀ b : Nat, b = b → ∀ c : Nat, combine a (combine b c) = combine a (combine b c)) := by sorry
-theorem_info alternating_binders { name := "多层（元）依赖/非依赖交替链" }
+theorem_info alternating_binders { names := [{ lang := zh, value := "多层（元）依赖/非依赖交替链" }] }
 
 #page theorem nested_lets (x : Nat) :
     (let first := shift x
      let second := combine first x
      let third := combine second first
      third) = combine (combine (shift x) x) (shift x) := by sorry
-theorem_info nested_lets { name := "多层（元）let语句" }
+theorem_info nested_lets { names := [{ lang := zh, value := "多层（元）let语句" }] }
 
 #page theorem universe_and_unknowns (α : Type u) (β : Type v) :
     (∀ _ : Sort (max u v), True) ∧ (∀ _ : Sort (imax u v), True) ∧
       (∀ _ : Type 1, True) := by sorry
-theorem_info universe_and_unknowns { name := "宇宙类型和元变量" }
+theorem_info universe_and_unknowns { names := [{ lang := zh, value := "宇宙类型和元变量" }] }
 
 #page theorem numeral_and_string (x : Nat) :
     startsWith "数学<&>" (combine x 10000) ∧ startsWith "" (shift 0) := by sorry
-theorem_info numeral_and_string { name := "数字字面量与字符串字面量" }
+theorem_info numeral_and_string { names := [{ lang := zh, value := "数字字面量与字符串字面量" }] }
 
 #page theorem bare_names (x : Nat) :
     (let unapplied := shift
      unapplied x = shift x) ∧
       (let proof := nested_lets x
        proof = proof) := by sorry
-theorem_info bare_names { name := "裸常量与定理名称" }
+theorem_info bare_names { names := [{ lang := zh, value := "裸常量与定理名称" }] }
 
 #page theorem application_shapes (x y : Nat) (f : Nat → Nat → Nat) :
     (let partiallyApplied := combine x
      partiallyApplied y = combine x y) ∧
       f (combine x y) (boxed (shift y)) = f (combine x y) (boxed (shift y)) ∧
       tagged (boxed (combine x y)) = tagged (combine x y) := by sorry
-theorem_info application_shapes { name := "部分应用、concept完全应用与包装器" }
+theorem_info application_shapes { names := [{ lang := zh, value := "部分应用、concept完全应用与包装器" }] }
 
 #page theorem symbolic_layout (x y z : Nat) :
     agrees (x + y) (y + x) ∧ (x + y) + z = x + (y + z) := by sorry
-theorem_info symbolic_layout { name := "运算符与关系符" }
+theorem_info symbolic_layout { names := [{ lang := zh, value := "运算符与关系符" }] }
 
 #page theorem projection_layout (x y : Nat) (p : GalleryPair) :
     (pairLeft x y).1 = x ∧ (pairLeft x y).2 = y ∧
       (nativeFirst p) = p.first := by sorry
-theorem_info projection_layout { name := "投影" }
+theorem_info projection_layout { names := [{ lang := zh, value := "投影" }] }
 
 
 end PageTheoremExpressionGallery

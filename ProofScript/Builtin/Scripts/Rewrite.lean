@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (optConfig rwRuleSeq location)
 
@@ -12,7 +12,7 @@ script_macro «rewrite»
 script_recorder «rewrite» auto (clear := [config, rules, loc])
 
 script_info «rewrite» {
-  template := [{
+  templates := [{
     lang := zh, tag := "代换",
     content := ""
   }, {
@@ -29,7 +29,7 @@ script_macro «rw»
 script_recorder «rw» auto (clear := [config, rules, loc])
 
 script_info «rw» {
-  template := [{
+  templates := [{
     lang := zh, tag := "代换",
     content := ""
   }, {
@@ -50,7 +50,7 @@ script_macro «rwPos»
 script_recorder «rwPos» auto (clear := [h, loc])
 
 script_info «rwPos» {
-  template := [{
+  templates := [{
     lang := zh, tag := "明确目标",
     content := ""
   }, {
@@ -71,7 +71,7 @@ script_macro «rwNeg»
 script_recorder «rwNeg» auto (clear := [h, loc])
 
 script_info «rwNeg» {
-  template := [{
+  templates := [{
     lang := zh, tag := "明确目标",
     content := ""
   }, {

@@ -15,7 +15,7 @@ structure ComponentMetadata where
   title : String
   label : Option String := none
   extra : List (String × String) := []
-  deriving Inhabited, Repr, ToJson, FromJson
+  deriving ToJson
 
 syntax componentMetaEntry := ident " := " str
 syntax componentMeta := "(" sepBy1(componentMetaEntry, ", ") ")"
@@ -98,7 +98,7 @@ macro "when_page_build" body:doSeq : doElem =>
     together with the component so failed elaboration cannot leave orphan requests. -/
 def addPageComponent (stx : Syntax) (kind : String) (value : Json)
     (labels : Array (ReferenceKind × String) := #[])
-    (requests : Array InfoRequest := #[]) : CommandElabM Unit := whenPageBuild do
+    (requests : InfoRequests := {}) : CommandElabM Unit := whenPageBuild do
   match addComponent (← getEnv) { kind, value } requests labels with
   | .ok env => setEnv env
   | .error message => throwErrorAt stx message

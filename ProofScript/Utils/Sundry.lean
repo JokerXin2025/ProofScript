@@ -23,18 +23,3 @@ partial def Nat.toRoman (n : Nat) : String :=
   else if n >= 4 then "IV" ++ toRoman (n - 4)
   else if n >= 1 then "I" ++ toRoman (n - 1)
   else ""
-
-/-- Compute the Levenshtein distance between two strings using single-character
-insertions, deletions, and substitutions. -/
-def String.editDistance (left right : String) : Nat := Id.run do
-  let letters := right.toList.toArray
-  let mut previous := List.range (letters.size + 1) |>.toArray
-  for a in left.toList do
-    let mut next := #[previous[0]! + 1]
-    for index in [:letters.size] do
-      let cost := if a == letters[index]! then 0 else 1
-      next := next.push <|
-        min (previous[index]! + cost) <|
-          min (next[index]! + 1) (previous[index + 1]! + 1)
-    previous := next
-  return previous[letters.size]!

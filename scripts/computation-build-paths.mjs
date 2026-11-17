@@ -6,7 +6,7 @@ export function computationBuildPaths(root, proofScriptRoot, manifestPath) {
   let modules;
   if (manifestPath) {
     const session = JSON.parse(readFileSync(manifestPath, "utf8"));
-    if (session.schemaVersion !== 1 || !Array.isArray(session.modules)) {
+    if (!Array.isArray(session.modules)) {
       throw new Error(`invalid page build manifest: ${manifestPath}`);
     }
     modules = new Map(session.modules.map(entry => [entry.name, entry]));

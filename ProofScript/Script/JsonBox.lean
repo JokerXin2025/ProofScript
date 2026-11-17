@@ -13,21 +13,18 @@ structure BoxContractBinding where
   box : String
   index : Nat
   binding : StepBinding
-  deriving Inhabited
 
 /-- Internal, stable positions reserved for one step. Public recorders use RecordingStep. -/
 structure RecordingSlot where
   token : Name
   box : String
   recordIndex : Nat
-  deriving Inhabited
 
 /-- Internal completion data survives the public step callback. -/
 structure PendingRecordingStrategy where
   slot : RecordingSlot
   childPrefix : String
   labels : List Name
-  deriving Inhabited
 
 /-! A strategy route retains the actual metavariable selected for each branch.
     Branch labels are export names; they are never used to rediscover a goal. -/
@@ -50,7 +47,6 @@ structure RecordingState where
   executedInitial : List Name := []
   selectedContract : Option RecordingContract := none
   contractBindings : Array BoxContractBinding := #[]
-  deriving Inhabited
 
 /-- Non-persistent environment state travels through command, tactic and term
     elaboration and follows Lean's ordinary environment backtracking. -/
@@ -323,14 +319,6 @@ private partial def structuredStepPaths (steps : Array RecordedValue) (parent : 
         if let some (.array children) := branch.lookup "proof" then
           paths := paths ++ structuredStepPaths children
             (path ++ #[.key "$branches", .index branchIndex, .key "proof"])
-    if let some (.array children) := fields.lookup "proof" then
-      -- A typed proof field becomes an embedded proof only when a structured
-      -- child declares a rule; arrays of ordinary metadata remain opaque.
-      let containsStep := children.any fun child => match child with
-        | .object fields => fields.any (·.1 == "$ruleId")
-        | _ => false
-      if containsStep then
-        paths := paths ++ structuredStepPaths children (path.push (.key "proof"))
   return paths
 
 /-- Finish the recording without changing its state. The returned value owns all
@@ -353,7 +341,6 @@ def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
   let stepPaths := structuredStepPaths proof #[.key "proof"]
   let statement ← requireRecordingStatement
   let document := encodeOwner <| [
-      ("schemaVersion", .plain (toJson recordingProtocolVersion)),
       ("module", .plain (toJson owner.toString)),
       ("code", .plain (toJson code)),
       ("proof", .array proof), ("statement", statement)]
@@ -374,7 +361,7 @@ def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
     return ← liftM (throw (IO.userError message) : IO (Json × Artifact))
   let dependencies ← match recordedDependencies (← getEnv) expressions document bindings expressionRoots with
     | .ok dependencies => pure dependencies
-    | .error message => liftM (throw (IO.userError message) : IO (Array RenderDependency))
+    | .error message => liftM (throw (IO.userError message) : IO (Array Name))
   let key := artifactKey.getD { owner, kind := .proof, name := boxName.toName }
   -- The declaration command commits its artifact and document together after
   -- it has checked the full theorem and registered semantic proof facts.
@@ -386,7 +373,6 @@ def recordedProofJson {m : Type → Type} [Monad m] [Lean.MonadEnv m]
 /-- Native tactic proofs retain their statement graph but have no recorded steps. -/
 def codeOnlyProofJson (owner : Name) (code : String) (statement : RecordedValue) :=
   encodeOwner [
-    ("schemaVersion", .plain (toJson recordingProtocolVersion)),
     ("module", .plain (toJson owner.toString)),
     ("code", .plain (toJson code)), ("statement", statement)]
 

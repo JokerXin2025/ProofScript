@@ -4,7 +4,7 @@
     const base = new URL(document.documentElement.dataset.projectBaseUrl || "./", window.location.href);
     const project = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
     const projectId = document.documentElement.dataset.projectId || project;
-    const pageParameters = [parameter, "ps-display-wrappers", "ps4html-language", "ps4html-sidebar-width"];
+    const pageParameters = [parameter, "ps-display-wrappers", "ps-display-beta-reduce", "ps4html-language", "ps4html-sidebar-width"];
     const limit = 8192;
     // Mirror Lean2TeX/builtin_styles.py. These identities may appear in a URL before
     // their rendering implementations become available in a page catalog.

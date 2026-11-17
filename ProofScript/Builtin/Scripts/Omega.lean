@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (optConfig)
 
@@ -10,7 +10,7 @@ script_macro «omega»
 script_recorder «omega» auto (clear := [config])
 
 script_info «omega» {
-  template := [{
+  templates := [{
     lang := zh, tag := "整数算术",
     content := ""
   }, {

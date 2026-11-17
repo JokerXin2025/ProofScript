@@ -244,8 +244,6 @@ private partial def scriptKeywords (stx : Syntax) : Syntax :=
 private def registerTacticRegistration (registration : ScriptTacticRegistration) :
     CommandElabM Unit := do
   let ruleId := registration.ruleId
-  if ruleId == unrecordedRuleId then
-    throwError m!"reserved script registration ID `{ruleId}`"
   if (scriptTacticRegistrations (← getEnv)).any (fun r => r.ruleId == ruleId) then
     throwError m!"duplicate script registration ID `{ruleId}`; give each overload a distinct explicit ID"
   let registration := { registration with ruleId }

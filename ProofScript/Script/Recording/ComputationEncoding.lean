@@ -1,7 +1,6 @@
 import ProofScript.Script.Recording.RecordEngine
 import ProofScript.Script.Recording.Expression
 import ProofScript.Script.Recording.Encoding
-import ProofScript.Script.Contract
 
 namespace ProofScript
 
@@ -33,6 +32,6 @@ def encodeComputationFunction (recorded : RecordedValue) : Except String Json :=
   for required in ["expression", "implementation"] do
     let some (.expression _) := fields.lookup required
     | throw s!"computation provenance requires an expression `{required}`"
-  return encodeOwner (fields ++ [("recordingVersion", .plain (toJson recordingProtocolVersion))])
+  return encodeOwner fields
 
 end ProofScript

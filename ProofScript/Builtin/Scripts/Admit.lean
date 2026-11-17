@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 /-- Describe the proof in natural language. -/

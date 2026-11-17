@@ -3,8 +3,9 @@ import ProofScript.Script.ScriptDB
 import ProofScript.Output.Path
 import ProofScript.Page.State
 import ProofScript.Page.Component.Core
-import ProofScript.Info.Declaration
+import ProofScript.Output.DeclarationFacts
 import ProofScript.Core.BuildMode
+import ProofScript.Verso.Capture
 
 open Lean Parser Elab Command Tactic
 
@@ -59,16 +60,16 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
     (binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinder))
     (type proof : TSyntax `term) : CommandElabM Unit := do
   let saved ← get
+  let pageBuild ← pageBuild?
   modify fun state => { state with messages := {} }
   try
-    let pageBuild ← pageBuild?
     let statements? ← match proof with
       | `(term| script $statements:scriptStmts) => pure (some statements)
       | `(term| by $sequence:tacticSeq) => do
           if let some tacticName := findScriptTacticAtom? sequence.raw then
             throwErrorAt tacticName "`:= by` cannot use ProofScript tactics; use ordinary Lean tactics"
           pure none
-      | _ => throwErrorAt proof "expected a `script` or `by` proof"
+      | _ => pure none
     let declaration := (← getCurrNamespace) ++ name.getId
     let helperName := resolveHelperName helper (← getCurrNamespace)
     let before ← getEnv
@@ -86,7 +87,7 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
     let (prepared?, stagedReferences) ← withIsolatedTheoremRefs do
       if !pageBuild then do
         check proof
-        pure (none : Option (Json × Artifact))
+        pure (none : Option (Json × Artifact × String))
       else do
         let moduleName ← getMainModule
         let code := String.Pos.Raw.extract (← getFileMap).source
@@ -95,10 +96,11 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
         let path := (proofOutputPath moduleName declaration).toString
         let (document, artifact) ← match statements? with
           | none => withRecordingSession do
-              let `(term| by $sequence:tacticSeq) := proof
-                | throwError "expected native tactic proof"
               let capture ← `(tactic| _record_theorem_statement)
-              let wrapped : TSyntax ``tacticSeq := ⟨buildTacticSeq #[capture.raw, sequence.raw]⟩
+              let body ← match proof with
+                | `(term| by $sequence:tacticSeq) => pure sequence.raw
+                | _ => pure (← `(tactic| exact $proof)).raw
+              let wrapped : TSyntax ``tacticSeq := ⟨buildTacticSeq #[capture.raw, body]⟩
               check (← `(term| by $wrapped:tacticSeq))
               let document := codeOnlyProofJson moduleName code (← requireRecordingStatement)
               let expressions ← ofExcept <| document.getObjVal? "expressions"
@@ -118,13 +120,16 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
               let (document, artifact) ← recordedProofJson label code moduleName
                 (artifactKey := some key) (path := path)
               pure (document, { artifact with declaration := some declaration })
-        pure (some (document, artifact))
+        let semantic ← Verso.capture declaration code
+        let document := document.setObjVal! "semanticCode"
+          (textResourceDescriptor "verso" "json" Verso.mediaType semantic)
+        pure (some (document, { artifact with contentDigest := document.sha256 }, semantic))
     let citations := stagedReferences.filter (!·.isDependency)
     let messages := (← get).messages
     if messages.hasErrors then throwAbortCommand
     if messages.reportedPlusUnreported.any (fun message => message.data.hasTag (· == `hasSorry)) then
       modifyEnv fun env => sorryProofsExt.modifyState env (·.insert helperName)
-    if let some (document, artifact) := prepared? then
+    if let some (document, artifact, semantic) := prepared? then
       let dependencies ← withRef name <| liftTermElabM <|
         registerDeclarationFacts before declaration kind citations (proofSource := some helperName)
       if let some statements := statements? then
@@ -137,15 +142,11 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
         value := json% {
           proof: $(resourceJson proofRef document.pretty "application/vnd.proofscript.proof+json"),
           sorryAx: $sorryAx } }
-      let requests := artifact.dependencies.map fun dependency =>
-        (⟨⟨dependency.kind, dependency.target⟩, dependency.required,
-          s!"theorem {declaration}", none⟩ : InfoRequest)
-      let requests := requests.push ⟨⟨"theorem", .inl declaration⟩, false,
-        s!"theorem {declaration}", none⟩
-      let requests := artifact.bindings.foldl (fun requests binding =>
-        requests.push ⟨⟨"script", .inl binding.contract.ruleId⟩, false,
-          s!"theorem {declaration}", none⟩) requests
-      let env ← match registerProofArtifact (← getEnv) artifact with
+      let requests : InfoRequests := {
+        decls := artifact.dependencies.push declaration
+        scripts := artifact.bindings.map (·.contract.ruleId) }
+      let (resourceEnv, _) := recordTextResource (← getEnv) "verso" "json" Verso.mediaType semantic
+      let env ← match registerProofArtifact resourceEnv artifact with
         | .ok env => pure env
         | .error message => throwError message
       let env ← match registerProofDocument env artifact document with
@@ -158,8 +159,12 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
       for dependency in dependencies do stageTheoremRef dependency
     modify fun state => { state with messages := saved.messages ++ state.messages }
   catch error =>
+    let failed := (← get).messages
     set saved
     if error.isRuntime then throw error
+    -- A normal failed helper leaves diagnosis to the following native theorem.
+    -- A semantic capture error has no preceding helper diagnostics and must fail.
+    if pageBuild && !failed.hasErrors && !Lean.Elab.isAbortException error then throw error
     -- The native proof reports one error at the user's declaration, without leaking helper diagnostics.
 
 elab "script_theorem_impl " name:ident helper:ident binders:bracketedBinder*

@@ -1,25 +1,39 @@
-/* ===== Flip Card ===== */
+/* ===== Crossfade between rendered content and source ===== */
 .proof-flip-inner {
     position: relative;
-    /* 调整了动画时长和曲线，使扁平翻转更利落 */
-    transition: transform 0.5s ease-in-out, height 0.5s ease-in-out;
-    transform-style: preserve-3d;
+    display: flow-root;
+    transition: height 0.35s ease-in-out;
 }
-.proof-flip-inner.flipped { transform: rotateY(180deg); }
-.proof-flip-front { backface-visibility: hidden; }
-.proof-flip-inner.flipped > .proof-flip-front { pointer-events: none; }
-.proof-flip-back {
-    position: absolute; inset: 0;
-    backface-visibility: hidden;
+.proof-flip-front {
+    display: flow-root;
+    opacity: 1;
+    visibility: visible;
+    transition: opacity 0.35s ease, visibility 0s linear 0s;
+}
+.proof-flip-inner.flipped > .proof-flip-front {
+    opacity: 0;
+    visibility: hidden;
     pointer-events: none;
-    transform: rotateY(180deg);
+    transition: opacity 0.35s ease, visibility 0s linear 0.35s;
+}
+.proof-flip-back {
+    position: absolute; top: 0; left: 0; right: 0;
+    opacity: 0;
+    visibility: hidden;
+    pointer-events: none;
+    transition: opacity 0.35s ease, visibility 0s linear 0.35s;
     background: #fff;
     border-radius: 0.4167vw;
     border: 0.0521vw solid #e5e7eb;
-    overflow: hidden;
-    display: flex; flex-direction: column;
+    box-sizing: border-box;
 }
-.proof-flip-inner.flipped > .proof-flip-back { pointer-events: auto; }
+.proof-flip-inner.flipped > .proof-flip-back {
+    opacity: 1;
+    visibility: visible;
+    pointer-events: auto;
+    transition: opacity 0.35s ease, visibility 0s linear 0s;
+}
+.proof-flip-back.proof-source-card { border-color: transparent; }
 
 .proof-flip-back .code-header,
 .proof-source-card .code-header {
@@ -40,23 +54,10 @@
     font-family: 'SF Mono', 'Cascadia Code', 'Fira Code', 'Consolas', 'Courier New', monospace;
     font-size: 13px; line-height: 1.65;
     color: #374151;
-    overflow: auto; flex: 1;
+    overflow-x: auto;
     tab-size: 2;
     white-space: pre;
     counter-reset: line;
-    min-height: 0;
-}
-
-.theorem-code-only .proof-source-card {
-    overflow: hidden;
-    border: 0.0521vw solid #e5e7eb;
-    border-radius: 0.4167vw;
-    background: #fff;
-}
-
-.theorem-code-only .page-code {
-    border-radius: 0;
-    background: #fff;
 }
 
 /* Light syntax theme for source cards and reverse-side code. */

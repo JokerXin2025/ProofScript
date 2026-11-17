@@ -21,7 +21,7 @@ private def failure (code message : String) := json% {
   "error": { code: $code, message: $message }
 }
 
-/-- Executes a typed pure function behind the `proofscript-json-v1` string ABI. -/
+/-- Executes a typed pure function through a JSON string wrapper. -/
 def invokeJson [FromJson α] [ToJson β]
     (f : α → Except String β) (input : String) : String :=
   let result := do
@@ -38,17 +38,15 @@ structure EntryType where
   input : String
   output : String
   errorMode : String
-deriving Inhabited, ToJson
+deriving ToJson
 
 structure PendingEntry where
-  schemaVersion : String := "0.0.0"
-  abi : String := "proofscript-json-v1"
   bundleId : String
   entry : String
   wrapper : String
   module : String
   functionType : EntryType
-deriving Inhabited, ToJson
+deriving ToJson
 
 def pendingEntryPath (moduleName declaration : String) : FilePath :=
   let modulePath := String.intercalate "/" <| moduleName.splitOn "."
@@ -80,7 +78,6 @@ namespace ProofScript
     Complete JSON export goes through `encode`, which exports its independent expression graph. -/
 structure ComputationFunction where
   recording : RecordedValue
-deriving Inhabited
 
 /-- Encode frozen provenance without consulting the declaration again. -/
 def ComputationFunction.encode (function : ComputationFunction) : Except String Json :=
@@ -89,12 +86,11 @@ def ComputationFunction.encode (function : ComputationFunction) : Except String 
 structure ComputationExecution where
   backend : String := "wasm"
   status : String := "pending"
-  abi : String := "proofscript-json-v1"
   bundleId : String
   entry : String
   wrapper : String
   manifest : String
-deriving Inhabited, ToJson
+deriving ToJson
 
 /--
 Page-level contract for an interactive computation.
@@ -104,18 +100,16 @@ structured Lean expression as provenance and an intermediate artifact; it is not
 browser execution ABI. Renderers should select an execution backend by `renderer`.
 -/
 structure ComputationComponent where
-  schemaVersion : String := "0.0.0"
   metadata : ComponentMetadata
   renderer : String
   function : ComputationFunction
   execution : ComputationExecution
   payload : Json
-deriving Inhabited
 
 def ComputationComponent.encode (component : ComputationComponent) : Except String Json := do
   let function ← component.function.encode
   return json% {
-    schemaVersion: $(component.schemaVersion), metadata: $(component.metadata),
+    metadata: $(component.metadata),
     renderer: $(component.renderer), function: $function,
     execution: $(component.execution), payload: $(component.payload)
   }
@@ -260,8 +254,7 @@ private def addComputationComponent (metadataStx : Syntax)
     payload
   }
   let encoded ← ofExcept <| value.encode
-  let requests : Array InfoRequest := #[⟨⟨"definition", .inl declaration⟩,
-    false, s!"computation {declaration}", none⟩]
+  let requests : InfoRequests := { decls := #[declaration] }
   -- If validation fails, neither the pending task nor its component reaches the environment.
   let (env, _) := Computation.recordPendingEntry (← getEnv) pending
   match addComponent env { kind := "computation", value := encoded } requests labels with
@@ -271,7 +264,7 @@ private def addComputationComponent (metadataStx : Syntax)
 /--
 Adds an interactive computation backed by a Lean declaration.
 
-The final JSON string is a renderer-specific, versioned manifest. Keeping execution
+The final JSON string is a renderer-specific manifest. Keeping execution
 behind a named renderer avoids treating Lean compiler internals as a stable web ABI.
 -/
 syntax computationFieldValue := componentMeta <|> str <|> ident

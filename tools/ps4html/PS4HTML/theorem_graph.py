@@ -8,6 +8,7 @@ from typing import Iterable
 
 from PS4HTML.info import LeanName, TheoremKey, TheoremRecord, digest, name_text
 from PS4HTML.project import PS4HTMLError
+from Lean2TeX.names import select_name
 
 
 def theorem_id(key: TheoremKey) -> str:
@@ -30,7 +31,8 @@ class TheoremNode:
 class TheoremDestination:
     output_path: Path
     anchor: str
-    title: str
+    title: list
+    last_component: str
     order: int
 
 
@@ -66,9 +68,11 @@ class TheoremGraph:
         # Coverage describes this bundle, never all modules of a ProjectId.
         self.modules = tuple(modules)
 
-    def title(self, key: TheoremKey) -> str:
+    def title(self, key: TheoremKey, language="en") -> str:
         destination = self.destinations.get(key)
-        return destination.title if destination else name_text(list(key[1]))
+        return (select_name(destination.title, language, name_text(list(key[1])), theorem=True,
+                            lean_last_component=destination.last_component)
+                if destination else name_text(list(key[1])))
 
     def ordered(self, keys):
         def order(key):

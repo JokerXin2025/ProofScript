@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «by»
@@ -10,7 +10,7 @@ script_recorder «by» => do
   execute
 
 script_info «by» {
-  template := [{
+  templates := [{
     lang := zh, tag := "未知",
     content := "${decr_before}"
   }, {

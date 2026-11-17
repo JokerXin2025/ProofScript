@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 import Mathlib.Tactic.DefEqTransformations
 
 open Lean.Parser.Tactic (location)
@@ -11,7 +11,7 @@ script_macro «betaReduce»
 script_recorder «betaReduce» auto (clear := [loc])
 
 script_info «betaReduce» {
-  template := [{
+  templates := [{
     lang := zh, tag := "β-规约",
     content := ""
   }, {

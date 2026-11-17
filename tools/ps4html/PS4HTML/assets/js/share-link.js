@@ -8,7 +8,7 @@
     const closeButton = dialog.querySelector("[data-share-close]");
     const status = dialog.querySelector(".share-dialog-status");
     const projectUrl = document.documentElement.dataset.projectUrl;
-    const language = () => document.documentElement.dataset.language || document.documentElement.dataset.defaultLanguage || "zh";
+    const language = () => document.documentElement.dataset.language || document.documentElement.dataset.defaultLanguage || "en";
     const text = element => language() === "en" ? element.dataset.shareEn : element.dataset.shareZh;
     const message = key => dialog.dataset[`${key}${language() === "en" ? "En" : "Zh"}`];
 

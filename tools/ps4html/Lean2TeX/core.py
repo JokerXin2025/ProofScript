@@ -12,29 +12,35 @@ from .model import DisplayNode, RenderDiagnostic, RenderTarget
 from .renderer import LayoutRenderer
 from .interactions import ExpressionInteractions
 from .semantic import SemanticConverter
+from .mixed import atom
 from .variable import VariableAllocator
+from .names import select_name
 
 
 class Expr2TeX:
     """Public expression conversion, TeX rendering, and diagnostics."""
 
     def __init__(self, registry: MacroRegistry | None = None, allocator: VariableAllocator | None = None,
-                 *, definition_names: dict[str, str] | None = None, theorem_names: dict[str, str] | None = None):
+                   *, declaration_names: dict[str, list] | None = None,
+                   theorem_names: dict[str, tuple[list, str | None]] | None = None,
+                  declaration_info: dict[str, dict] | None = None):
         self.registry = registry or MacroRegistry()
         self.allocator = allocator or VariableAllocator()
         self.converter = SemanticConverter(self.registry, self.allocator)
-        self.layout = LayoutRenderer(self.registry, definition_names, theorem_names)
+        self.layout = LayoutRenderer(self.registry, declaration_names, theorem_names)
         self.diagnostics: list[RenderDiagnostic] = []
         self.parameter_templates = {}
         self.interactions: ExpressionInteractions | None = None
         self.theorem_id = ""
         self.language_panel = ""
+        self.declaration_info = declaration_info or {}
 
     @classmethod
     def from_config(cls, config: EffectiveConfiguration) -> Expr2TeX:
         """Create independent per-proof allocation and diagnostic state."""
         renderer = cls(config.registry, VariableAllocator(config.variable_prefixes),
-                       definition_names=config.definition_names, theorem_names=config.theorem_names)
+                        declaration_names=config.declaration_names, theorem_names=config.theorem_names,
+                        declaration_info=config.declaration_info)
         renderer.parameter_templates = config.parameter_templates
         return renderer
 
@@ -144,7 +150,8 @@ class Expr2TeX:
             self.interactions.collect(tex)
             if self.interactions.enable_render_roots and not self.interactions._render_depth:
                 root = self.interactions.add_root(node, fragments, self.registry, language, parent_mode,
-                                                  self.layout.definition_names, self.layout.theorem_names)
+                                                   self.layout.declaration_names, self.layout.theorem_names,
+                                                  selections=selections, label=label)
                 tex = f"[[PS4HTML-ROOT-{root}]]{tex}[[PS4HTML-ENDROOT-{root}]]"
         self.diagnostics.extend(self.layout.diagnostics)
         return tex
@@ -164,23 +171,34 @@ class Expr2TeX:
             return self.render_display(display, label, parent=parent, language=language,
                                        selections=selections)
 
-    def render_relation(self, relation: object) -> str:
-        """Render a calc relation through a stable public API."""
-        if not isinstance(relation, dict):
-            return "" if relation is None else str(relation)
-        head, _ = flatten_app(relation)
-        head, _ = unwrap_mdata(head)
-        if head.get("kind") == "const":
-            symbol = self.registry.rel_symbol(str(head.get("name", "")))
-            if self.interactions:
-                display = self.convert(relation)
-                mapping = self.interactions.register(display, self.theorem_id, self.language_panel)
-                target = display.children[0] if display.kind == "expression" and display.children else display
-                fragment = self.interactions.new_fragment(mapping[id(target)])
-                symbol = f"\\htmlData{{ps-expr-fragment={fragment}}}{{{symbol}}}"
-                self.interactions.collect(symbol)
-            return symbol
-        return self.render(relation)
+    def render_relation(self, relation: dict) -> str | None:
+        """Return literal calc text, or None for the ordinary-expression fallback.
+
+        Alias lookup uses the final frozen record, while the visible fragment
+        keeps the original constant's identity. The caller must HTML-escape
+        this text and exclude it from formula parsing.
+        """
+        display = self.converter.convert_relation_head(relation)
+        self.diagnostics = list(self.converter.diagnostics)
+        if display is None:
+            return None
+        name = self.registry.resolve_alias(display.metadata["leanName"])
+        fields = self.declaration_info.get(name)
+        symbol = name if fields is None else (
+            fields["calc_symbol"] if fields["calc_symbol"] is not None else
+            select_name(fields["names"], self.language_panel or "zh", name))
+        self.layout._check_length(len(symbol), self.layout.MAX_OUTPUT_CHARACTERS, "calc symbol")
+        if self.interactions:
+            mapping = self.interactions.register(display, self.theorem_id, self.language_panel)
+            fragment = self.interactions.new_fragment(mapping[id(display)])
+            symbol = atom(symbol, "plain", fragment)
+            try:
+                self.layout._check_length(len(symbol), self.layout.MAX_OUTPUT_CHARACTERS, "calc symbol")
+            except Exception:
+                self.interactions.discard(mapping)
+                raise
+            self.interactions.collect(symbol)
+        return symbol
 
 
 def load(export_root: str | Path, module: str) -> Expr2TeX:
@@ -192,17 +210,16 @@ def load(export_root: str | Path, module: str) -> Expr2TeX:
     root = Path(export_root)
     path = root / "info" / Path(*module.split("."))
     document = json.loads(path.with_suffix(".json").read_text(encoding="utf-8"))
-    if document.get("schemaVersion") != "14.0.0":
-        raise ValueError("Unsupported ProofScript module Info version")
     values = {}
     for record in document["records"]:
         identity = record["identity"]
         kind = identity["kind"]
-        if kind not in ("definition", "theorem"):
+        if kind != "decl":
             continue
         target = name_text(identity["target"])
         fields = {key: value for key, value in record["value"].items() if key != "extra"}
-        if kind == "definition" and fields["alias_info"]["target"] is not None:
-            fields["alias_info"] = {"target": name_text(fields["alias_info"]["target"])}
+        fields["name_last_component"] = name_text([identity["target"][-1]])
+        if fields["alias_target"] is not None and not isinstance(fields["alias_target"], str):
+            fields["alias_target"] = name_text(fields["alias_target"])
         values[kind, target] = fields
     return Expr2TeX.from_config(interpret(values))

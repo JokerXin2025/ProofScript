@@ -3,18 +3,13 @@ from __future__ import annotations
 import json
 import hashlib
 import re
-from dataclasses import dataclass
 from pathlib import Path
 
 from PS4HTML.project import PS4HTMLError
-from PS4HTML.large_json import loads as load_large_json
-from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD
+from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD
 
 
 EXPRESSION_ID = re.compile(r"^e(0|[1-9][0-9]*)$")
-PROOF_MEDIA_TYPE = "application/vnd.proofscript.proof+json"
-# Resource and computation envelopes keep their independent execution version.
-SCHEMA_VERSION = "0.0.0"
 BINDER_INFOS = {"default", "implicit", "strictImplicit", "instImplicit"}
 CHILDREN = {"app": ("fn", "arg"), "lam": ("type", "body"),
             "forall": ("type", "body"), "let": ("type", "value", "body"),
@@ -280,14 +275,26 @@ def validate_document(document, *, module_protocol=False):
     """Validate the recording envelope and expression root ownership."""
     if not isinstance(document, dict):
         _fail("Proof document must be an object")
-    if document.get("schemaVersion") != PROOF_SCHEMA_VERSION:
-        _fail(f"Unsupported recording schema version: {document.get('schemaVersion')!r}. {REBUILD_HINT}")
-    base = {"schemaVersion", "module", "code", "statement", "expressions", "expressionRoots"}
+    base = {"module", "code", "statement", "expressions", "expressionRoots"}
     extras = {"proof", "bindings"} if module_protocol else {"proof"}
-    if not base <= set(document) or set(document) - (base | extras):
+    if not base <= set(document) or set(document) - (base | extras | {"semanticCode"}):
         _fail(f"Proof document requires the reserved statement and expression graph fields. {REBUILD_HINT}")
     if not isinstance(document["module"], str) or not document["module"] or not isinstance(document["code"], str):
         _fail("Proof document requires a module and source code")
+    if module_protocol and "semanticCode" not in document:
+        _fail("Proof document has no Verso semantic resource; rebuild the page-mode module")
+    if "semanticCode" in document:
+        reference = document["semanticCode"]
+        _keys(reference, {"$resource"}, "Verso semantic reference")
+        resource = reference["$resource"]
+        _keys(resource, {"path", "hash", "mediaType", "encoding"}, "Verso semantic resource")
+        if (not isinstance(resource["path"], str) or
+                not resource["path"].startswith(".ProofScript/resources/") or
+                not isinstance(resource["hash"], str) or
+                not re.fullmatch(r"[0-9a-f]{64}", resource["hash"]) or
+                resource["mediaType"] != "application/vnd.proofscript.verso-highlighted+json" or
+                resource["encoding"] != "utf-8"):
+            _fail("Invalid Verso semantic resource reference")
     from PS4HTML.recording import proof_steps
     try:
         if "proof" in document:
@@ -359,10 +366,7 @@ def validate_document(document, *, module_protocol=False):
 
 def validate_computation_function(function):
     """Validate one computation's independent expression owner."""
-    if not isinstance(function, dict) or function.get("recordingVersion") != PROOF_SCHEMA_VERSION:
-        version = function.get("recordingVersion") if isinstance(function, dict) else None
-        _fail(f"Unsupported computation recording version: {version!r}. {REBUILD_HINT}")
-    required = {"recordingVersion", "declaration", "type", "expression", "implementation", "expressions", "expressionRoots"}
+    required = {"declaration", "type", "expression", "implementation", "expressions", "expressionRoots"}
     _keys(function, required, "computation function")
     if not isinstance(function["declaration"], str) or not isinstance(function["type"], str):
         _fail("Computation function is missing expression provenance")
@@ -371,19 +375,9 @@ def validate_computation_function(function):
     for field in ("expression", "implementation"):
         resolver.require_root((field,), function[field])
     for path in resolver.roots:
-        if path[0] in {"expressions", "expressionRoots", "recordingVersion", "declaration", "type"}:
+        if path[0] in {"expressions", "expressionRoots", "declaration", "type"}:
             _fail("Computation expression roots cannot target protocol metadata")
     return resolver
-
-
-@dataclass(frozen=True)
-class LoadedProof:
-    path: Path
-    version: str
-    code: str
-    proof: list | None
-    expressions: dict
-    resolver: ExpressionResolver | None
 
 
 class ResourceLoader:
@@ -391,7 +385,6 @@ class ResourceLoader:
         self.project_root = project_root.resolve()
         self.export_root = (export_root or self.project_root / ".ProofScript").resolve()
         self.text_cache = {}
-        self.proof_cache = {}
 
     def resource_path(self, value, media_type: str | None = None) -> tuple[Path, str]:
         if not isinstance(value, dict) or set(value) != {"$resource"}:
@@ -437,22 +430,3 @@ class ResourceLoader:
             if actual != expected_hash:
                 raise PS4HTMLError(f"ProofScript resource hash mismatch: {path}")
         return self.text_cache[key]
-
-    def load_proof(self, value) -> LoadedProof:
-        path, expected_hash = self.resource_path(value, PROOF_MEDIA_TYPE)
-        key = (path, expected_hash)
-        if key in self.proof_cache:
-            return self.proof_cache[key]
-        content = self.read_text(value, PROOF_MEDIA_TYPE)
-        try:
-            document = load_large_json(content)
-        except json.JSONDecodeError as error:
-            raise PS4HTMLError(f"Invalid embedded proof JSON {path}: {error}") from error
-        resolver = validate_document(document)
-        version = document["schemaVersion"]
-        proof = document.get("proof")
-        expressions = document.get("expressions", {})
-        code = document["code"]
-        loaded = LoadedProof(path, version, code, proof, expressions, resolver)
-        self.proof_cache[key] = loaded
-        return loaded

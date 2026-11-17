@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «congr»
@@ -8,7 +8,7 @@ script_macro «congr»
 script_recorder «congr» auto (clear := [num])
 
 script_info «congr» {
-  template := [{
+  templates := [{
     lang := zh, tag := "同余性",
     content := ""
   }, {

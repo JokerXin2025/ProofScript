@@ -1,12 +1,12 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «rfl»
 "rfl" => `(tactic| rfl)
 
 script_info «rfl» {
-  template := [{
+  templates := [{
     lang := zh, tag := "自反性",
     content := ""
   }, {

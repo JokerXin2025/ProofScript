@@ -6,14 +6,10 @@ import sys
 from pathlib import Path
 
 
-VERSION = "14.0.0"
-
-
 def fingerprint(build: Path, exporter: Path, publisher: Path,
                 scripts: list[Path]) -> str:
     inventory = json.loads(build.read_text(encoding="utf-8"))
     digest = hashlib.sha256()
-    digest.update(VERSION.encode())
     digest.update(json.dumps({key: inventory[key] for key in (
         "selectedProject", "projectRoots", "libraryModules", "closureProjects",
         "moduleProjects")}, sort_keys=True, ensure_ascii=False).encode())
@@ -48,7 +44,7 @@ def fingerprint(build: Path, exporter: Path, publisher: Path,
 def completed(root: Path, manifest: Path, value: str) -> bool:
     try:
         record = json.loads(manifest.read_text(encoding="utf-8"))
-        if record.get("schemaVersion") != VERSION or record.get("complete") is not True or \
+        if record.get("complete") is not True or \
                 record.get("exportFingerprint") != value:
             return False
         for entry in record["files"]:

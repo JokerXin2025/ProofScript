@@ -3,7 +3,9 @@ from pathlib import Path
 from urllib.parse import quote as quote_url_path
 from string import Template
 from textwrap import indent
+from Lean2TeX.names import select_name
 from PS4HTML.i18n import normalize_language, tr
+from PS4HTML.info import name_text
 
 
 CURRENT_DIR = Path(__file__).absolute().parent
@@ -32,7 +34,7 @@ FIELD_LABELS = {
 }
 
 
-def render_references(references, labels, build_root, current_output, language="zh"):
+def render_references(references, labels, build_root, current_output, language="en", project_metadata=None):
     language = normalize_language(language)
     if not isinstance(references, list):
         return TEMPLATE_REFERENCES.substitute(items = "", title = tr("page.references", language))
@@ -42,15 +44,14 @@ def render_references(references, labels, build_root, current_output, language="
     for position, reference in enumerate(references, 1):
         if not isinstance(reference, dict):
             continue
-        info = reference.get("info", {})
         project_id = reference.get("projectId")
-        project = reference.get("project", {})
-        key = project_id
+        key = project_id if isinstance(project_id, str) else None
         index = group_indexes.get(key)
         if index is None:
             index = len(groups)
             group_indexes[key] = index
-            groups.append({"project": project, "theorems": []})
+            groups.append({"project": project_metadata(key) if project_metadata else {},
+                           "theorems": []})
         groups[index]["theorems"].append((position, reference))
 
     items = "\n".join(
@@ -65,7 +66,8 @@ def _render_project(index, group, labels, build_root, current_output, language):
     project_id = group["theorems"][0][1].get("projectId")
     if isinstance(project_id, str) and project_id:
         try:
-            fallback = json.loads(project_id)["library"]
+            identity = json.loads(project_id)
+            fallback = identity["library"] if isinstance(identity["library"], str) else project_id
         except (ValueError, KeyError, TypeError):
             fallback = project_id
     else:
@@ -90,7 +92,7 @@ def _render_project(index, group, labels, build_root, current_output, language):
     )
 
 
-def _project_rows(project, language="zh"):
+def _project_rows(project, language="en"):
     rows = []
     for key, label_key in PROJECT_FIELDS:
         value = project.get(key)
@@ -100,7 +102,7 @@ def _project_rows(project, language="zh"):
             rows.append(_row(FIELD_LABELS.get(language, FIELD_LABELS["zh"]).get(label_key, label_key), value, key == "base_url"))
     for key, value in project.get("extra", {}).items():
         if value is not None:
-            rendered = json.dumps(value, ensure_ascii=False) if isinstance(value, (list, dict)) else str(value)
+            rendered = json.dumps(value, ensure_ascii=False, allow_nan=False) if isinstance(value, (list, dict)) else str(value)
             rows.append(_row(key, rendered))
     return "\n".join(rows)
 
@@ -117,8 +119,9 @@ def _row(key, value, link = False):
 
 def _render_theorem(position, reference, labels, build_root, current_output, language):
     info = reference.get("info", {})
-    lean_name = str(reference.get("name", ""))
-    display_name = info.get("name") or (f"Theorem {position}" if language == "en" else f"定理{position}")
+    lean_name = name_text(reference["name"])
+    display_name = select_name(info["names"], language, lean_name, theorem=True,
+                               lean_last_component=name_text([reference["name"][-1]]))
     target = labels.get(("theorem", lean_name))
     location = lean_name
     if target is not None:

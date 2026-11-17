@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (location)
 
@@ -10,7 +10,7 @@ script_macro «symm»
 script_recorder «symm» auto (clear := [loc])
 
 script_info «symm» {
-  template := [{
+  templates := [{
     lang := zh, tag := "对称性",
     content := ""
   }, {

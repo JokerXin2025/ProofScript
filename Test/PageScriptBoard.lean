@@ -39,10 +39,14 @@ script_recorder boardSimp => do
   record_context "$context_after"
 
 script_info boardSimp {
-  template := [{ lang := zh, tag := "化简", content := "对 ${location} 进行化简" }],
-  board := [("指定规则", "requested_rules"), ("化简位置", "location"),
-    ("实际使用的引理", "used_lemmas"), ("执行耗时（纳秒）", "duration_ns")]
+  templates := [{ lang := zh, tag := "化简", content := "对 ${location} 进行化简" }],
+  board := [
+    ("指定规则", "requested_rules"), ("化简位置", "location"),
+    ("实际使用的引理", "used_lemmas"), ("执行耗时（纳秒）", "duration_ns")
+  ]
 }
+
+script_info templates boardSimp + [{ lang := en, tag := "Simplify", content := "${location}" }]
 
 -- `only` makes the arithmetic inputs auditable; record their types before execution.
 script_macro boardLinear "board_linear" "[" inputs:ident,* "]" =>
@@ -73,7 +77,7 @@ script_recorder boardLinear => do
   record_context "$context_after"
 
 script_info boardLinear {
-  template := [{ lang := zh, tag := "线性推理", content := "由 ${premises}，推出 ${conclusion}" }],
+  templates := [{ lang := zh, tag := "线性推理", content := "由 ${premises}，推出 ${conclusion}" }],
   board := [("输入算术事实", "premises"), ("待证结论", "conclusion"),
     ("证明项依赖的局部命题", "proof_dependencies"), ("执行耗时（纳秒）", "duration_ns")]
 }
@@ -89,7 +93,7 @@ script_recorder «norm_num» => do
   record_context "$context_after"
 
 script_info «norm_num» {
-  template := [{ lang := zh, tag := "数值验证", content := "计算并验证 ${verification}" }],
+  templates := [{ lang := zh, tag := "数值验证", content := "计算并验证 ${verification}" }],
   board := [("验证的命题", "verification"), ("执行耗时（纳秒）", "duration_ns")]
 }
 
@@ -112,7 +116,7 @@ script_recorder boardCases => do
   record_value "duration_ns" ((← IO.monoNanosNow) - start)
 
 script_info boardCases {
-  template := [{ lang := zh, tag := "绝对值分类",
+  templates := [{ lang := zh, tag := "绝对值分类",
     introducer := { tag := "分类", content := "按 y ≤ x 分类讨论绝对值" },
     cases := [{ name := "nonnegative", tag := "情形一", title := "y ≤ x" },
       { name := "negative", tag := "情形二", title := "x < y" }] }],

@@ -39,7 +39,8 @@
         return ({ fvar: "freeVariable", bvar: "boundVariable", binder: "binder",
             metavariable: "unknownVariable", sort: "universe", let: "localDefinition",
             lambda: "lambda", projection: "projection", wrapper: "wrapper",
-            const: "constant", theorem: "theorem", concept: "constant", application: "application", operator: "operator",
+            const: "constant", theorem: "theorem", concept: "constant", application: "application",
+            operator: "operator",
             relation: "relation" })[kind] || (detail.headConst && kind !== "unknown" ? "constant" : "expression");
     }
 
@@ -90,7 +91,7 @@
     };
 
     function render(data, translations, technical) {
-        const language = document.documentElement.dataset.language || document.documentElement.dataset.defaultLanguage || "zh";
+        const language = document.documentElement.dataset.language || document.documentElement.dataset.defaultLanguage || "en";
         const messages = translations[language] || translations.zh || {};
         const tr = (key) => messages[key] || key;
         const tooltip = document.createElement("aside");

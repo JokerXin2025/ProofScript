@@ -1,3 +1,4 @@
+import Test.SharedDeclInfo
 import ProofScript
 
 /-!
@@ -18,13 +19,13 @@ def BoundaryWrap (value : Nat) := value
 def BoundaryAlias {α : Sort u} (a b : α) : Prop := a = b
 def BoundaryBinary (a b : Nat) : Nat := a + b
 
-wrapper_info BoundaryWrap { index := some 0 }
-alias_info BoundaryAlias { target := some Eq }
-decl_info BoundaryBinary { «concept_info» := { templates := [
-    { label := "formula", content := "#0+#1" },
-    { label := "call", lang := zh, content := "\\operatorname{binary}(#0,#1)" },
-    { label := "call", lang := en, content := "\\operatorname{binary}(#0,#1)" }
-  ] } }
+decl_info wrapper BoundaryWrap 0
+decl_info alias BoundaryAlias → Eq
+decl_info BoundaryBinary { templates := [
+    { label := "formula", content := template%:65 ${ arg(0) "+" arg(1) }$ },
+    { label := "call", lang := zh, content := template%:90 ${ "\\operatorname{binary}(" arg(0) "," arg(1) ")" }$ },
+    { label := "call", lang := en, content := template%:90 ${ "\\operatorname{binary}(" arg(0) "," arg(1) ")" }$ }
+  ] }
 
 def BoundaryLinear (_ : Nat) (_ : String) (_ : Nat) : Prop := True
 def BoundaryFraction (_ : Nat) (_ : String) : Prop := True
@@ -32,11 +33,9 @@ def BoundaryPower (_ : Nat) (_ : String) : Prop := True
 
 -- The only ungrouped linear template can expose HTML string styles. Fraction
 -- and superscript must keep their strings inside KaTeX.
-decl_info BoundaryLinear { «concept_info» := { templates := [{ label := "formula", content := "#0+#1+#2" }] } }
-decl_info BoundaryFraction { «concept_info» := { templates := [{ label := "formula", content := "\\frac{#0}{#1}",
-                   isolated_arguments := [0, 1] }] } }
-decl_info BoundaryPower { «concept_info» := { templates := [{ label := "formula", content := "{#0}^{#1}",
-                   isolated_arguments := [1] }] } }
+decl_info BoundaryLinear { templates := [{ label := "formula", content := template%:65 ${ arg(0) "+" arg(1) "+" arg(2) }$ }] }
+decl_info BoundaryFraction { templates := [{ label := "formula", content := template%:70 ${ "\\frac{" arg!(0) "}{" arg!(1) "}" }$ }] }
+decl_info BoundaryPower { templates := [{ label := "formula", content := template%:80 ${ "{" arg(0) "}^{" arg!(1) "}" }$ }] }
 
 -- Wrapper and alias preserve their original application and relation meaning.
 #page theorem boundary_wrapper_alias (x y : Nat) :

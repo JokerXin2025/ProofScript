@@ -8,11 +8,11 @@ private structure FigureComponent where
   metadata : ComponentMetadata
   path : String
   extension : String
-deriving Inhabited, Repr, ToJson, FromJson
+deriving ToJson
 
 page_component "figure" metadata:componentMeta path:str => do
   addComponentMetadataInfo metadata.raw
-  when_page_build do
+  when_page_build
     match parseComponentMetadata metadata.raw with
     | .ok metadata =>
         let pathValue := path.getString

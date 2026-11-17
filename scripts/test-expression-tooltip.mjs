@@ -30,6 +30,7 @@ const ui = {
     },
     en: {
         'title.exists': 'Existential quantifier', 'title.boundVariable': 'Bound variable',
+        'title.operator': 'Operator',
         'field.index': 'de Bruijn index', 'field.rawData': 'Raw data',
     },
 };
@@ -39,9 +40,11 @@ const view = (category, occurrence, technical = false) => window.PS4HTMLExpressi
 }, ui, technical);
 const text = element => [element.textContent, ...element.children.map(text)].join(' ');
 
-assert.equal(view('operator', { headConst: 'Exists', originalExprKind: 'app',
+assert.equal(view('concept', { headConst: 'Exists', originalExprKind: 'app',
     expressionText: '∃ x, P x' }).children[0].textContent, '存在量词');
 assert.equal(view('operator', { headConst: 'HAdd.hAdd' }).children[0].textContent, '运算符');
+assert.equal(view('operator', { headConst: 'Neg.neg' }).children[0].textContent, '运算符');
+assert.equal(view('operator', { headConst: 'Factorial' }).children[0].textContent, '运算符');
 assert.equal(view('application', { headConst: 'Exists' }).children[0].textContent, '应用');
 assert.match(text(view('sort', { display: 'Type', level: { kind: 'level.succ',
     level: { kind: 'level.max', u: { kind: 'level.param', name: 'u' },
@@ -58,12 +61,13 @@ for (const [kind, detail, expected] of [
     ['forall', { isArrow: false }, 'forall'],
     ['literal', { literalKind: 'literal.nat', value: '0' }, 'number'],
     ['literal', { literalKind: 'literal.str', value: '' }, 'string'],
-    ['projection', {}, 'projection'], ['relation', {}, 'relation'],
+    ['projection', {}, 'projection'], ['relation', {}, 'relation'], ['operator', {}, 'operator'],
     ['wrapper', { headConst: 'Exists' }, 'wrapper'], ['unexpected', {}, 'expression'],
 ]) {
     assert.equal(view(kind, detail).children[0].textContent, ui.zh[`title.${expected}`] || `title.${expected}`);
 }
 document.documentElement.dataset.language = 'en';
+assert.equal(view('operator', {}).children[0].textContent, ui.en['title.operator']);
 assert.match(text(view('bvar', { display: 'x', index: 0 })), /Bound variable.*de Bruijn index/);
 const detailed = view('bvar', { display: 'x', index: 0 }, true);
 assert.match(text(detailed), /Raw data/);

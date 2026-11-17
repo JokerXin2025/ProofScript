@@ -1,12 +1,12 @@
 import ProofScript.Utils.Tactic
 import ProofScript.Utils.Syntax
+import ProofScript.Utils.Sundry
 import ProofScript.Script.Command
-import ProofScript.Info.Theorem
 import ProofScript.Script.Script
 import ProofScript.Script.Recording
 import Batteries.Tactic.Init
 import ProofScript.Core.BuildMode
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 import Mathlib.Tactic
 
 import ProofScript.Extensions.Title
@@ -262,7 +262,7 @@ script_macro «simp»
 script_recorder «simp» auto (clear := [config, args])
 
 script_info «simp» {
-  template := [{
+  templates := [{
     lang := zh, tag := "化简",
     content := ""
   }, {
@@ -305,7 +305,7 @@ script_elab «have»
 script_recorder «have» auto (intro := [h])
 
 script_info «have» {
-  template := [{
+  templates := [{
     lang := zh, tag := "引入事实",
     content := "${h_after}"
   }, {
@@ -346,7 +346,7 @@ script_recorder «let» => do
   record_context "$context_after"
 
 script_info «let» {
-  template := [{
+  templates := [{
     lang := zh, tag := "定义",
     content := "${name} : ${type} := ${value}"
   }, {
@@ -367,7 +367,7 @@ script_elab «exact»
 script_recorder «exact» auto (clear := [value])
 
 script_info «exact» {
-  template := [{
+  templates := [{
     lang := zh, tag := "«exact»",
     content := ""
   }, {
@@ -416,7 +416,7 @@ script_elab «exact_proj»
 script_recorder «exact_proj» auto (clear := [value])
 
 script_info «exact_proj» {
-  template := [{
+  templates := [{
     lang := zh, tag := "投影",
     content := "待证目标蕴涵于已知条件“${value_before}”之中"
   }, {
@@ -444,7 +444,7 @@ script_elab «intro»
 script_recorder «intro» auto (intro := [h])
 
 script_info «intro» {
-  template := [{
+  templates := [{
     lang := zh, tag := "«intro»",
     content := ""
   }, {
@@ -497,7 +497,7 @@ script_elab «unpack_and»
 script_recorder «unpack_and» auto (intro := [names], clear := [h])
 
 script_info «unpack_and» {
-  template := [{
+  templates := [{
     lang := zh, tag := "拆解",
     content := ""
   }, {
@@ -527,7 +527,7 @@ script_elab «unpack_iff»
 script_recorder «unpack_iff» auto (intro := [h₁, h₂], clear := [h])
 
 script_info «unpack_iff» {
-  template := [{
+  templates := [{
     lang := zh, tag := "拆解",
     content := ""
   }, {
@@ -557,7 +557,7 @@ script_elab «obtain_exist»
 script_recorder «obtain_exist» auto (intro := [h₁, h₂], clear := [h])
 
 script_info «obtain_exist» {
-  template := [{
+  templates := [{
     lang := zh, tag := "拆解",
     content := ""
   }, {
@@ -575,7 +575,7 @@ script_macro «obtain_exist'»
 script_recorder «obtain_exist'» auto (intro := [h₁, h₂, h₃], clear := [h])
 
 script_info «obtain_exist'» {
-  template := [{
+  templates := [{
     lang := zh, tag := "拆解",
     content := ""
   }, {
@@ -601,7 +601,7 @@ script_elab «funext»
 script_recorder «funext» auto (intro := [arg])
 
 script_info «funext» {
-  template := [{
+  templates := [{
     lang := zh, tag := "外延性",
     content := ""
   }, {
@@ -626,7 +626,7 @@ script_elab «provide»
 script_recorder «provide» auto (clear := [data])
 
 script_info «provide» {
-  template := [{
+  templates := [{
     lang := zh, tag := "选取",
     content := "${data_before}"
   }, {
@@ -669,7 +669,7 @@ script_elab «apply»
 script_recorder «apply» auto (clear := [h])
 
 script_info «apply» {
-  template := [{
+  templates := [{
     lang := zh, tag := "应用定理",
     content := "${h_before}"
   }, {
@@ -701,7 +701,7 @@ script_recorder «claim» => do
   record_param "h" h (goal := `rest)
 
 script_info «claim» {
-  template := [{
+  templates := [{
     lang := zh, tag := "断言",
     cases := [{name := "proof", tag := "证明", title := ""}]
   }, {
@@ -747,7 +747,7 @@ script_recorder «claimExistTwo» => do
   record_param "h₂" h₂ (goal := `rest)
 
 script_info «claimExistTwo» {
-  template := [{
+  templates := [{
     lang := zh, tag := "断言",
     cases := [{name := "proof", tag := "证明", title := ""}]
   }, {
@@ -771,7 +771,7 @@ script_recorder «claimExistThree» => do
   record_param "h₃" h₃ (goal := `rest)
 
 script_info «claimExistThree» {
-  template := [{
+  templates := [{
     lang := zh, tag := "断言",
     cases := [{name := "proof", tag := "证明", title := ""}]
   }, {
@@ -793,7 +793,7 @@ script_macro «witness» (kind := strategy)
 
 script_info «witness» {
   color := (some (22, 106, 128), some (154, 199, 208), some (239, 248, 250)),
-  template := [{
+  templates := [{
     lang := zh, tag := "构造",
     introducer := {tag := "目标拆解", content := "将目标拆分为数据构造和性质证明两个子目标"},
     cases := [
@@ -830,7 +830,7 @@ script_macro «split_iff» (kind := strategy)
 )
 
 script_info «split_iff» {
-  template := [{
+  templates := [{
     lang := zh, tag := "目标拆解",
     introducer := {tag := "拆解", content := "拆分等价性为充分性和必要性"},
     cases := [
@@ -867,7 +867,7 @@ script_recorder «cases_by» => do
   execute
 
 script_info «cases_by» {
-  template := [{
+  templates := [{
     lang := zh, tag := "分类讨论",
     introducer := {tag := "分类依据", content := "对命题 ${subject} 的不同情形分别讨论"},
     cases := [
@@ -902,7 +902,12 @@ script_macro «cases_by!» (kind := strategy)
 )
 
 script_info «cases_by!» {
-  renderer := «strategy»
+  templates := [
+    { lang := zh, tag := "逐项分类讨论", introducer := { tag := "分类依据", content := "对所有可能的情形分别讨论" },
+      case := { tag := "情形 ${index'}", title := "" } },
+    { lang := en, tag := "Analyzing each case,",
+      introducer := { tag := "As the case distinction,", content := "consider each possible case" },
+      case := { tag := "In Case ${index'},", title := "" } }]
 }
 
 /-! ### Case Analysis on Propositions or Inductive Types -/
@@ -922,7 +927,12 @@ script_elab «cases_on» (kind := strategy)
     evalTactic <| ← `(tactic| cases $value:term)
 
 script_info «cases_on» {
-  renderer := «strategy»
+  templates := [
+    { lang := zh, tag := "分类讨论", introducer := { tag := "分类依据", content := "对所有可能的情形分别讨论" },
+      case := { tag := "情形 ${index'}", title := "" } },
+    { lang := en, tag := "By cases,",
+      introducer := { tag := "As the case distinction,", content := "consider each possible case" },
+      case := { tag := "In Case ${index'},", title := "" } }]
 }
 
 /-! ### Proof by Contradiction -/
@@ -951,7 +961,7 @@ script_recorder «contra» => do
 
 script_info «contra» {
   color := (some (163, 59, 69), some (221, 176, 180), some (252, 242, 242)),
-  template := [{
+  templates := [{
     lang := zh, tag := "反证法",
     inline := true,
     introducer := {tag := "假设", content := "假设 ${hypothesis}，推得矛盾"},
@@ -972,7 +982,7 @@ script_macro «induction» (kind := strategy)
 
 script_info «induction» {
   color := (some (43, 106, 74), some (163, 194, 177), some (242, 247, 244)),
-  template := [{
+  templates := [{
     lang := zh, tag := "数学归纳法",
     introducer := {tag := "归纳对象", content := "对变量 ${n} 使用数学归纳法"},
     cases := [
@@ -1006,7 +1016,7 @@ script_macro «completeInduction» (kind := strategy)
 
 script_info «completeInduction» {
   color := (some (97, 81, 154), some (189, 179, 216), some (246, 243, 250)),
-  template := [{
+  templates := [{
     lang := zh, tag := "强归纳法",
     introducer := {tag := "归纳对象", content := "对自然数 ${n} 使用强数学归纳法。"},
     cases := [
@@ -1044,7 +1054,12 @@ script_macro «constructor» (kind := strategy)
 "constructor" => `(tactic| check_exclusive_ctor; constructor)
 
 script_info «constructor» {
-  renderer := «strategy»,
+  templates := [
+    { lang := zh, tag := "应用构造器", introducer := { tag := "构造目标", content := "应用构造器并逐项证明各字段" },
+      case := { tag := "构造器字段 ${index'}", title := "" } },
+    { lang := en, tag := "Apply the constructor",
+      introducer := { tag := "Construct the goal", content := "apply the constructor and prove each field" },
+      case := { tag := "Constructor field ${index'}", title := "" } }],
   color := (some (162, 100, 35), some (223, 195, 157), some (253, 248, 238))
 }
 
@@ -1065,7 +1080,12 @@ script_elab «constructor!» (kind := strategy)
   evalTactic (← `(tactic| set_goal_tags $(quote names)))
 
 script_info «constructor!» {
-  renderer := «strategy»,
+  templates := [
+    { lang := zh, tag := "应用指定构造器", introducer := { tag := "构造目标", content := "应用构造器并逐项证明各字段" },
+      case := { tag := "构造器字段 ${index'}", title := "" } },
+    { lang := en, tag := "Apply the named constructor",
+      introducer := { tag := "Construct the goal", content := "apply the constructor and prove each field" },
+      case := { tag := "Constructor field ${index'}", title := "" } }],
   color := (some (162, 100, 35), some (223, 195, 157), some (253, 248, 238))
 }
 
@@ -1561,7 +1581,7 @@ script_macro «zify»
   `(tactic| zify $[$args:simpArgs]? $[$loc:location]?)
 
 script_info «continuity» {
-  template := [{
+  templates := [{
     lang := zh, tag := "连续性",
     content := ""
   }, {
@@ -1571,7 +1591,7 @@ script_info «continuity» {
 }
 
 script_info «exact_mod_cast» {
-  template := [{
+  templates := [{
     lang := zh, tag := "«exact_mod_cast»",
     content := ""
   }, {
@@ -1581,7 +1601,7 @@ script_info «exact_mod_cast» {
 }
 
 script_info «field» {
-  template := [{
+  templates := [{
     lang := zh, tag := "域算术",
     content := ""
   }, {
@@ -1591,7 +1611,7 @@ script_info «field» {
 }
 
 script_info «measurability» {
-  template := [{
+  templates := [{
     lang := zh, tag := "可测性",
     content := ""
   }, {
@@ -1601,7 +1621,7 @@ script_info «measurability» {
 }
 
 script_info «positivity» {
-  template := [{
+  templates := [{
     lang := zh, tag := "正性",
     content := ""
   }, {
@@ -1611,7 +1631,7 @@ script_info «positivity» {
 }
 
 script_info «ring» {
-  template := [{
+  templates := [{
     lang := zh, tag := "环算术",
     content := ""
   }, {
@@ -1621,7 +1641,7 @@ script_info «ring» {
 }
 
 script_info «tauto» {
-  template := [{
+  templates := [{
     lang := zh, tag := "重言",
     content := ""
   }, {
@@ -1631,7 +1651,7 @@ script_info «tauto» {
 }
 
 script_info «tauto_set» {
-  template := [{
+  templates := [{
     lang := zh, tag := "重言",
     content := ""
   }, {

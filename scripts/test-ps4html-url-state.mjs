@@ -4,7 +4,7 @@ import vm from 'node:vm';
 
 const handlers = new Map();
 const windowHandlers = new Map();
-let href = 'file:///site/index.html?ps4html-language=en&ps-display-wrappers=1&ps4html-sidebar-width=300&other=keep#proof';
+let href = 'file:///site/index.html?ps4html-language=en&ps-display-wrappers=1&ps-display-beta-reduce=1&ps4html-sidebar-width=300&other=keep#proof';
 const links = [
     { href: 'chapter.html#theorem', dataset: {} },
     { href: '#heading', dataset: {} },
@@ -29,17 +29,21 @@ const destination = new URL(links[0].href);
 assert.equal(destination.protocol, 'file:');
 assert.equal(destination.pathname, '/site/chapter.html');
 assert.equal(destination.hash, '#theorem');
-for (const key of ['ps4html-language', 'ps-display-wrappers', 'ps4html-sidebar-width']) {
+for (const key of ['ps4html-language', 'ps-display-wrappers', 'ps-display-beta-reduce', 'ps4html-sidebar-width']) {
     assert.equal(destination.searchParams.get(key), new URL(href).searchParams.get(key));
 }
 assert.equal(links[1].href, '#heading');
 assert.equal(links[2].href, 'https://example.org/other.html');
 assert.equal(links[3].href, 'other-project.html');
 
-const choices = { '["builtin", "lambda"]': 'fun' };
+const choices = {
+    '["builtin", "lambda"]': 'fun',
+    '["constant", "Demo.target"]': '$infix',
+    '["constant", "Demo.alias"]': 'description',
+};
 assert.equal(window.PS4HTMLNavigationState.save(choices), true);
 assert.equal(new URL(href).searchParams.get('other'), 'keep');
-assert.equal(Object.keys(window.PS4HTMLNavigationState.read()).length, 1);
+assert.deepEqual({...window.PS4HTMLNavigationState.read()}, choices);
 assert.equal(new URL(links[0].href).searchParams.get('ps4html-templates'), new URL(href).searchParams.get('ps4html-templates'));
 
 const share = new URL('https://example.org/site/chapter.html?stale=1');

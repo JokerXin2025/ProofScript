@@ -16,7 +16,7 @@
             counter = Math.max(counter, Number(fragment.slice(1)) || 0);
         }
     }
-    const language = () => document.documentElement.dataset.language || document.documentElement.dataset.defaultLanguage || "zh";
+    const language = () => document.documentElement.dataset.language || document.documentElement.dataset.defaultLanguage || "en";
     const literalKey = JSON.stringify(["builtin", "literal.str"]).replace(",", ", ");
     function literalEligible(key, occurrence, root, node) {
         if (key !== literalKey) return true;
@@ -32,9 +32,32 @@
         }
     }
     const catalogsFor = key => catalogsByKey.get(key) || [];
+    const locations = new Map();
+    const occurrenceIds = new WeakMap();
+    for (const root of Object.values(roots)) {
+        const pending = [root.tree];
+        while (pending.length) {
+            const node = pending.pop();
+            locations.set(node.occurrence, {root, node});
+            const occurrence = data.occurrences[node.occurrence];
+            if (occurrence) occurrenceIds.set(occurrence, node.occurrence);
+            pending.push(...node.children);
+        }
+    }
     const choicesByLanguage = new Map();
-    const eligible = (catalog, lang) => catalog.templates.filter(template =>
-        template.available !== false && (!template.lang || template.lang === lang));
+    const eligible = (catalog, node, lang) => window.PS4HTMLRenderTree.availableLabels(catalog, node, lang);
+    const currentSelections = (root, choices = selections) => ({...root.initialSelections, ...choices});
+    const visible = node => {
+        while (["wrapper", "expression"].includes(node.kind)) node = node.children[0];
+        return node;
+    };
+    const requested = (root, node, choices, key) => choices[key]
+        ?? (node === visible(root.tree) ? node.metadata.requestedTemplate : null);
+    const tr = (key, fallback) => data.ui?.[language()]?.[key] || data.ui?.en?.[key] || fallback;
+    const builtinLabels = {"$relation": "relation", "$prefix": "prefix", "$infix": "infix",
+        "$infixl": "infixl", "$infixr": "infixr", "$postfix": "postfix"};
+    const labelName = label => Object.hasOwn(builtinLabels, label)
+        ? tr(`template.${builtinLabels[label]}`, builtinLabels[label]) : label;
     function replaceSelections(next) {
         for (const key of Object.keys(selections)) delete selections[key];
         Object.assign(selections, next);
@@ -44,9 +67,7 @@
         // Keep selections used by another page; only reject labels that this
         // page's catalog actually knows to be unavailable.
         if (!catalogs.length) return true;
-        return catalogs.some(catalog => catalog.templates.some(template =>
-            template.available !== false && template.label === label
-            && (template.lang === lang || template.lang == null)));
+        return catalogs.some(catalog => eligible(catalog, null, lang).includes(label));
     }
     function prune(lang) {
         const removed = [];
@@ -59,15 +80,17 @@
         return removed;
     }
     function close() { menu?.remove(); menu = null; }
-    function hasChoices(key, occurrence) {
+    function hasChoices(key, occurrence, id = occurrenceIds.get(occurrence)) {
         if (["const", "theorem", "wrapper", "expression"].includes(occurrence?.kind)) return false;
         if (key === literalKey && !occurrence?.details?.htmlEligible) return false;
+        const location = locations.get(id);
+        const catalog = location?.root.catalog[key];
+        if (!catalog) return false;
         const lang = language();
-        if (!choicesByLanguage.has(lang)) choicesByLanguage.set(lang, new Map());
+        if (!choicesByLanguage.has(lang)) choicesByLanguage.set(lang, new WeakMap());
         const choices = choicesByLanguage.get(lang);
-        if (!choices.has(key)) choices.set(key, catalogsFor(key).some(entry =>
-            new Set(eligible(entry, lang).map(template => template.label)).size > 1));
-        return choices.get(key);
+        if (!choices.has(location.node)) choices.set(location.node, eligible(catalog, location.node, lang).length > 1);
+        return choices.get(location.node);
     }
     function chainHead(root, target) {
         const path = [];
@@ -90,22 +113,17 @@
         const rootElement = anchor.closest("[data-ps-render-root]");
         const root = roots[rootElement?.dataset.psRenderRoot];
         if (!root) return {rootElement, root};
-        function locate(node) {
-            if (node.occurrence === id) return node;
-            for (const child of node.children) {
-                const found = locate(child);
-                if (found) return found;
-            }
-            return null;
-        }
-        const node = locate(root.tree);
+        const location = locations.get(id);
+        const node = location?.root === root ? location.node : null;
         return {rootElement, root, node,
             previewNode: node && ["lambda", "let", "forall"].includes(node.kind) ? chainHead(root.tree, node) : node};
     }
     function render(root, choices, preview = false, subtree = root.tree) {
         const fragments = Object.create(null);
         const parentMode = preview && subtree !== root.tree ? "text" : root.parentMode;
-        const tex = window.PS4HTMLRenderTree.render(subtree, root.catalog, choices, root.language,
+        const tree = document.documentElement.dataset.displayBetaReduce === "on"
+            ? window.PS4HTMLBetaReduce.reduce(subtree) : subtree;
+        const tex = window.PS4HTMLRenderTree.render(tree, root.catalog, currentSelections(root, choices), root.language,
             parentMode, preview ? null : owner => {
                 const id = `p${++counter}`;
                 fragments[id] = owner;
@@ -161,26 +179,34 @@
                 container.append(text);
             }
         }
-        if (fragments) container.querySelectorAll("[data-ps-expr-fragment]").forEach(node => {
-            if (!fragments[node.dataset.psExprFragment]) node.removeAttribute("data-ps-expr-fragment");
-        });
+        if (fragments) {
+            const visible = new Set();
+            container.querySelectorAll("[data-ps-expr-fragment]").forEach(node => {
+                if (fragments[node.dataset.psExprFragment]) visible.add(node.dataset.psExprFragment);
+                else node.removeAttribute("data-ps-expr-fragment");
+            });
+            for (const id of Object.keys(fragments)) if (!visible.has(id)) delete fragments[id];
+        }
         return container;
     }
-    function update(key) {
-        for (const [rootId, root] of Object.entries(roots)) {
-            if (!root.dependencies.includes(key)) continue;
-            const element = document.querySelector(`[data-ps-render-root="${rootId}"]`);
-            if (!element) continue;
-            try {
-                const output = render(root, selections);
-                const replacement = materialize(output.tex, output.fragments, root.parentMode);
-                window.PS4HTMLExpressionInteractions?.replaceFragments(element, output.fragments);
-                element.replaceChildren(...replacement.childNodes);
-            } catch (error) {
-                console.error("PS4HTML template rendering failed", error);
+    function updateIdentities(root) {
+        const choices = currentSelections(root);
+        const identities = Object.create(null);
+        const pending = [root.tree];
+        while (pending.length) {
+            const node = pending.pop();
+            const occurrence = data.occurrences[node.occurrence];
+            const key = occurrence?.entityKey;
+            const catalog = root.catalog[key];
+            if (catalog && catalog.kind !== "builtin" && node.metadata.headConst &&
+                    ["concept", "relation", "operator"].includes(node.kind)) {
+                const template = window.PS4HTMLRenderTree.selectTemplate(catalog, requested(root, node, choices, key), node, root.language);
+                occurrence.details.templateIdentity = template ? {label: template.label, lang: template.lang} : null;
+                identities[node.occurrence] = occurrence.details.templateIdentity;
             }
+            pending.push(...node.children);
         }
-        document.dispatchEvent(new Event("ps4html:layoutchange"));
+        return identities;
     }
     function refresh(keys) {
         const changed = new Set(keys);
@@ -192,10 +218,25 @@
             try {
                 const output = render(root, selections);
                 const replacement = materialize(output.tex, output.fragments, root.parentMode);
-                window.PS4HTMLExpressionInteractions?.replaceFragments(element, output.fragments);
+                window.PS4HTMLExpressionInteractions?.replaceFragments(element, output.fragments, updateIdentities(root));
                 element.replaceChildren(...replacement.childNodes);
             } catch (error) {
                 console.error("PS4HTML template rendering failed", error);
+            }
+        }
+        document.dispatchEvent(new Event("ps4html:layoutchange"));
+    }
+    function refreshAll() {
+        for (const [rootId, root] of Object.entries(roots)) {
+            const element = document.querySelector(`[data-ps-render-root="${rootId}"]`);
+            if (!element) continue;
+            try {
+                const output = render(root, selections);
+                const replacement = materialize(output.tex, output.fragments, root.parentMode);
+                window.PS4HTMLExpressionInteractions?.replaceFragments(element, output.fragments, updateIdentities(root));
+                element.replaceChildren(...replacement.childNodes);
+            } catch (error) {
+                console.error("PS4HTML beta rendering failed", error);
             }
         }
         document.dispatchEvent(new Event("ps4html:layoutchange"));
@@ -216,22 +257,25 @@
         if (!catalog) return false;
         if (["const", "theorem", "wrapper", "expression"].includes(target.occurrence.kind)) return false;
         if (!literalEligible(key, target.occurrence, root, node)) return false;
-        const choices = [...new Set(eligible(catalog, language())
-            .map(template => template.label))];
+        const choices = eligible(catalog, node, language());
         if (choices.length < 2) return false;
         if (!previewNode) return false;
         close();
         menu = document.createElement("aside");
         menu.className = "display-options-menu ps-template-menu";
         menu.setAttribute("role", "menu");
-        menu.setAttribute("aria-label", "切换模版");
+        menu.setAttribute("aria-label", tr("template.menu", "Choose template"));
+        const state = currentSelections(root);
+        const chosen = requested(root, node, state, key);
+        const selected = catalog.kind === "builtin" ? (choices.includes(chosen) ? chosen : catalog.default)
+            : window.PS4HTMLRenderTree.selectTemplate(catalog, chosen, node, root.language)?.label;
         for (const label of choices) {
             const button = document.createElement("button");
             button.type = "button";
             button.className = "display-option";
             button.setAttribute("role", "menuitemradio");
-            button.setAttribute("aria-checked", label === (selections[key] || catalog.default) ? "true" : "false");
-            button.setAttribute("aria-label", label);
+            button.setAttribute("aria-checked", label === selected ? "true" : "false");
+            button.setAttribute("aria-label", labelName(label));
             button.dataset.templateLabel = label;
             button.classList.toggle("is-enabled", button.getAttribute("aria-checked") === "true");
             const mark = document.createElement("span");
@@ -240,21 +284,29 @@
             button.append(mark);
             const content = document.createElement("span");
             content.className = "ps-template-choice";
+            const name = document.createElement("span");
+            name.className = "ps-template-label";
+            name.textContent = labelName(label);
+            content.append(name);
             try {
                 const state = {...selections, [key]: label};
                 const output = render(root, state, true, previewNode);
                 content.append(materialize(output.tex, null, output.parentMode));
             } catch (error) {
                 button.disabled = true;
-                button.title = `此处不支持该模版：${error.message}`;
+                button.title = tr("template.unavailable", "This template cannot be displayed here");
             }
             button.append(content);
             button.addEventListener("click", event => {
                 event.stopPropagation();
-                if (label === catalog.default) delete selections[key];
+                if (label === catalog.default && !Object.values(roots).some(root =>
+                    (root.initialSelections?.[key] && root.initialSelections[key] !== label) ||
+                    (data.occurrences[visible(root.tree).occurrence]?.entityKey === key &&
+                        visible(root.tree).metadata.requestedTemplate && visible(root.tree).metadata.requestedTemplate !== label)))
+                    delete selections[key];
                 else selections[key] = label;
                 close();
-                update(key);
+                refresh([key]);
                 navigation?.save(selections);
             });
             menu.append(button);
@@ -338,7 +390,16 @@
         if (removed.length) navigation?.save(selections);
         close();
     });
-    document.addEventListener("DOMContentLoaded", () => restore(true));
-    window.addEventListener("popstate", () => { cancelPress(); restore(); close(); });
+    let betaEnabled = false;
+    function syncBeta() {
+        const enabled = document.documentElement.dataset.displayBetaReduce === "on";
+        if (enabled === betaEnabled) return;
+        betaEnabled = enabled;
+        close();
+        refreshAll();
+    }
+    document.addEventListener("ps4html:displaychange", syncBeta);
+    document.addEventListener("DOMContentLoaded", () => { restore(true); setTimeout(syncBeta, 0); });
+    window.addEventListener("popstate", () => { cancelPress(); restore(); close(); setTimeout(syncBeta, 0); });
     window.PS4HTMLTemplateSwitcher = {selections, close, hasChoices};
 })();

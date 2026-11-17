@@ -1,15 +1,12 @@
 import ProofScript.Script.Contract
 import ProofScript.Utils.Json
 import ProofScript.Utils.JsonPath
-import ProofScript.Info.State
 import ProofScript.Core.ModuleExtensionEntries
 
 namespace ProofScript
 
 open Lean
 open scoped InfoJson
-
-def manifestSchemaVersion : String := "10"
 
 structure StepBinding where
   path : JsonPath
@@ -23,54 +20,28 @@ def StepBinding.toJson (binding : StepBinding) := json% {
 
 instance : ToJson StepBinding := ⟨StepBinding.toJson⟩
 
-/-- Configuration use is independent of citation collection. Optional entries retain backend fallbacks. -/
-structure RenderDependency where
-  kind : String
-  target : Name ⊕ String
-  required : Bool := false
-  deriving Inhabited, Repr, BEq
-
-instance : ToJson RenderDependency where
-  toJson dependency :=
-    let identity : InfoTarget := { kind := dependency.kind, target := dependency.target }
-    (toJson identity).setObjVal! "required" (toJson dependency.required)
-
-instance : FromJson RenderDependency where
-  fromJson? value := do
-    let identity : InfoTarget ← fromJson? value
-    let required ← match value.getObjVal? "required" with
-      | .ok field => fromJson? field
-      | .error _ => pure false
-    return { kind := identity.kind, target := identity.target, required }
-
 inductive ArtifactKind where
   | page | proof
-  deriving Inhabited, Repr, BEq, ToJson
+  deriving BEq, ToJson
 
 structure ArtifactKey where
   owner : Name
   kind : ArtifactKind
   name : Name
-  deriving Inhabited, Repr, BEq, ToJson
+  deriving BEq, ToJson
 
 def ArtifactKey.id (key : ArtifactKey) : String := (toJson key).sha256
 
 /-- No capture actions, slots, goal handles or proof contents are persisted here. -/
 structure Artifact where
-  schemaVersion : String := manifestSchemaVersion
   key : ArtifactKey
   path : String
   declaration : Option Name := none
-  dependencies : Array RenderDependency := #[]
+  dependencies : Array Name := #[]
   bindings : Array StepBinding := #[]
   contentDigest : String
-  deriving Inhabited
-
-def Artifact.query (artifact : Artifact) : Query :=
-  { moduleName := artifact.key.owner }
 
 def Artifact.fingerprint (artifact : Artifact) : String := Json.sha256 <| json% {
-  schemaVersion: $(artifact.schemaVersion),
   id: $(artifact.key.id), path: $(artifact.path), content: $(artifact.contentDigest),
   declaration: $(artifact.declaration),
   dependencies: $(artifact.dependencies), bindings: $(artifact.bindings) }
@@ -84,7 +55,6 @@ initialize artifactExt : SimplePersistentEnvExtension Artifact Unit ←
 structure ProofDocument where
   key : ArtifactKey
   value : Json
-  deriving Inhabited
 
 initialize proofDocumentExt : SimplePersistentEnvExtension ProofDocument Unit ←
   registerSimplePersistentEnvExtension {
@@ -120,7 +90,6 @@ def moduleArtifacts (env : Environment) (owner : Name) : Array Artifact := Id.ru
 
 /-- Only recorded proof files are persisted. Page artifacts are built from components at export. -/
 def registerProofArtifact (env : Environment) (artifact : Artifact) : Except String Environment := do
-  unless artifact.schemaVersion == manifestSchemaVersion do throw "unsupported artifact manifest version"
   unless artifact.key.kind == .proof do throw "page artifacts are generated from persisted components"
   unless artifact.key.owner == env.mainModule do throw "artifacts must be committed by their defining module"
   let existing := moduleArtifacts env artifact.key.owner

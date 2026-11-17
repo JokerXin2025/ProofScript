@@ -1,12 +1,12 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «assumption»
 "assumption" => `(tactic| assumption)
 
 script_info «assumption» {
-  template := [{
+  templates := [{
     lang := zh, tag := "已知",
     content := "目标已经作为假设给出"
   }, {

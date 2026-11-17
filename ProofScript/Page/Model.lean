@@ -24,6 +24,6 @@ structure Page where
   module : Name
   source : String
   components : Array Component
-deriving Inhabited, ToJson
+deriving ToJson
 
 end ProofScript

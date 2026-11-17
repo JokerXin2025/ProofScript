@@ -6,12 +6,9 @@ namespace ProofScript
 
 open Lean
 
-/-- Reserved recording identity for a script invocation whose data could not be exported. -/
-def unrecordedRuleId : Name := `ProofScript.unrecorded
-
 inductive ScriptKind where
   | tactic | strategy | metadata
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited, BEq
 
 instance : ToJson ScriptKind where
   toJson
@@ -24,13 +21,11 @@ structure ScriptRecordingConfig where
   kind : ScriptKind := .tactic
   /-- The named goal which continues the parent recording, when present. -/
   continuation : Option Lean.Name := none
-  deriving Inhabited, Repr, BEq
 
 /-- Parameter timing for one explicitly generated automatic recorder. -/
 structure AutoRecordingConfig where
   intro : Array Lean.Name := #[]
   clear : Array Lean.Name := #[]
-  deriving Inhabited, Repr, BEq
 
 def ScriptRecordingConfig.isStrategy (config : ScriptRecordingConfig) : Bool :=
   config.kind == .strategy
@@ -42,7 +37,7 @@ def ScriptRecordingConfig.isMetadata (config : ScriptRecordingConfig) : Bool :=
 structure ScriptRecorderVersion where
   kind : Name
   label : Option String := none
-  deriving Inhabited, Repr, BEq
+  deriving Inhabited
 
 structure ScriptTacticRegistration where
   ruleId : Lean.Name
@@ -54,7 +49,6 @@ structure ScriptTacticRegistration where
   config : ScriptRecordingConfig := {}
   /-- The original declaration arguments, the sole source for recorder bindings. -/
   arguments : Array (TSyntax ``Lean.Parser.Command.macroArg) := #[]
-  deriving Inhabited, Repr, BEq
 
 /-- Recorder bodies are generated under a deterministic name from their parser kind. -/
 def recorderBodyName (kind : Name) : Name := kind ++ `body
@@ -64,7 +58,6 @@ def recorderBodyName (kind : Name) : Name := kind ++ `body
 inductive ScriptRegistrationEntry where
   | register (registration : ScriptTacticRegistration)
   | addRecorder (ruleId : Name) (recorder : ScriptRecorderVersion)
-  deriving Inhabited
 
 initialize scriptRegistrationExt : SimplePersistentEnvExtension ScriptRegistrationEntry
     (Array ScriptRegistrationEntry) ← registerSimplePersistentEnvExtension {

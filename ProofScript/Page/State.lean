@@ -26,7 +26,6 @@ def modulePageComponents (env : Environment) (owner : Name) : Array Component :=
 structure PageState where
   components : Array Component := #[]
   labels : Std.HashSet (ReferenceKind × String) := {}
-  deriving Inhabited
 
 def getPageState (env : Environment) : PageState := Id.run do
   let components := modulePageComponents env env.mainModule
@@ -37,7 +36,7 @@ def getPageState (env : Environment) : PageState := Id.run do
 
 /-- Commit one component and all its Info requests as one environment update. -/
 def addComponent (env : Environment) (component : Component)
-    (requests : Array InfoRequest := #[])
+    (requests : InfoRequests := {})
     (labels : Array (ReferenceKind × String) := #[]) : Except String Environment := do
   let state := getPageState env
   let mut seen := state.labels
@@ -46,8 +45,7 @@ def addComponent (env : Environment) (component : Component)
       throw s!"duplicate {repr kind} label '{label}'"
     seen := seen.insert (kind, label)
   let mut updated := env
-  let componentIndex := state.components.size
-  updated ← (requestComponentInfos updated requests componentIndex).mapError (·.render)
+  updated ← requestComponentInfos updated requests
   updated := pageComponentExt.addEntry updated component
   return pageComponentLabelsExt.addEntry updated labels
 

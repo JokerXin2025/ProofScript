@@ -1,5 +1,5 @@
 import ProofScript.Info.Freeze
-import ProofScript.Info.TheoremDependencies
+import ProofScript.Output.TheoremDependencies
 import ProofScript.Page.State
 import ProofScript.Output.Path
 import ProofScript.Page.Component.Computation
@@ -9,13 +9,10 @@ namespace ProofScript
 open Lean System
 open scoped InfoJson
 
-/-- The module protocol is independent of the old snapshot/bundle protocol. -/
-def moduleExportVersion : String := "14.0.0"
-
-private def checked [Inhabited α] (result : Except Diagnostic α) : IO α :=
+private def checked (result : Except String α) : IO α :=
   match result with
   | .ok value => pure value
-  | .error error => throw <| IO.userError error.render
+  | .error error => throw <| IO.userError error
 
 private def relativePath (path : FilePath) : IO String := do
   let name := path.toString
@@ -30,13 +27,8 @@ private def relativePath (path : FilePath) : IO String := do
 def moduleFile (kind : String) (owner : Name) : String :=
   s!"{kind}/{modulePath owner}.json"
 
-private def recordJson (record : FrozenInfo) : Json := json% {
-  identity: $(record.identity), schemaId: $(record.schemaId),
-  schemaVersion: $(record.schemaVersion), value: $(record.value) }
-
 private def document (owner : Name) (source : String)
     (components : Array Component) : Json := json% {
-  schemaVersion: $moduleExportVersion,
   module: $owner,
   source: $source,
   components: $(components.map toJson) }
@@ -80,7 +72,6 @@ structure PreparedModule where
   figures : Array (String × FilePath) := #[]
   pending : Array (String × Json) := #[]
   hasComponents : Bool := false
-  deriving Inhabited
 
 /-- Freeze the owner's final view; no page file is needed for configuration-only modules. -/
 def prepareModule (env : Environment) (registry : ProjectRegistry) (owner : Name)
@@ -88,26 +79,18 @@ def prepareModule (env : Environment) (registry : ProjectRegistry) (owner : Name
   let components := modulePageComponents env owner
   let mut prepared : PreparedModule := { hasComponents := !components.isEmpty }
   if components.isEmpty then return prepared
-  let owners := fun name => registry.projectFor? name == some registry.selected
-  let requests := moduleInfoRequests env owner |>.push
-    (moduleProjectRequest owner registry.selected.projectId)
-  let frozen ← checked <| freezeRequestedInfo env { moduleName := owner } requests
-    (some owners) (some registry.selected.projectId)
-  let records := frozen.map recordJson
+  let frozen ← checked <| freezeRequestedInfo env owner
+    (moduleInfoRequests env owner)
   let contracts := (moduleArtifacts env owner).flatMap fun artifact =>
     artifact.bindings.map (·.contract)
   let contracts := contracts.foldl (fun seen contract =>
     if seen.any (·.id == contract.id) then seen else seen.push contract) (#[] : Array RecordingContract)
   for contract in contracts do
-    unless contract.contractVersion == recordingContractVersion &&
-        contract.recordingVersion == recordingProtocolVersion do
-      throw <| IO.userError s!"unsupported recording contract for {contract.ruleId}"
-    let some info := frozen.find? (·.identity == ⟨"script", .inl contract.ruleId⟩)
+    let some (_, value) := frozen.scripts.find? (·.1 == contract.ruleId)
       | throw <| IO.userError s!"missing requested script Info for {contract.ruleId}"
-    let value ← checked <| (inferInstance : InfoSchema ScriptInfo).decode info.value
     let _ ← checked <| validateScriptContract contract.kind value
+  let records := frozen.toRecords
   let info := json% {
-    schemaVersion: $moduleExportVersion,
     module: $owner,
     library: $(registry.selected),
     records: $records,
@@ -172,10 +155,9 @@ def prepareModule (env : Environment) (registry : ProjectRegistry) (owner : Name
   for component in components do
     let mut value := component.value
     if let some declaration := component.declaration then
-      let facts ← checked <| freezeTheoremFacts env registry { moduleName := owner } declaration
-      let some theoremInfo := frozen.find? (·.identity == ⟨"theorem", .inl declaration⟩)
-        | throw <| IO.userError s!"missing requested theorem Info for {declaration}"
-      let title := (theoremInfo.value.getObjValAs? String "name").toOption.getD ""
+      let facts ← checked <| freezeTheoremFacts env registry owner declaration
+      let some _ := frozen.decls.find? (·.1 == declaration)
+        | throw <| IO.userError s!"missing requested declaration Info for {declaration}"
       let proof ← match value.getObjVal? "proof" with
         | .ok proof => pure proof
         | .error error => throw <| IO.userError error
@@ -191,20 +173,19 @@ def prepareModule (env : Environment) (registry : ProjectRegistry) (owner : Name
           | .error _ => proof
         | .error _ => proof
       value := json% {
-        declaration: $(facts.value.declaration), projectId: $(facts.value.projectId),
-        name: $(if title.isEmpty then declaration.getString! else title),
-        proofRefs: $(facts.value.proofRefs),
-        proofDependencies: $(facts.value.proofDependencies),
+        declaration: $(facts.declaration), projectId: $(facts.projectId),
+        proofRefs: $(facts.proofRefs),
+        proofDependencies: $(facts.proofDependencies),
         proof: $proof, sorryAx: $sorryAx }
     if component.kind == "references" then
       let mut references := #[]
       for reference in component.references do
-        let some theoremInfo := frozen.find? (·.identity == ⟨"theorem", .inl reference.name⟩)
-          | throw <| IO.userError s!"missing requested reference Info for {reference.name}"
+        let some (_, declarationValue) := frozen.decls.find? (·.1 == reference.name)
+          | throw <| IO.userError s!"missing requested declaration Info for {reference.name}"
         let projectId := (registry.declarationProject? env reference.name).map ProjectKey.projectId
         references := references.push <| json% {
           name: $(reference.name), isDependency: $(reference.isDependency),
-          info: $(theoremInfo.value), projectId: $projectId }
+          info: $declarationValue, projectId: $projectId }
       value := .arr references
     if component.kind == "figure" then
       if let .ok path := value.getObjValAs? String "path" then
@@ -220,8 +201,7 @@ def prepareModule (env : Environment) (registry : ProjectRegistry) (owner : Name
 /-- Serialize an owner's staged inputs without writing any public output. -/
 def moduleDescriptor (env : Environment) (registry : ProjectRegistry) (owner : Name)
     (source : String) : IO Json := do
-  -- Configuration-only modules publish no Info document and must not force
-  -- partial or conflicting upstream project configuration to materialize.
+  -- Configuration-only modules publish no Info document.
   let prepared ← prepareModule env registry owner source
   let files := prepared.files.map fun (path, value) => json% { path: $path, json: $value }
   let files := files ++ prepared.texts.map fun (path, value) => json% { path: $path, text: $value }
@@ -230,7 +210,6 @@ def moduleDescriptor (env : Environment) (registry : ProjectRegistry) (owner : N
     path: $path, source: $(source.toString) }
   let manifest := moduleFile "manifests/modules" owner
   return json% {
-    schemaVersion: $moduleExportVersion,
     module: $owner,
     package: $(registry.selected.package),
     library: $(registry.selected.library),

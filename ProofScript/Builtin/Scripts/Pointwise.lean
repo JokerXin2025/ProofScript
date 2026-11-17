@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 import Mathlib.Algebra.Torsor.Basic
 import Mathlib.Order.Lattice
 import Mathlib.Data.Nat.Cast.Basic
@@ -102,7 +102,7 @@ script_macro «pointwise»
 script_recorder «pointwise» auto (clear := [loc])
 
 script_info «pointwise» {
-  template := [{
+  templates := [{
     lang := zh, tag := "逐点化",
     content := ""
   }, {

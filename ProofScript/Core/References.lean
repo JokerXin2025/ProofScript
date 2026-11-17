@@ -18,7 +18,7 @@ structure RefInfo where
   /-- Whether this reference is a theorem dependency. Automatic proof dependencies
   take precedence over manual citations. -/
   isDependency : Bool := true
-deriving BEq, ToJson
+deriving ToJson
 
 namespace RefInfo
 

@@ -7,22 +7,17 @@ from PS4HTML.engine import render_step, render_strategy, render_details
 from PS4HTML.dashboard import validate_dashboard, render_dashboard
 from PS4HTML.Rules.calc import rule_calc
 from PS4HTML.Rules.infer import rule_infer
-from PS4HTML.Rules.diagram import rule_svg, rule_latex
+from PS4HTML.Rules.media import render_svg
 from PS4HTML.Rules.remark import rule_remark
 from PS4HTML.Rules.admit import rule_admit
-from PS4HTML.Rules.embed import rule_embed
-from PS4HTML.Rules.strategy import rule_strategy
-from PS4HTML.Rules.unrecorded import rule_unrecorded
-from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD, branches, rule_id, slot_value
+from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, branches, rule_id, slot_value
 from PS4HTML.schema import EXPRESSION_ID, Expression
+from Lean2TeX.model import DisplayNode
 
 
 SPECIAL_RENDERERS = {
-    "calc": rule_calc, "infer": rule_infer, "media": rule_latex,
-    "diagram": rule_svg, "remark": rule_remark, "admit": rule_admit,
-    "embed": rule_embed,
-    "strategy": rule_strategy,
-    "unrecorded": rule_unrecorded,
+    "calc": rule_calc, "infer": rule_infer, "svg": render_svg,
+    "remark": rule_remark, "admit": rule_admit,
 }
 COLOR = re.compile(r"#[0-9a-fA-F]{3,8}\Z")
 
@@ -43,13 +38,27 @@ def validate_template(entries, kind):
             raise ValueError("Invalid or duplicate template language")
         languages.append(language)
         strategy = kind == "strategy"
-        allowed = {"lang", "tag", "inline", "introducer", "cases"} if strategy else {"lang", "tag", "content"}
-        required = {"lang", "tag", "cases"} if strategy else {"lang", "tag", "content"}
+        dynamic = strategy and "case" in entry
+        allowed = ({"lang", "tag", "introducer", "case"} if dynamic else
+                   {"lang", "tag", "inline", "introducer", "cases"} if strategy else {"lang", "tag", "content"})
+        required = ({"lang", "tag", "case"} if dynamic else
+                    {"lang", "tag", "cases"} if strategy else {"lang", "tag", "content"})
         if set(entry) - allowed or not required <= set(entry) or not isinstance(entry["tag"], str):
             raise ValueError("Invalid template fields")
         if not strategy:
             if not isinstance(entry["content"], str):
                 raise ValueError("Invalid template content")
+            continue
+        if dynamic:
+            case = entry["case"]
+            if not isinstance(case, dict) or not {"tag", "title"} <= set(case) or \
+                    set(case) - {"tag", "title", "introducer"} or \
+                    not isinstance(case["tag"], str) or not isinstance(case["title"], str):
+                raise ValueError("Invalid dynamic strategy case")
+            if "introducer" in entry:
+                validate_introducer(entry["introducer"])
+            if "introducer" in case:
+                validate_introducer(case["introducer"])
             continue
         if "inline" in entry and type(entry["inline"]) is not bool:
             raise ValueError("Invalid inline flag")
@@ -80,11 +89,8 @@ def validate_introducer(value):
 SLOT = re.compile(r"\$\{([^}]+)\}")
 RENDERER_FIELDS = {
     "calc": ("init", "chain"), "infer": ("init", "chain"),
-    "media": ("metadata", "svg", "source"), "diagram": ("code",),
+    "svg": ("metadata", "code"),
     "remark": ("text",), "admit": ("reason",),
-    "embed": ("theorem", "args", "argKinds", "proof", "h", "type"),
-    "strategy": (BRANCHES_FIELD,),
-    "unrecorded": ("name",),
 }
 
 
@@ -105,7 +111,7 @@ def validate_record(rule, step, *, resolver=None, path=None):
             resolver.require_root(owner + suffix, value)
 
     fields = rule["fields"]
-    if rule["kind"] == "tactic" and fields.get("renderer", "none") == "none":
+    if rule["kind"] == "tactic" and fields.get("renderer", "default") == "default":
         validate_dashboard(step, fields.get("board", []), resolver, path)
     if fields.get("display") is False:
         if rule["kind"] == "strategy":
@@ -118,7 +124,7 @@ def validate_record(rule, step, *, resolver=None, path=None):
             if len(names) != len(set(names)):
                 raise ValueError("Duplicate recorded strategy branch")
         return
-    if fields.get("renderer", "none") != "none":
+    if fields.get("renderer", "default") != "default":
         renderer = fields["renderer"]
         for key in RENDERER_FIELDS[renderer]:
             if key not in step:
@@ -134,40 +140,46 @@ def validate_record(rule, step, *, resolver=None, path=None):
                     if key == "proof" and link[key] == {"kind": "hole"}:
                         continue
                     expression(link[key], "chain", index, key)
-        elif renderer == "embed":
-            if not isinstance(step["theorem"], str) or not isinstance(step["args"], list) or \
-                    not isinstance(step["argKinds"], list) or len(step["args"]) != len(step["argKinds"]) or \
-                    any(kind not in ("data", "proof") for kind in step["argKinds"]):
-                raise ValueError("Invalid recorded embed arguments")
-            value = step["proof"]
-            if not isinstance(value, (list, dict)) or (isinstance(value, dict) and "$resource" in value):
-                raise ValueError("Embed proof must be recorded inline or as an expression")
-            expression(step["type"], "type")
-            for index, arg in enumerate(step["args"]):
-                expression(arg, "args", index)
-            if step["h"] is not None:
-                expression(step["h"], "h")
-            if not isinstance(value, list):
-                expression(value, "proof")
-        elif renderer == "media":
-            if not isinstance(step["metadata"], dict) or not isinstance(step["source"], str) or \
-                    not isinstance(step["svg"], (dict, str)):
-                raise ValueError("Invalid recorded media fields")
-        elif renderer != "strategy" and not isinstance(step[RENDERER_FIELDS[renderer][0]], str):
+        elif renderer == "svg":
+            metadata = step["metadata"]
+            source = step.get("source")
+            if not isinstance(metadata, dict) or not isinstance(metadata.get("title"), str) or \
+                    (metadata.get("label") is not None and not isinstance(metadata["label"], str)) or \
+                    not isinstance(metadata.get("extra", []), list) or \
+                    not isinstance(step["code"], str) or \
+                    ("source" in step and (not isinstance(source, dict) or
+                      set(source) != {"lang", "code"} or
+                      not isinstance(source["lang"], str) or not isinstance(source["code"], str))):
+                raise ValueError("Invalid recorded svg fields")
+        elif not isinstance(step[RENDERER_FIELDS[renderer][0]], str):
             raise ValueError(f"Invalid recorded {renderer} text field")
     else:
         for entry in fields["template"]:
-            texts = (
-                [entry["tag"], entry["content"]] if "content" in entry else
-                [entry["tag"]] + ([entry["introducer"]["tag"], entry["introducer"]["content"]]
-                                   if "introducer" in entry else []) +
-                [text for case in entry.get("cases", []) for text in
-                 [case["tag"], case["title"]] +
-                 ([case["introducer"]["tag"], case["introducer"]["content"]]
-                  if "introducer" in case else [])])
-            for text in texts:
+            if "case" in entry:
+                top_texts = [entry["tag"]]
+                branch_texts = [entry["case"]["tag"], entry["case"]["title"]]
+                if "introducer" in entry:
+                    top_texts.extend([entry["introducer"]["tag"], entry["introducer"]["content"]])
+                if "introducer" in entry["case"]:
+                    branch_texts.extend([entry["case"]["introducer"]["tag"],
+                                         entry["case"]["introducer"]["content"]])
+            else:
+                top_texts = (
+                    [entry["tag"], entry["content"]] if "content" in entry else
+                    [entry["tag"]] + ([entry["introducer"]["tag"], entry["introducer"]["content"]]
+                                      if "introducer" in entry else []) +
+                    [text for case in entry.get("cases", []) for text in
+                     [case["tag"], case["title"]] +
+                     ([case["introducer"]["tag"], case["introducer"]["content"]]
+                      if "introducer" in case else [])])
+                branch_texts = []
+            for text in top_texts:
                 for name in SLOT.findall(text):
                     slot_value(step, name)
+            for text in branch_texts:
+                for name in SLOT.findall(text):
+                    if name not in ("index", "index'"):
+                        slot_value(step, name)
     if rule["kind"] == "strategy":
         branches = step.get(BRANCHES_FIELD)
         if not isinstance(branches, list) or not branches or any(not isinstance(branch, dict) or
@@ -176,15 +188,17 @@ def validate_record(rule, step, *, resolver=None, path=None):
         names = [branch["name"] for branch in branches]
         if len(names) != len(set(names)):
             raise ValueError("Duplicate recorded strategy branch")
-        if fields.get("renderer", "none") == "none":
+        if fields.get("renderer", "default") == "default":
             for entry in fields["template"]:
+                if "case" in entry:
+                    continue
                 expected = {case["name"] for case in entry["cases"]}
                 if set(names) != expected:
                     raise ValueError(f"Strategy branches do not match template {entry['lang']!r}")
 
 
 def validate_rules(document, module, imports=None):
-    if not isinstance(document, dict) or document.get("schemaVersion") != PROOF_SCHEMA_VERSION or document.get("module") != module:
+    if not isinstance(document, dict) or document.get("module") != module:
         raise ValueError(f"Invalid effective rendering rules for {module}")
     if not isinstance(document.get("imports"), list) or any(not isinstance(name, str) for name in document["imports"]):
         raise ValueError(f"Invalid effective rule imports for {module}")
@@ -218,9 +232,9 @@ def validate_rules(document, module, imports=None):
                 for v in fields["color"])):
             raise ValueError(f"Invalid color for {rule_id}")
         if "renderer" in fields:
-            if fields["renderer"] != "none" and fields["renderer"] not in SPECIAL_RENDERERS:
+            if fields["renderer"] != "default" and fields["renderer"] not in SPECIAL_RENDERERS:
                 raise ValueError(f"Unknown renderer {fields['renderer']!r} for {rule_id}")
-        if fields.get("renderer", "none") == "none" and "template" not in fields:
+        if fields.get("renderer", "default") == "default" and "template" not in fields:
             raise ValueError(f"Incomplete template for {rule_id}")
         if "template" in fields:
             validate_template(fields["template"], entry["kind"])
@@ -251,14 +265,20 @@ def _slot(value, proof):
     raise ValueError("Unsupported recorded template value")
 
 
-def _template(text, step, proof):
+def _template(text, step, proof, branch_index=None):
     result = []
     last = 0
     for match in SLOT.finditer(text):
         result.append(html.escape(text[last:match.start()]))
         key = match.group(1)
-        value = slot_value(step, key)
-        result.append(_slot(value, proof))
+        if branch_index is not None and key in ("index", "index'"):
+            number = branch_index + (key == "index'")
+            node = DisplayNode(str(number), "literal", metadata={
+                "literalKind": "literal.nat", "value": str(number), "originalExprKind": "lit"}, generated=True)
+            result.append(proof.renderer.render_display(node, language=proof.language))
+            proof.diagnostics.extend(proof.renderer.diagnostics_dict())
+        else:
+            result.append(_slot(slot_value(step, key), proof))
         last = match.end()
     result.append(html.escape(text[last:]))
     return "".join(result)
@@ -277,11 +297,11 @@ def _rule_style(fields):
     return ' style="' + html.escape("; ".join(f"{key}: {value}" for key, value in values.items()), quote=True) + '"'
 
 
-def _introducer(entry, step, proof):
+def _introducer(entry, step, proof, branch_index=None):
     if not entry or not entry["tag"] and not entry["content"]:
         return ""
-    tag = _template(entry["tag"], step, proof)
-    content = _template(entry["content"], step, proof)
+    tag = _template(entry["tag"], step, proof, branch_index)
+    content = _template(entry["content"], step, proof, branch_index)
     return render_step(tag, content, sort="introducer")
 
 
@@ -291,18 +311,9 @@ def render_rule(rule, step, proof, path, index):
     if fields.get("display") is False:
         return ""
     special = fields.get("renderer")
-    if special is not None and special != "none":
-        if special in ("embed", "strategy", "unrecorded"):
-            handler = SPECIAL_RENDERERS[special]
-            value = proof.resolve(step, path=proof._structural_step) if special == "embed" else step
-            if special == "embed" and isinstance(step.get("proof"), list):
-                value["proof"] = step["proof"]
-            rendered = handler(value, proof, language=proof.language,
-                                  path=path, index=index,
-                                  **({"style": _rule_style(fields)} if special == "strategy" else {}))
-        else:
-            rendered = SPECIAL_RENDERERS[special](proof.resolve(step, path=proof._structural_step), proof, language=proof.language)
-        if special != "strategy" and "color" in fields and any(fields["color"]):
+    if special is not None and special != "default":
+        rendered = SPECIAL_RENDERERS[special](proof.resolve(step, path=proof._structural_step), proof, language=proof.language)
+        if "color" in fields and any(fields["color"]):
             return f'<div class="proof-rule-wrapper"{_rule_style(fields)}>{rendered}</div>'
         return rendered
     entry = _language(fields["template"], proof.language)
@@ -312,8 +323,17 @@ def render_rule(rule, step, proof, path, index):
         content = _template(entry["content"], step, proof)
         dashboard = render_dashboard(step, fields.get("board", []), proof) if rule["kind"] == "tactic" else ""
         return render_step(title, content, style=style, dashboard=dashboard)
-    branches = {branch["name"]: (index, branch["proof"]) for index, branch in enumerate(step[BRANCHES_FIELD])}
     children = [_introducer(entry.get("introducer"), step, proof)]
+    if "case" in entry:
+        case = entry["case"]
+        for branch_index, branch in enumerate(step[BRANCHES_FIELD]):
+            content = _introducer(case.get("introducer"), step, proof, branch_index)
+            content += proof.render_branch(branch["proof"], branch_index,
+                                           path + (f"{index}:{branch['name']}",))
+            children.append(render_details(True, _template(case["tag"], step, proof, branch_index),
+                                           _template(case["title"], step, proof, branch_index), content))
+        return render_strategy("", title, "\n".join(child for child in children if child), style=style)
+    branches = {branch["name"]: (index, branch["proof"]) for index, branch in enumerate(step[BRANCHES_FIELD])}
     for case in entry["cases"]:
         name = case["name"]
         case_content = _introducer(case.get("introducer"), step, proof)

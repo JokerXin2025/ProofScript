@@ -1,11 +1,9 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proofscript.local/schema/computation-bundle-0.0.0.json",
+  "$id": "https://proofscript.local/schema/computation-bundle.json",
   "title": "ProofScript Computation Bundle",
   "type": "object",
   "required": [
-    "schemaVersion",
-    "abi",
     "bundleId",
     "module",
     "entries",
@@ -14,8 +12,6 @@
     "artifacts"
   ],
   "properties": {
-    "schemaVersion": { "const": "0.0.0" },
-    "abi": { "const": "proofscript-json-v1" },
     "bundleId": { "type": "string", "minLength": 1 },
     "module": { "type": "string", "minLength": 1 },
     "entries": {

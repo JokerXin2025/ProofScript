@@ -50,31 +50,59 @@ class RenderDiagnostic:
 
 
 @dataclass(frozen=True)
+class TemplateInstruction:
+    """An insertion compiled by Lean, with its already resolved output mode."""
+
+    kind: str
+    content: str = ""
+    index: int = 0
+    depth: int = 0
+    mode: str = "formula"
+    max_precedence: bool = False
+    instructions: tuple["TemplateInstruction", ...] = ()
+
+    def as_dict(self) -> dict:
+        if self.kind == "literal":
+            return {"kind": self.kind, "content": self.content}
+        if self.kind == "mode_switch":
+            return {"kind": self.kind, "mode": self.mode,
+                    "instructions": [item.as_dict() for item in self.instructions]}
+        result = {"kind": self.kind, "index": self.index, "mode": self.mode,
+                  "max_precedence": self.max_precedence}
+        if self.kind in ("binder", "body"):
+            result["depth"] = self.depth
+        return result
+
+
+@dataclass(frozen=True)
 class DisplayTemplate:
-    """One language-aware display template."""
+    """A frozen template; local selectors map to stable native argument slots."""
 
     label: str
     mode: str
     content: str
-    fixity: str = "custom"
-    precedence: int = 100
-    associativity: str = "none"
-    binders: dict[int, int] = field(default_factory=dict)
-    isolated_arguments: frozenset[int] = frozenset()
-    language: str | None = None
+    language: str | None
+    precedence: int
+    auto_arity: bool
+    argument_indices: tuple[int, ...]
+    instructions: tuple[TemplateInstruction, ...]
+    binder_requirements: dict[int, int]
+
+    @property
+    def identity(self) -> tuple[str, str | None]:
+        return self.label, self.language
+
+    @property
+    def effective_associativity(self) -> str:
+        return {"$infixl": "left", "$infixr": "right"}.get(self.label, "none")
 
 @dataclass(frozen=True)
 class Macro:
     name: str
     kind: str
-    arguments: tuple[int, ...]
+    arity: int
     templates: tuple[DisplayTemplate, ...]
-    auto_arity: bool = True
-    symbol: str | None = None
-    default_label: str = "formula"
-    fixity: str = "atom"
-    precedence: int = 100
-    associativity: str = "none"
+    default_label: str | None
 
 @dataclass(frozen=True)
 class RenderTarget:
@@ -87,11 +115,8 @@ class RenderTarget:
         return json.dumps([self.kind, self.key], ensure_ascii=False)
 
 
-# Keep the Python construction API stable while migrating persisted definitions.
-MacroStyle = DisplayTemplate
-
-
 @dataclass(frozen=True)
 class Unwrap:
     name: str
     argument: int
+    arity: int

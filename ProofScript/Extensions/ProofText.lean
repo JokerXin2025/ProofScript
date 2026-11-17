@@ -15,19 +15,19 @@ mutual
   | unorderedList (items : Array ListItem)
   | quote (content : Array Block)
   | displayMath (latex : String)
-  deriving Inhabited, Repr, ToJson, FromJson
+  deriving ToJson
 
   private structure ListItem where
     ordinal : Option Nat := none
     content : Array Block
-  deriving Inhabited, Repr, ToJson, FromJson
+  deriving ToJson
 
 end
 
 private structure TextComponent where
   source : String
   blocks : Array Block
-deriving Inhabited, Repr, ToJson, FromJson
+deriving ToJson
 
 private def stripIndent (source : String) : String :=
   let lines := source.splitOn "\n"

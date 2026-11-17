@@ -77,6 +77,7 @@
     min-width: 24px;
     margin: 0 6px;
     text-align: center;
+    white-space: pre;
 }
 .proof-calc-lhs, .proof-calc-rhs {
     display: inline-block;

@@ -13,7 +13,7 @@ private structure TitleComponent where
   level : Nat
   label : Option String := none
   content : Array ProofText.Inline
-deriving Inhabited, Repr, ToJson, FromJson
+deriving ToJson
 
 private def addTitleComponent (level : Nat) (source : TSyntax `str)
     (labelStx : Option (TSyntax ``titleLabel)) : CommandElabM Unit := do

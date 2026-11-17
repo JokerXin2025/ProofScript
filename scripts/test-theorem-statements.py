@@ -37,11 +37,11 @@ def main():
     values = {}
     for record in info["records"]:
         identity = record["identity"]
-        if identity["kind"] not in ("definition", "theorem"):
+        if identity["kind"] != "decl":
             continue
         fields = {key: value for key, value in record["value"].items() if key != "extra"}
-        if identity["kind"] == "definition" and fields["alias_info"]["target"] is not None:
-            fields["alias_info"] = {"target": name_text(fields["alias_info"]["target"])}
+        if fields["alias_target"] is not None and not isinstance(fields["alias_target"], str):
+            fields["alias_target"] = name_text(fields["alias_target"])
         values[(identity["kind"], name_text(identity["target"]))] = fields
     configuration = interpret(values)
     recorded = native = 0

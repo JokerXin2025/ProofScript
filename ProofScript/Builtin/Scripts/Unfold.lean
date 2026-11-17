@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (location)
 
@@ -12,7 +12,7 @@ script_macro «unfold»
 script_recorder «unfold» auto (clear := [defs, loc])
 
 script_info «unfold» {
-  template := [{
+  templates := [{
     lang := zh, tag := "展开定义",
     content := ""
   }, {

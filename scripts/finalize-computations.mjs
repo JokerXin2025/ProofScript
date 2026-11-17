@@ -121,8 +121,6 @@ for (const { path, value } of buildManifests) {
   }
 
   const published = {
-    schemaVersion: "0.0.0",
-    abi: value.abi,
     bundleId: value.bundleId,
     bundleHash,
     entries: value.entries,
@@ -160,11 +158,9 @@ for (const pagePath of filesBelow(pagesRoot, ".json")) {
     if (!bundle.entries.some(entry => entry.id === execution.entry)) {
       throw new Error(`page ${relative(root, pagePath)} references missing entry ${execution.entry}`);
     }
-    value.schemaVersion = "0.0.0";
     value.execution = {
       backend: "wasm",
       status: "ready",
-      abi: bundle.abi,
       bundleId: execution.bundleId,
       entry: execution.entry,
       wrapper: execution.wrapper,
@@ -187,8 +183,6 @@ for (const key of pendingKeys) {
 for (const { pagePath, page } of pageUpdates) writeJsonAtomic(pagePath, page);
 
 const index = {
-  schemaVersion: "0.0.0",
-  abi: "proofscript-json-v1",
   bundles: [...bundles.values()].map(bundle => ({
     bundleId: bundle.bundleId,
     bundleHash: bundle.bundleHash,

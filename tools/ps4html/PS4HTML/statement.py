@@ -3,7 +3,7 @@
 import html
 
 
-def render_statement(statement, engine):
+def render_statement(statement, engine, *, omit_proof_divider=False):
     if statement is None:
         raise ValueError("Missing reserved theorem statement; rebuild the proof")
     statement = engine.resolve(statement)
@@ -25,7 +25,9 @@ def render_statement(statement, engine):
                       + "".join(parameters) + '</div>') if parameters else ""
     condition_html = (f'<ul class="statement-conditions" aria-label="{"条件" if zh else "Conditions"}">'
                       + "".join(conditions) + '</ul>') if conditions else ""
+    conclusion_html = (f'<div class="statement-conclusion"><span class="ps-fit-viewport">'
+                       f'<span class="ps-fit-content">{conclusion}</span></span></div>')
+    divider = "" if omit_proof_divider else f'<h3 class="statement-proof-divider">{"证明" if zh else "Proof"}</h3>'
     return (f'<div class="theorem-statement" data-language="{engine.language}" aria-label="{"定理表述" if zh else "Theorem statement"}">'
             + parameter_html + '<div class="statement-implication">' + condition_html
-             + f'<div class="statement-conclusion"><span class="ps-fit-viewport"><span class="ps-fit-content">{conclusion}</span></span></div></div></div>'
-            + f'<h3 class="statement-proof-divider">{"证明" if zh else "Proof"}</h3>')
+            + conclusion_html + '</div></div>' + divider)

@@ -1,3 +1,4 @@
+import ProofScript.Info.Decl.Commands
 import ProofScript.Page.Component.Declaration
 import ProofScript.Page.Component.References
 import ProofScript.Page.Component.Computation
@@ -6,4 +7,3 @@ import ProofScript.Extensions.Title
 import ProofScript.Extensions.LaTeX
 import ProofScript.Extensions.Figure
 import ProofScript.Builtin.Scripts
-import ProofScript.Builtin.Config

@@ -4,6 +4,10 @@
             parameter: "ps-display-wrappers",
             defaultValue: false,
         },
+        betaReduce: {
+            parameter: "ps-display-beta-reduce",
+            defaultValue: false,
+        },
     };
 
     function readValue(option) {
@@ -31,10 +35,11 @@
         state[key] = Boolean(value);
         if (writeUrl) updateUrl(state);
         document.documentElement.dataset.displayWrappers = state.wrappers ? "on" : "off";
-        document.querySelectorAll(`[data-display-option="${key}"]`).forEach(item => {
-            item.setAttribute("aria-checked", state[key] ? "true" : "false");
-            item.classList.toggle("is-enabled", state[key]);
-        });
+        document.documentElement.dataset.displayBetaReduce = state.betaReduce ? "on" : "off";
+        Object.keys(options).forEach(option => document.querySelectorAll(`[data-display-option="${option}"]`).forEach(item => {
+            item.setAttribute("aria-checked", state[option] ? "true" : "false");
+            item.classList.toggle("is-enabled", state[option]);
+        }));
         window.PS4HTMLNavigationState?.carryToLinks();
         if (announce) document.dispatchEvent(new CustomEvent("ps4html:displaychange", { detail: state }));
     }

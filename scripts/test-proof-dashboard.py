@@ -8,7 +8,6 @@ import unittest
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "tools/ps4html"))
 
 from PS4HTML.engine import ProofEngine
-from PS4HTML.recording import PROOF_SCHEMA_VERSION
 from PS4HTML.render_rules import validate_record
 from PS4HTML.schema import validate_document
 
@@ -26,7 +25,7 @@ def fixture(step, board=(), kind="tactic", language="zh"):
             roots.append(["proof", 0, key])
         elif key in {item["value"] for item in board} and isinstance(value, dict) and "$ref" in value:
             roots.append(["proof", 0, key])
-    doc = {"schemaVersion": PROOF_SCHEMA_VERSION, "module": "Test.Dashboard", "code": "",
+    doc = {"module": "Test.Dashboard", "code": "",
            "statement": {"parameters": [], "conditions": [], "conclusion": expr("e0")},
            "expressions": {f"e{i}": {"kind": "lit", "lit": {"kind": "literal.nat", "value": i}}
                            for i in range(5)},
@@ -49,7 +48,7 @@ def fixture(step, board=(), kind="tactic", language="zh"):
         json_path(doc, root)["$ref"] = remap[json_path(doc, root)["$ref"]]
     resolver = validate_document(doc)
     rule = {"ruleId": "Test.dashboard", "kind": kind,
-            "fields": {"renderer": "none", "template": [{"lang": "zh", "tag": "证明", "content": ""}],
+             "fields": {"renderer": "default", "template": [{"lang": "zh", "tag": "证明", "content": ""}],
                        "board": list(board)}}
     engine = ProofEngine([], rules={"Test.dashboard": rule}, expression_resolver=resolver, language=language)
     return doc, resolver, rule, engine

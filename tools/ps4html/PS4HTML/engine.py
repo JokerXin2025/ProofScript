@@ -10,9 +10,8 @@ from contextvars import ContextVar
 from itertools import count
 from Lean2TeX import Expr2TeX
 from Lean2TeX.configuration import EffectiveConfiguration
-from Lean2TeX.interactions import ExpressionInteractions
 from PS4HTML.i18n import SUPPORTED_LANGUAGES, TRANSLATIONS, normalize_language, tr
-from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, UNRECORDED_RULE_ID, proof_steps
+from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, proof_steps
 from PS4HTML.schema import Expression
 
 _CURRENT_LANGUAGE = ContextVar("ps4html_language", default="zh")
@@ -50,6 +49,7 @@ def render_step(tag, content, sort = "", style = "", dashboard = ""):
     )
 
 def render_cal_step(tag, lhs, rel, rhs):
+    """Assemble a chain row; rel is prepared HTML with any math delimiters."""
     return TEMPLATE_CAL_STEP.substitute(
         tag = tag,
         lhs = lhs,
@@ -80,7 +80,7 @@ def render_annotation(sort, icon, content):
         content = content
     )
 
-def render_proof(proof_state, title, content, lines_count, code, anchor = "", language="zh", default_language="zh", theorem_id="", statement=""):
+def render_proof(proof_state, title, content, lines_count, code, anchor = "", language="en", default_language="en", theorem_id="", statement="", source=""):
     return TEMPLATE_PROOF.substitute(
         proof_state = proof_state,
         title = html.escape(title),
@@ -88,6 +88,7 @@ def render_proof(proof_state, title, content, lines_count, code, anchor = "", la
         statement = statement,
         lines_count = lines_count,
         code = code,
+        source = html.escape(source, quote=True),
         anchor = html.escape(anchor, quote = True),
         theorem_id = html.escape(theorem_id, quote=True),
         language = language,
@@ -96,10 +97,12 @@ def render_proof(proof_state, title, content, lines_count, code, anchor = "", la
         indent_label = tr("proof.indent_label", language),
         source_title = tr("proof.source_title", language),
         lines_label = tr("proof.lines", language),
+        back_title = tr("proof.back_title", language),
+        copy_label = tr("proof.copy_source", language),
     )
 
-def render_page(title, contents, index_href, navigation = "", default_language="zh", interactions=None,
-                project_id="", project_url="", asset_root=None):
+def render_page(title, contents, index_href, navigation = "", default_language="en", interactions=None,
+                project_id="", project_url="", asset_root=None, verso_data=None):
     language = normalize_language(default_language)
     index_path = Path(index_href)
     project_base_url = index_path.parent.as_posix().rstrip("/") + "/" if index_path.parent.as_posix() != "." else "./"
@@ -136,6 +139,7 @@ def render_page(title, contents, index_href, navigation = "", default_language="
         mobile_desc = tr("page.mobile_desc", language),
         resize_sidebar = tr("page.resize_sidebar", language),
         interaction_data = interaction_data,
+        verso_data = json.dumps(verso_data or {}, ensure_ascii=False, separators=(",", ":")).replace("<", "\\u003c").replace(">", "\\u003e").replace("&", "\\u0026"),
         share_dialog = _render_share_dialog(language),
     )
 
@@ -172,8 +176,8 @@ def _render_share_dialog(language):
 </dialog>'''
 
 
-def render_index(pages, default_language="zh", module_contents="", theorem_navigation="", project_info=None,
-                 project_id="", asset_root=None, package_home_href=None):
+def render_index(pages, default_language="en", module_contents="", theorem_navigation="", project_info=None,
+                 project_id="", asset_root=None, package_home_href=None, verso_data=None):
     roots = sorted({page.module.split(".")[0] for page in pages})
     root_module = roots[0] if len(roots) == 1 else None
     items = _render_project_index_tree(pages, root_module)
@@ -193,7 +197,8 @@ def render_index(pages, default_language="zh", module_contents="", theorem_navig
         default_language, theorem_navigation, project_info, package_home=package_home_href is not None
     )
     return render_page(title, contents, "index.html", navigation, default_language,
-                       project_id=project_id, project_url=project_info.get("url", ""), asset_root=asset_root)
+                        project_id=project_id, project_url=project_info.get("url", ""), asset_root=asset_root,
+                        verso_data=verso_data)
 
 
 def _render_project_index_tree(pages, root_module):
@@ -230,7 +235,7 @@ def _render_project_index_nodes(nodes, current_dir, prefix):
     return "".join(items)
 
 
-def render_module_navigation(pages, current_output: Path, current_module: str | None, index_href: str, language="zh", theorem_navigation="", project_info=None, extra_nodes="", package_home=False):
+def render_module_navigation(pages, current_output: Path, current_module: str | None, index_href: str, language="en", theorem_navigation="", project_info=None, extra_nodes="", package_home=False):
     tree = {}
     for page in pages:
         children = tree
@@ -300,6 +305,10 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
           <span class="display-option-mark" aria-hidden="true"></span>
           <span class="display-option-text" data-display-option-text="wrappers" data-label-zh="{html.escape(tr('display_options.wrappers', 'zh'), quote=True)}" data-label-en="{html.escape(tr('display_options.wrappers', 'en'), quote=True)}">{html.escape(tr("display_options.wrappers", language))}</span>
         </label>
+        <label class="display-option" role="menuitemcheckbox" data-display-option="betaReduce">
+          <span class="display-option-mark" aria-hidden="true"></span>
+          <span class="display-option-text" data-display-option-text="betaReduce" data-label-zh="{html.escape(tr('display_options.beta_reduce', 'zh'), quote=True)}" data-label-en="{html.escape(tr('display_options.beta_reduce', 'en'), quote=True)}">{html.escape(tr("display_options.beta_reduce", language))}</span>
+        </label>
       </div>
     </div>
     <button class="share-button" type="button" data-share-open aria-haspopup="dialog" aria-label="{html.escape(tr('share.title', language), quote=True)}" title="{html.escape(tr('share.title', language), quote=True)}">
@@ -315,22 +324,32 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
 </aside>'''
 
 
-def render_package_index(package, libraries, default_language="zh"):
+def render_package_index(package, libraries, default_language="en", project_info=None):
     """Render the package landing page with the same layout as library indexes."""
     language = normalize_language(default_language)
+    project_info = project_info or {"title": package}
+    title = project_info.get("title") or package
+    authors = " · ".join(project_info.get("authors", []))
+    metadata = " · ".join(value for value in (authors, project_info.get("year", "")) if value)
+    description = project_info.get("description", "")
     nodes = "".join(
         f'<li><a class="module-tree-node" href="{html.escape(quote_url_path(name) + "/index.html", quote=True)}">'
         f'<span class="module-tree-node-mark" aria-hidden="true"></span>{html.escape(name)}</a></li>'
         for name in sorted(libraries)
     )
-    contents = (f'<header class="project-header"><h1>{html.escape(package)}</h1></header>'
+    metadata_html = f'<p class="project-metadata">{html.escape(metadata)}</p>' if metadata else ""
+    description_html = f'<p class="project-abstract">{html.escape(description)}</p>' if description else ""
+    contents = (f'<header class="project-header"><h1>{html.escape(title)}</h1>'
+                f'{metadata_html}{description_html}'
+                '</header>'
                 f'<ul class="module-index-tree">'
                 + "".join(f'<li><a href="{html.escape(quote_url_path(name) + "/index.html", quote=True)}">'
                           f'<span class="module-index-tree-mark" aria-hidden="true"></span>{html.escape(name)}</a></li>'
                           for name in sorted(libraries)) + '</ul>')
     navigation = render_module_navigation([], Path("index.html"), None, "index.html", language,
-                                          project_info={"title": package}, extra_nodes=nodes, package_home=True)
-    return render_page(package, contents, "index.html", navigation, language, project_id=package)
+                                           project_info=project_info, extra_nodes=nodes, package_home=True)
+    return render_page(title, contents, "index.html", navigation, language,
+                       project_id=package, project_url=project_info.get("base_url", ""))
 
 
 def _render_context_siblings(nodes, current_dir: Path, current_parts, parent_path):
@@ -374,7 +393,7 @@ def _module_output_path(parts) -> Path:
 
 class ProofEngine:
 
-    def __init__(self, data, language="zh", project_root: Path | None = None,
+    def __init__(self, data, language="en", project_root: Path | None = None,
                  expression_resolver=None, resource_loader=None, resource_stack=(), rules=None,
                  lean2tex_config: EffectiveConfiguration | None = None, step_rules=None):
         self.data = data
@@ -389,7 +408,7 @@ class ProofEngine:
         self._structural_parent = ("proof",)
         self._structural_step = None
         self.current_rule = None
-        # The page supplies a proof-module snapshot; direct callers may pass an
+        # The page supplies frozen module Info; direct callers may pass an
         # empty configuration when no Lean export tree is involved.
         self.renderer = Expr2TeX.from_config(lean2tex_config) if lean2tex_config is not None else Expr2TeX()
         self.renderer.language_panel = self.language
@@ -408,22 +427,14 @@ class ProofEngine:
         return html.escape(str(node))
 
     def render_relation(self, relation):
-        """Render a calc relation without exposing Lean2TeX internals to rules."""
+        """Escape literal calc text once; dynamic relations use expression layout."""
         if not isinstance(relation, Expression):
             raise ValueError("Calc relation requires a registered expression occurrence")
-        return self.renderer.render_relation(relation)
-
-    def tex_param(self, value):
-        """渲染一个录制参数值或 `ident+` 的数组。"""
-        if isinstance(value, Expression):
-            return self.tex(value)
-        if isinstance(value, dict):
-            return ", ".join(f"{html.escape(str(key))}: {self.tex_param(item)}" for key, item in value.items())
-        if isinstance(value, list):
-            return "，".join(self.tex_param(v) for v in value)
-        if value is None:
-            return ""
-        return html.escape(str(value))
+        symbol = self.renderer.render_relation(relation)
+        self.diagnostics.extend(self.renderer.diagnostics_dict())
+        if symbol is None:
+            return html.escape(self.tex(relation))
+        return f'<span class="proof-text-literal">{html.escape(symbol)}</span>'
 
     def text(self, key, **values):
         return tr(key, self.language, **values)
@@ -441,10 +452,6 @@ class ProofEngine:
                 self._structural_step = self._structural_parent + (index,)
                 rule = self.step_rules.get(self._structural_step) if self.step_rules is not None else self.rules.get(rule_id)
                 self.current_rule = rule
-                if rule_id == UNRECORDED_RULE_ID:
-                    from PS4HTML.Rules.unrecorded import rule_unrecorded
-                    html_blocks.append(rule_unrecorded(step, self, language=self.language, path=path, index=index))
-                    continue
                 if rule is not None:
                     from PS4HTML.render_rules import render_rule
                     rendered = render_rule(rule, step, self, path, index)
@@ -462,19 +469,12 @@ class ProofEngine:
     def render_branch(self, steps, branch_index, path):
         return self.render(steps, path, binding_parent=self._structural_step + (BRANCHES_FIELD, branch_index, "proof"))
 
-    def render_embedded(self, steps, path):
-        return self.render(steps, path, binding_parent=self._structural_step + ("proof",))
-
     def resolve(self, value, path=None):
         if self.expression_resolver is None:
             return value
         return self.expression_resolver.resolve(value, path=path)
 
-    @staticmethod
-    def validate(steps):
-        proof_steps(steps)
-
-    def make(self, title, lines_count, code, anchor = "", state = None, language=None, default_language="zh", theorem_id="", statement=None):
+    def make(self, title, lines_count, code, anchor = "", state = None, language=None, default_language="en", theorem_id="", statement=None, source=""):
         previous_language = self.language
         if language is not None:
             self.language = normalize_language(language)
@@ -499,6 +499,7 @@ class ProofEngine:
             content = content,
             lines_count = lines_count,
             code = code,
+            source = source,
             anchor = anchor,
             language = normalize_language(language or previous_language),
             default_language = normalize_language(default_language),

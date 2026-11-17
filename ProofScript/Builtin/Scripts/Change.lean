@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (location)
 
@@ -10,7 +10,7 @@ script_macro «change»
 script_recorder «change» auto (clear := [eq, loc])
 
 script_info «change» {
-  template := [{
+  templates := [{
     lang := zh, tag := "改写",
     content := "待证目标即 ${eq_before}"
   }, {

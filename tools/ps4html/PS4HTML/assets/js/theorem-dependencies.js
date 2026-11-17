@@ -23,9 +23,13 @@
     }
 
     window.addEventListener("DOMContentLoaded", () => {
-        const navigation = document.querySelector(".theorem-dependency-navigation");
-        if (!navigation) return;
-        const view = createNavigationView(navigation);
+        const navigations = Array.from(document.querySelectorAll(".theorem-dependency-navigation"));
+        if (!navigations.length) return;
+        const views = new Map(navigations.map(navigation => [navigation.dataset.languagePanel,
+            createNavigationView(navigation)]));
+        const currentNavigation = () => navigations.find(navigation =>
+            navigation.dataset.languagePanel === document.documentElement.dataset.language) || navigations[0];
+        const currentView = () => views.get(currentNavigation().dataset.languagePanel);
 
         const closeDelay = 150;
         let pointer = null;
@@ -41,7 +45,7 @@
         function activate(theoremId) {
             cancelClose();
             activeTheoremId = theoremId;
-            view.show(theoremId);
+            currentView().show(theoremId);
         }
 
         function clear() {
@@ -55,10 +59,11 @@
             if (!pointer || document.hidden) return null;
             const hit = document.elementFromPoint(pointer.x, pointer.y);
             // Links belong to the active source, regardless of their destination.
+            const navigation = currentNavigation();
             if (hit && !navigation.hidden && navigation.contains(hit)) return activeTheoremId;
             const proof = hit?.closest(".theorem-proof[data-theorem-id]");
             if (!proof || proof.closest("[hidden]")) return null;
-            return view.has(proof.dataset.theoremId) ? proof.dataset.theoremId : null;
+            return currentView().has(proof.dataset.theoremId) ? proof.dataset.theoremId : null;
         }
 
         function update() {
@@ -102,6 +107,11 @@
         window.addEventListener("resize", scheduleUpdate);
         window.addEventListener("hashchange", scheduleUpdate);
         document.addEventListener("ps4html:layoutchange", scheduleUpdate);
+        document.addEventListener("ps4html:languagechange", () => {
+            navigations.forEach(navigation => views.get(navigation.dataset.languagePanel).show(null));
+            activeTheoremId = null;
+            scheduleUpdate();
+        });
         document.addEventListener("toggle", scheduleUpdate, true);
         document.addEventListener("load", scheduleUpdate, true);
         document.fonts?.addEventListener("loadingdone", scheduleUpdate);
@@ -116,7 +126,7 @@
         ]);
         const observer = new ResizeObserver(scheduleUpdate);
         layoutTargets.forEach(target => {
-            if (target !== navigation && !navigation.contains(target)) observer.observe(target);
+            if (!navigations.some(navigation => target === navigation || navigation.contains(target))) observer.observe(target);
         });
     });
 })();

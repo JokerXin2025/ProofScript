@@ -2,24 +2,24 @@ import html
 import json
 import os
 from Lean2TeX.interactions import ExpressionInteractions
-from dataclasses import dataclass, field
+from Lean2TeX.names import select_name
+from dataclasses import dataclass
 from pathlib import Path
 from urllib.parse import quote as quote_url_path
 
-from PS4HTML.engine import ERROR, SORRY, ProofEngine, render_module_navigation, render_page
-from PS4HTML.highlight import highlight_code
+from PS4HTML.engine import SORRY, ProofEngine, render_module_navigation, render_page
+from PS4HTML.i18n import tr
 from PS4HTML.project import PS4HTMLError
 from PS4HTML.Rules.proof_text import ProofTextRenderer
 from PS4HTML.Rules.title import TitleRenderer
 from PS4HTML.Rules.media import render_figure, render_latex
 from PS4HTML.Rules.references import render_references
-from PS4HTML.schema import ResourceLoader, SCHEMA_VERSION, PROOF_SCHEMA_VERSION, validate_document
+from PS4HTML.schema import ResourceLoader, validate_document
 from PS4HTML.Rules.computation import render_computation
 from PS4HTML.info import name_text
-from PS4HTML.theorem_graph import TheoremGraph, theorem_id
+from PS4HTML.theorem_graph import theorem_id
 
 
-SUPPORTED_COMPUTATION_SCHEMA_VERSION = SCHEMA_VERSION
 
 
 @dataclass(frozen = True)
@@ -28,20 +28,11 @@ class Page:
     module: str
     source: Path
     components: list
-    declarations: dict = field(default_factory=dict)
-    exported_path: Path | None = None
+    exported_path: Path
 
     @property
     def output_path(self) -> Path:
-        if self.exported_path is not None:
-            relative = self.exported_path.with_suffix(".html")
-            return relative
-        if "pages" in self.path.parts:
-            position = len(self.path.parts) - 1 - list(reversed(self.path.parts)).index("pages")
-            relative = Path(*self.path.parts[position + 1:]).with_suffix(".html")
-            return relative
-        parts = self.module.split(".")
-        return Path(*parts[:-1]) / f"{parts[-1]}.html"
+        return self.exported_path.with_suffix(".html")
 
 
 @dataclass(frozen = True)
@@ -64,12 +55,8 @@ def build_label_index(pages: list[Page]) -> dict[tuple[str, str], LabelTarget]:
             elif "theorem" in data or "lemma" in data:
                 declaration_kind = "theorem" if "theorem" in data else "lemma"
                 value = data.get(declaration_kind, {}).get("value", {})
-                proof = value.get("proof")
-                if isinstance(proof, dict):
-                    proof = proof.get("$resource", {}).get("path")
-                declaration = _declaration_name(page.module, proof, page.declarations)
-                if declaration is not None:
-                    _add_label(labels, "theorem", declaration, page, _theorem_anchor(declaration))
+                declaration = name_text(value["declaration"])
+                _add_label(labels, "theorem", declaration, page, _theorem_anchor(declaration))
             elif "figure" in data or "latex" in data:
                 tag = "figure" if "figure" in data else "latex"
                 value = data.get(tag, {}).get("value", {})
@@ -87,20 +74,23 @@ def _add_label(labels, kind, label, page, anchor):
 
 
 class PageRenderer:
-    def __init__(self, project_root: Path, build_root: Path, labels, pages = None, default_language="zh", theorem_graph=None, export_root=None, project_info=None, bundle=None):
+    def __init__(self, project_root: Path, build_root: Path, labels, pages = None, default_language="en", theorem_graph=None, export_root=None, project_info=None, bundle=None, reference_metadata=None, verso=None):
         self.project_root = project_root
         self.export_root = export_root or project_root / ".ProofScript"
         self.build_root = build_root
         self.labels = labels
         self.pages = list(pages or [])
         self.project_info = project_info or {}
-        self.project_by_module = {}
-        self.default_language = default_language if default_language in ("zh", "en") else "zh"
+        self.reference_metadata = reference_metadata
+        self.default_language = default_language if default_language in ("zh", "en") else "en"
         self.diagnostics = []
         self.resources = ResourceLoader(project_root, export_root)
         if bundle is None or theorem_graph is None:
             raise PS4HTMLError("A completed ProofScript target is required for rendering")
         self.bundle = bundle
+        if verso is None:
+            raise PS4HTMLError("Verso source renderer is required")
+        self.verso = verso
         self.theorem_graph = theorem_graph
         self.rendered_outputs = frozenset(page.output_path for page in self.pages)
 
@@ -114,15 +104,21 @@ class PageRenderer:
         package_href = os.path.relpath(self.build_root.parent / "index.html", (self.build_root / current_output).parent)
         pages = self.pages or [page]
         theorem_navigation = self._theorem_navigation(page, current_output)
-        project_info = self.project_by_module.get(page.module, self.project_info)
         navigation = render_module_navigation(pages, current_output, page.module, package_href,
-                                              self.default_language, theorem_navigation, project_info, package_home=True)
+                                               self.default_language, theorem_navigation, self.project_info, package_home=True)
         return render_page(page.module, "\n\n".join(contents), index_href, navigation,
                            self.default_language, self._expression_interactions,
-                           project_id=self.bundle.project_id, project_url=project_info.get("url", self.project_info.get("url", "")),
-                           asset_root=os.path.relpath(self.build_root.parent / "assets", (self.build_root / current_output).parent) + "/")
+                            project_id=self.bundle.project_id, project_url=self.project_info.get("url", ""),
+                            asset_root=os.path.relpath(self.build_root.parent / "assets", (self.build_root / current_output).parent) + "/",
+                            verso_data=self.verso.data(page.module))
 
     def _theorem_navigation(self, page, current_output):
+        panels = []
+        for language in ("zh", "en"):
+            panels.append(self._theorem_navigation_panel(page, current_output, language))
+        return "".join(panels)
+
+    def _theorem_navigation_panel(self, page, current_output, language):
         templates = []
         current_dir = current_output.parent
         for component in page.components:
@@ -146,7 +142,7 @@ class PageRenderer:
                         continue
                     destination = graph.destinations.get(other_key)
                     declaration = html.escape(name_text(list(other_key[1])), quote=True)
-                    label = html.escape(graph.title(other_key))
+                    label = html.escape(graph.title(other_key, language))
                     mark = '<span class="theorem-dependency-mark" aria-hidden="true"></span>'
                     if destination and (destination.output_path in self.rendered_outputs or destination.output_path == current_output):
                         href = quote_url_path(os.path.relpath(destination.output_path, current_dir)) + f"#{quote_url_path(destination.anchor)}"
@@ -164,19 +160,19 @@ class PageRenderer:
                     levels.append("")
             incoming, outgoing = levels
             templates.append(
-                f'<template class="theorem-dependency-template" data-theorem-id="{identity}"><div class="theorem-dependency-graph">{incoming}<div class="theorem-dependency-current" data-theorem-node="{identity}"><span class="theorem-dependency-mark" aria-hidden="true"></span><strong>{html.escape(graph.title(key))}</strong></div>{outgoing}</div></template>'
+                f'<template class="theorem-dependency-template" data-theorem-id="{identity}"><div class="theorem-dependency-graph">{incoming}<div class="theorem-dependency-current" data-theorem-node="{identity}"><span class="theorem-dependency-mark" aria-hidden="true"></span><strong>{html.escape(graph.title(key, language))}</strong></div>{outgoing}</div></template>'
             )
         if not templates:
             return ""
         return (
-            '<section class="theorem-dependency-navigation" hidden>'
-            '<h3><span data-language-panel="zh">依赖</span><span data-language-panel="en" hidden>Dependencies</span></h3>'
+            f'<section class="theorem-dependency-navigation" data-language-panel="{language}" hidden>'
+            f'<h3>{"依赖" if language == "zh" else "Dependencies"}</h3>'
             '<div class="theorem-dependency-panel" data-theorem-navigation-content></div>'
             + "".join(templates) + '</section>'
         )
 
     def render_components(self, page: Page, current_output: Path) -> list[str]:
-        return [self._component(component, page, current_output) for component in page.components]
+        return [self._component(component, page, current_output, index) for index, component in enumerate(page.components)]
 
     def render_directory(self, module: str) -> str:
         current_output = _module_output_path(module)
@@ -211,7 +207,7 @@ class PageRenderer:
             f'<ul class="module-index-tree">{_render_index_tree(tree, current_dir, module.split("."))}</ul>'
         ]
 
-    def _component(self, component, page, current_output):
+    def _component(self, component, page, current_output, index):
         if not isinstance(component, dict) or not isinstance(component.get("data"), dict):
             raise PS4HTMLError(f"Invalid component in {page.path}")
         data = component["data"]
@@ -225,107 +221,73 @@ class PageRenderer:
         if tag == "title":
             return TitleRenderer(self.labels, self.build_root, current_output).render(value)
         if tag in {"theorem", "lemma"}:
-            return self._theorem(value, page)
+            return self._theorem(value, page, index)
         if tag == "latex":
             rendered, diagnostics = render_latex(value, self.project_root, self.resources)
             self.diagnostics.extend(diagnostics)
             return rendered
         if tag == "figure":
-            rendered, diagnostics = render_figure(value, self.project_root, self.export_root if hasattr(self.bundle, "infos") else None)
+            rendered, diagnostics = render_figure(value, self.export_root)
             self.diagnostics.extend(diagnostics)
             return rendered
         if tag == "computation":
-            if not isinstance(value, dict) or value.get("schemaVersion") != SUPPORTED_COMPUTATION_SCHEMA_VERSION:
-                self.diagnostics.append({
-                    "kind": "computation-error",
-                    "message": f"Unsupported computation schema version: {value.get('schemaVersion') if isinstance(value, dict) else None}",
-                })
             return render_computation(value)
         if tag == "references":
             panels = []
             for language in ("zh", "en"):
-                panel = render_references(value, self.labels, self.build_root, current_output, language)
+                panel = render_references(value, self.labels, self.build_root, current_output, language,
+                                          project_metadata=self.reference_metadata)
                 hidden = "" if language == self.default_language else " hidden"
                 panels.append(f'<div data-language-panel="{language}"{hidden}>{panel}</div>')
             return "\n".join(panels)
         return self._placeholder(tag, value)
 
-    def _theorem(self, value, page):
-        state = None
-        expression_resolver = None
-        proof_data = []
-        code = ""
-        name = value.get("name") if isinstance(value, dict) else None
-        proof = value.get("proof") if isinstance(value, dict) else None
-        sorry_ax = value.get("sorryAx") if isinstance(value, dict) else None
+    def _theorem(self, value, page, index):
+        proof = value["proof"]
+        state = SORRY if value["sorryAx"] else None
         record = self.bundle.theorem(proof)
         declaration = name_text(list(record.declaration))
         identity = theorem_id(record.key)
-        if not isinstance(name, str) or not name:
-            name = "Invalid theorem"
-            state = ERROR
-        if not (isinstance(proof, str) and proof or isinstance(proof, dict) and "$resource" in proof) or not isinstance(sorry_ax, bool):
-            state = ERROR
-        elif sorry_ax:
-            state = SORRY
-
         proof_relative = self.bundle.relative(record.path)
         proof_path = self.bundle.file_path(proof_relative)
         proof_document = self.bundle.read(proof_relative)
-        if isinstance(proof, dict):
-            self.resources.read_text(proof, "application/vnd.proofscript.proof+json")
-        expression_resolver = validate_document(proof_document, module_protocol=hasattr(self.bundle, "infos"))
-        if isinstance(proof_document, dict):
-            if proof_document.get("schemaVersion") != PROOF_SCHEMA_VERSION:
-                state = ERROR
-            if isinstance(proof_document.get("code"), str):
-                code = proof_document["code"]
-            else:
-                state = ERROR
-            if isinstance(proof_document.get("proof"), list):
-                proof_data = proof_document["proof"]
-            elif isinstance(proof_document.get("code"), str) and state != ERROR:
-                code = proof_document["code"]
-                highlighted_code, _applied = highlight_code(code, "lean4", theme="light")
-                from PS4HTML.statement import render_statement
-                artifact = self.bundle.artifact(proof_path)
-                config = self.bundle.configuration(snapshot_id=proof_relative)
-                panels = []
-                for language in ("zh", "en"):
-                    engine = ProofEngine([], language=language, expression_resolver=expression_resolver,
-                                         lean2tex_config=config)
-                    engine.renderer.interactions = self._expression_interactions
-                    engine.renderer.theorem_id = identity
-                    statement = render_statement(proof_document["statement"], engine)
-                    panels.append(_render_code_only_declaration(
-                        name, _theorem_anchor(declaration) + ("-en" if language == "en" else ""),
-                        highlighted_code, code.count("\n") + (1 if code else 0), identity,
-                        statement, language, self.default_language))
-                    self.diagnostics.extend({"theorem": name, "proof": record.path, "language": language,
-                                             **diagnostic} for diagnostic in engine.diagnostics)
-                return "\n".join(panels)
-            else:
-                state = ERROR
-        else:
-            state = ERROR
-
+        self.resources.read_text(proof, "application/vnd.proofscript.proof+json")
+        expression_resolver = validate_document(proof_document, module_protocol=True)
+        if proof_document["module"] != page.module:
+            raise PS4HTMLError(f"Proof module does not match page: {proof_path}")
+        try:
+            lean2tex_config = self.bundle.configuration(record.owner)
+        except (OSError, ValueError) as error:
+            raise PS4HTMLError(f"Invalid Lean2TeX configuration for {page.module}: {error}") from error
+        fields = lean2tex_config.declaration_info[declaration]
+        names = fields["names"]
+        code = proof_document["code"]
         anchor = _theorem_anchor(declaration)
-        highlighted_code, _applied = highlight_code(code, "lean4", theme = "light")
         lines = code.count("\n") + (1 if code else 0)
+        if "proof" not in proof_document:
+            from PS4HTML.statement import render_statement
+            panels = []
+            for language in ("zh", "en"):
+                name = select_name(names, language, declaration, theorem=True,
+                                   lean_last_component=fields["name_last_component"])
+                engine = ProofEngine([], language=language, expression_resolver=expression_resolver,
+                                     lean2tex_config=lean2tex_config)
+                engine.renderer.interactions = self._expression_interactions
+                engine.renderer.theorem_id = identity
+                statement = render_statement(proof_document["statement"], engine, omit_proof_divider=True)
+                panels.append(_render_code_only_declaration(
+                    name, anchor + ("-en" if language == "en" else ""),
+                    self.verso.fragment(page.module, index, language), lines, identity, statement, language, self.default_language,
+                    code))
+                self.diagnostics.extend({"theorem": name, "proof": record.path, "language": language,
+                                         **diagnostic} for diagnostic in engine.diagnostics)
+            return "\n".join(panels)
+        proof_data = proof_document["proof"]
+        step_rules = self.bundle.proof_rules(proof_relative)
         rendered = []
-        rules = None
-        step_rules = None
-        lean2tex_config = None
-        if proof_data:
-            if proof_document.get("module") != page.module:
-                raise PS4HTMLError(f"Proof module does not match page: {proof_path}")
-            artifact = self.bundle.artifact(proof_path)
-            step_rules = self.bundle.proof_rules(artifact)
-            try:
-                lean2tex_config = self.bundle.configuration(snapshot_id=proof_relative)
-            except (OSError, ValueError, json.JSONDecodeError) as error:
-                raise PS4HTMLError(f"Invalid Lean2TeX configuration for {page.module}: {error}") from error
         for language in ("zh", "en"):
+            name = select_name(names, language, declaration, theorem=True,
+                               lean_last_component=fields["name_last_component"])
             engine = ProofEngine(
                 proof_data,
                 language=language,
@@ -333,7 +295,6 @@ class PageRenderer:
                 expression_resolver=expression_resolver,
                 resource_loader=self.resources,
                 resource_stack=(proof_path.resolve(),),
-                rules=rules,
                 lean2tex_config=lean2tex_config,
                 step_rules=step_rules,
             )
@@ -342,13 +303,14 @@ class PageRenderer:
             rendered.append(engine.make(
                 name,
                 lines,
-                highlighted_code,
+                self.verso.fragment(page.module, index, language),
                 anchor if language == "zh" else f"{anchor}-en",
                 state = state,
                 language = language,
                 default_language = self.default_language,
                 theorem_id = identity,
                 statement = proof_document["statement"],
+                source = code,
             ))
             self.diagnostics.extend({
                 "theorem": name,
@@ -367,20 +329,31 @@ class PageRenderer:
         return f'<section class="unsupported-component" data-component="{html.escape(tag, quote = True)}" data-component-value="{preserved}"><strong>{html.escape(str(title))}</strong><span>Component rendering is not supported yet.</span></section>'
 
 
-def _render_code_only_declaration(name, anchor, code, lines, theorem_id, statement, language="zh", default_language="zh"):
+def _render_code_only_declaration(name, anchor, code, lines, theorem_id, statement, language="en", default_language="en", source=""):
     hidden = "" if language == default_language else " hidden"
+    copy_label = html.escape(tr("proof.copy_source", language), quote=True)
+    source_title = html.escape(tr("proof.source_title", language), quote=True)
+    back_title = html.escape(tr("proof.back_title", language), quote=True)
     return f'''<section class="theorem-proof theorem-code-only" id="{html.escape(anchor, quote=True)}" data-theorem-id="{html.escape(theorem_id, quote=True)}" data-language-panel="{language}"{hidden}>
-  <h2><span>{html.escape(name)}</span></h2>
-  {statement}
-  <div class="proof-source-card">
-    <div class="code-header"><span>Lean</span><span>{lines} 行</span></div>
-    <pre class="page-code code-highlighted"><code>{code}</code></pre>
+  <h2><span>{html.escape(name)}</span>
+    <button class="flip-btn" type="button" title="{source_title}" data-front-title="{source_title}" data-back-title="{back_title}"><i class="codicon codicon-file-code"></i></button>
+  </h2>
+  <div class="proof-flip">
+    <div class="proof-flip-inner">
+      <div class="proof-flip-front">{statement}</div>
+      <div class="proof-flip-back proof-source-card">
+        <div class="verso-container">
+          <pre class="verso-source">{code}</pre>
+          <button class="verso-copy" type="button" data-verso-source="{html.escape(source, quote=True)}" aria-label="{copy_label}" title="{copy_label}"><i class="codicon codicon-copy" aria-hidden="true"></i></button>
+        </div>
+      </div>
+    </div>
   </div>
 </section>'''
 
 
 def _theorem_anchor(declaration) -> str:
-    return f"theorem-{declaration}" if isinstance(declaration, str) and declaration else "theorem-proof"
+    return f"theorem-{declaration}"
 
 
 def directory_modules(pages: list[Page]) -> list[str]:
@@ -394,30 +367,6 @@ def directory_modules(pages: list[Page]) -> list[str]:
 def _module_output_path(module: str) -> Path:
     parts = module.split(".")
     return Path(*parts[:-1]) / f"{parts[-1]}.html"
-
-
-def _declaration_name(module, proof, declarations=None) -> str | None:
-    if isinstance(proof, dict):
-        proof = proof.get("$resource", {}).get("path")
-    if declarations and isinstance(proof, str):
-        normalized = Path(proof).as_posix()
-        if normalized in declarations:
-            return declarations[normalized]
-    if not isinstance(proof, str) or not proof:
-        return None
-    path = Path(proof)
-    try:
-        parts = list(path.parts[path.parts.index("proofs") + 1:])
-    except ValueError:
-        return None
-    module_parts = module.split(".")
-    if parts[:len(module_parts)] == module_parts:
-        parts = parts[len(module_parts):]
-    if not parts:
-        return None
-    parts[-1] = Path(parts[-1]).stem
-    declaration = ".".join(parts)
-    return declaration if declaration.startswith(f"{module}.") else f"{module}.{declaration}"
 
 
 def _render_index_tree(nodes, current_dir, prefix):

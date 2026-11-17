@@ -4,20 +4,19 @@ import fcntl
 import hashlib
 import json
 import shutil
+import os
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
 
 from Lean2TeX.configuration import interpret
+from PS4HTML.config import load_config
 from PS4HTML.info import RefInfo, TheoremRecord, name_key, name_text, project_id
 from PS4HTML.large_json import loads as load_json
 from PS4HTML.project import PS4HTMLError, find_project_root
-from PS4HTML.recording import BRANCHES_FIELD, PROOF_SCHEMA_VERSION, RULE_ID_FIELD, proof_steps
+from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, proof_steps
 from PS4HTML.render_rules import validate_record, validate_rules
 from PS4HTML.schema import validate_document
-
-VERSION = "14.0.0"
-
 
 def _diagnostic_summary(diagnostics):
     by_code, missing = {}, {}
@@ -57,13 +56,14 @@ def _encoded_name(parts):
 
 
 def render_cached_targets():
-    """Re-render the latest completed library targets using the current protocol."""
+    """Re-render the latest completed library targets."""
     root = find_project_root(Path.cwd()).resolve()
     targets = sorted((root / ".ProofScript" / "manifests" / "targets").glob("*/*/library/*.json"))
     if not targets:
         raise PS4HTMLError("No completed library export; run lake build <Library>:proofscriptExport")
+    config = load_config(root)
     for target in targets:
-        render_target(target)
+        render_target(target, config=config)
 
 
 def _relative(root, value):
@@ -108,8 +108,6 @@ def snapshot_target(manifest, destination):
         if (root / "staging" / "transactions").is_dir() and any((root / "staging" / "transactions").iterdir()):
             raise PS4HTMLError("ProofScript module publication requires recovery")
         target = _read(root, manifest.relative_to(root).as_posix())
-        if target.get("schemaVersion") != VERSION:
-            raise PS4HTMLError("Unsupported ProofScript target protocol; rebuild with lake build <Library>:proofscriptExport")
         package, library = target.get("package"), target.get("library")
         if not all(isinstance(value, str) and value and value not in (".", "..") and
                    "/" not in value and "\\" not in value for value in (package, library)):
@@ -136,7 +134,7 @@ def snapshot_target(manifest, destination):
             path = _relative(root, relative)
             _digest(path, entry["sha256"])
             completion = _read(root, relative)
-            if (completion.get("schemaVersion") != VERSION or completion.get("complete") is not True or
+            if (completion.get("complete") is not True or
                     completion.get("module") != list(module) or completion.get("package") != package or
                     completion.get("library") != library or not isinstance(completion.get("files"), list)):
                 raise PS4HTMLError(f"Invalid module completion: {relative}")
@@ -158,6 +156,16 @@ def snapshot_target(manifest, destination):
                 output.parent.mkdir(parents=True, exist_ok=True)
                 shutil.copyfile(source, output)
                 _digest(output, file["sha256"])
+        if target["kind"] == "library":
+            info = target.get("info")
+            if not isinstance(info, dict) or info.get("path") != f"info/{library}.json":
+                raise PS4HTMLError("Invalid library Info snapshot path")
+            source = _relative(root, info["path"])
+            _digest(source, info["sha256"])
+            output = _relative(destination, info["path"])
+            output.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copyfile(source, output)
+            _digest(output, info["sha256"])
         return target, modules
 
 
@@ -167,13 +175,10 @@ class ModuleBundle:
     def __init__(self, root, target, modules):
         self.root = root
         self.project_id = project_id(target["package"], target["library"])
-        self.modules = modules
         self.infos = {}
+        self.pages = {}
         self.theorems = {}
-        self.proofs = {}
-        self.artifacts = {}
-        self.project = {"metadata": {"title": target["library"]}}
-        self.project_by_module = {}
+        self._proof_rules = {}
         selected_proofs = set()
         for module, completion in modules.items():
             paths = {item["path"] for item in completion["files"]}
@@ -187,8 +192,7 @@ class ModuleBundle:
                 raise PS4HTMLError(f"Missing page or Info for {module}")
             info = _read(root, info_paths[0])
             page = _read(root, page_paths[0])
-            if (info.get("schemaVersion") != VERSION or page.get("schemaVersion") != VERSION or
-                    info.get("module") != list(module) or page.get("module") != list(module) or
+            if (info.get("module") != list(module) or page.get("module") != list(module) or
                     info.get("library") != {"package": target["package"], "library": target["library"]} or
                     page.get("info") != ".ProofScript/" + info_paths[0] or
                     not isinstance(page.get("components"), list) or not page["components"]):
@@ -196,17 +200,22 @@ class ModuleBundle:
             records = {}
             for record in info["records"]:
                 identity = record["identity"]
-                key = (identity["kind"], tuple(identity["target"]) if isinstance(identity["target"], list)
-                       else identity["target"])
+                if (identity.get("kind") not in ("decl", "script") or
+                        not isinstance(identity.get("target"), list) or not identity["target"]):
+                    raise PS4HTMLError("Unsupported frozen Info identity; rebuild the module export")
+                key = (identity["kind"], name_key(identity["target"]))
                 if key in records:
                     raise PS4HTMLError(f"Duplicate frozen Info: {key}")
+                if identity["kind"] == "decl":
+                    from Lean2TeX.names import validate_names
+                    try:
+                        validate_names(record["value"], name_text(identity["target"]))
+                    except ValueError as error:
+                        raise PS4HTMLError(str(error)) from error
                 records[key] = record["value"]
-            project = records.get(("project", self.project_id))
-            if not isinstance(project, dict):
-                raise PS4HTMLError(f"Missing frozen project Info: {module}")
-            self.project_by_module[module] = project
             contracts = {item["id"]: item["value"] for item in info["contracts"]}
-            self.infos[module] = (records, contracts, info_paths[0], page_paths[0])
+            self.infos[module] = records
+            self.pages[module] = page_paths[0]
             for component in page["components"]:
                 data = component.get("data", {}) if isinstance(component, dict) else {}
                 for tag in ("theorem", "lemma"):
@@ -228,8 +237,7 @@ class ModuleBundle:
                             dependencies = tuple(name_key(item) for item in value["proofDependencies"])
                         except (KeyError, TypeError, ValueError) as error:
                             raise PS4HTMLError(f"Invalid theorem facts: {relative}") from error
-                        if (not isinstance(value.get("name"), str) or not value["name"] or
-                                type(value.get("sorryAx")) is not bool or
+                        if ("name" in value or type(value.get("sorryAx")) is not bool or
                                 any(type(item.is_dependency) is not bool for item in references) or
                                 len({item.name for item in references}) != len(references) or
                                 len(set(dependencies)) != len(dependencies) or
@@ -241,7 +249,7 @@ class ModuleBundle:
                             raise PS4HTMLError(f"Duplicate theorem: {declaration}")
                         self.theorems[key] = TheoremRecord(
                             declaration, tag, self.project_id, references, dependencies,
-                            relative, relative, module, ".ProofScript/" + relative)
+                            module, ".ProofScript/" + relative)
             for relative in paths:
                 if relative not in selected_proofs:
                     continue
@@ -249,11 +257,33 @@ class ModuleBundle:
                 if document.get("module") != name_text(list(module)):
                     raise PS4HTMLError(f"Proof owner mismatch: {relative}")
                 resolver = validate_document(document, module_protocol=True)
-                bindings = self._rules(module, document, contracts, records, resolver)
-                self.artifacts[relative] = {"module": name_text(list(module)), "bindings": bindings}
-                self.proofs[relative] = document
-        if selected_proofs != set(self.proofs):
-            raise PS4HTMLError(f"Theorem proof missing from target: {selected_proofs - set(self.proofs)}")
+                semantic = document["semanticCode"]["$resource"]
+                semantic_path = semantic["path"].removeprefix(".ProofScript/")
+                if semantic_path not in paths or not semantic_path.startswith("resources/"):
+                    raise PS4HTMLError(f"Verso resource missing from module inventory: {relative}")
+                semantic_file = _relative(root, semantic_path)
+                semantic_text = semantic_file.read_text(encoding="utf-8")
+                semantic_hash = hashlib.sha256(json.dumps(semantic_text, ensure_ascii=False,
+                    separators=(",", ":")).encode("utf-8")).hexdigest()
+                if semantic_hash != semantic["hash"]:
+                    raise PS4HTMLError(f"Verso resource digest mismatch: {relative}")
+                envelope = load_json(semantic_text)
+                source_hash = hashlib.sha256(json.dumps(document["code"], ensure_ascii=False,
+                    separators=(",", ":")).encode("utf-8")).hexdigest()
+                if (not isinstance(envelope, dict) or
+                        set(envelope) != {"format", "sourceHash", "declaration", "producer", "highlighted"} or
+                        envelope["format"] != "proofscript.verso.highlighted.v1" or
+                        envelope["producer"] != "verso-v4.32.0/subverso-0076a9e8" or
+                        envelope["sourceHash"] != source_hash or
+                        not isinstance(envelope["highlighted"], str)):
+                    raise PS4HTMLError(f"Verso semantic envelope invalid: {relative}")
+                owner = next((record for record in self.theorems.values()
+                              if self.relative(record.path) == relative), None)
+                if owner is None or envelope["declaration"] != name_text(list(owner.declaration)):
+                    raise PS4HTMLError(f"Verso declaration identity mismatch: {relative}")
+                self._proof_rules[relative] = self._rules(module, document, contracts, records, resolver)
+        if selected_proofs != set(self._proof_rules):
+            raise PS4HTMLError(f"Theorem proof missing from target: {selected_proofs - set(self._proof_rules)}")
 
     def _rules(self, module, document, contracts, records, resolver):
         rules = {}
@@ -267,17 +297,19 @@ class ModuleBundle:
                       "color": [color[key] for key in ("tag", "border", "background")],
                       "board": info.get("board", [])}
             templates = []
-            for template in info["template"]:
+            for template in info["templates"]:
                 value = {key: val for key, val in template["value"].items() if val is not None}
                 if "cases" in value:
                     value["cases"] = [{key: val for key, val in case.items() if val is not None}
-                                      for case in value["cases"]]
+                                       for case in value["cases"]]
+                if "case" in value:
+                    value["case"] = {key: val for key, val in value["case"].items() if val is not None}
                 templates.append(value)
             if templates:
                 fields["template"] = templates
             rule = {"ruleId": name_text(list(identity)), "kind": contract["kind"],
                     "fields": fields, "extra": info["extra"]}
-            validate_rules({"schemaVersion": PROOF_SCHEMA_VERSION, "module": name_text(list(module)),
+            validate_rules({"module": name_text(list(module)),
                             "imports": [], "rules": [rule]}, name_text(list(module)))
             if path in rules:
                 raise PS4HTMLError(f"Duplicate proof binding: {path}")
@@ -287,8 +319,6 @@ class ModuleBundle:
         def visit(steps, parent):
             for index, step in enumerate(proof_steps(steps)):
                 path = parent + (index,)
-                if step[RULE_ID_FIELD] == "ProofScript.unrecorded" and path not in rules:
-                    continue
                 rule = rules.get(path)
                 if rule is None or rule["ruleId"] != step[RULE_ID_FIELD]:
                     raise PS4HTMLError(f"Missing frozen proof binding: {path}")
@@ -297,8 +327,6 @@ class ModuleBundle:
                 if rule["kind"] == "strategy":
                     for branch_index, branch in enumerate(step.get(BRANCHES_FIELD, [])):
                         visit(branch["proof"], path + (BRANCHES_FIELD, branch_index, "proof"))
-                if rule["fields"]["renderer"] == "embed" and isinstance(step.get("proof"), list):
-                    visit(step["proof"], path + ("proof",))
 
         if "proof" in document:
             visit(document["proof"], ("proof",))
@@ -316,44 +344,39 @@ class ModuleBundle:
     def read(self, relative):
         return _read(self.root, relative)
 
-    def artifact(self, path):
-        relative = Path(path).resolve().relative_to(self.root.resolve()).as_posix() if Path(path).is_absolute() else self.relative(path)
-        return self.artifacts[relative]
-
     def theorem(self, reference):
-        if isinstance(reference, dict):
-            reference = reference["$resource"]["path"]
-        relative = self.relative(reference)
+        relative = self.relative(reference["$resource"]["path"])
         for record in self.theorems.values():
             if self.relative(record.path) == relative:
                 return record
         raise PS4HTMLError(f"Unknown theorem proof: {reference}")
 
-    def configuration(self, module=None, snapshot_id=None):
-        if module is None:
-            module = self.artifacts[self.relative(snapshot_id)]["module"]
-        records = self.infos[next(key for key in self.infos if name_text(list(key)) == module)][0]
+    def configuration(self, module):
+        records = self.infos[module]
         values = {}
         for (kind, target), value in records.items():
-            if kind not in ("definition", "theorem"):
+            if kind != "decl":
                 continue
             fields = {key: field for key, field in value.items() if key != "extra"}
-            if kind == "definition" and fields["alias_info"]["target"] is not None:
-                fields["alias_info"] = {"target": name_text(fields["alias_info"]["target"])}
+            fields["name_last_component"] = name_text([target[-1]])
+            if fields["alias_target"] is not None and not isinstance(fields["alias_target"], str):
+                fields["alias_target"] = name_text(fields["alias_target"])
             values[(kind, name_text(list(target)))] = fields
         return interpret(values)
 
-    def proof_rules(self, artifact):
-        return artifact["bindings"]
+    def proof_rules(self, relative):
+        return self._proof_rules[relative]
 
 
-def render_target(manifest):
+def render_target(manifest, config=None):
     from PS4HTML.assets import publish_assets
     from PS4HTML.engine import render_index, render_package_index
     from PS4HTML.page import Page, PageRenderer, build_label_index, directory_modules
     from PS4HTML.theorem_graph import TheoremGraph, TheoremDestination
+    from PS4HTML.verso import VersoFragments
 
     root = find_project_root(Path.cwd()).resolve()
+    config = config if config is not None else load_config(root)
     staging = root / ".PS4HTML" / "staging"
     staging.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(dir=staging) as temporary:
@@ -361,9 +384,10 @@ def render_target(manifest):
         exported = stage / ".ProofScript"
         target, modules = snapshot_target(manifest, exported)
         bundle = ModuleBundle(exported, target, modules)
+        project_info = config.library_metadata(target["package"], target["library"])
         pages = []
         destinations = {}
-        for module, (records, _contracts, _info, relative) in bundle.infos.items():
+        for module, relative in bundle.pages.items():
             document = bundle.read(relative)
             page = Page(exported / relative, name_text(list(module)), Path(document["source"]),
                         document["components"], exported_path=Path(relative).relative_to("pages"))
@@ -376,12 +400,13 @@ def render_target(manifest):
                     record = bundle.theorem(data[tag]["value"]["proof"])
                     if record.owner != module or record.declaration_kind != tag:
                         raise PS4HTMLError(f"Theorem page/proof mismatch: {relative}")
-                    page.declarations[record.path] = name_text(list(record.declaration))
                     key = record.key
                     if key in destinations:
                         raise PS4HTMLError(f"Duplicate theorem destination: {key}")
                     destinations[key] = TheoremDestination(page.output_path,
-                        f"theorem-{name_text(list(record.declaration))}", data[tag]["value"]["name"], index)
+                        f"theorem-{name_text(list(record.declaration))}",
+                        bundle.configuration(record.owner).declaration_info[name_text(list(record.declaration))]["names"],
+                        name_text([record.declaration[-1]]), index)
             pages.append(page)
         output_paths = [page.output_path for page in pages]
         if len(set(output_paths)) != len(output_paths) or any(
@@ -390,6 +415,9 @@ def render_target(manifest):
         pages.sort(key=lambda page: page.module)
         graph = TheoremGraph(bundle.theorems.values(), destinations=destinations, modules=modules)
         site = stage / "site"
+        executable = os.environ.get("PROOF_SCRIPT_VERSO_RENDERER") or root / ".lake/build/bin/proofscriptVersoRender"
+        verso = VersoFragments(root, stage, pages, bundle, destinations, executable)
+        verso.publish(site)
         for completion in modules.values():
             for file in completion["files"]:
                 relative = file["path"]
@@ -400,9 +428,10 @@ def render_target(manifest):
                 shutil.copyfile(exported / relative, destination)
         labels = build_label_index(pages)
         renderer = PageRenderer(root, site, labels, pages, theorem_graph=graph,
-                                export_root=exported, project_info=bundle.project["metadata"], bundle=bundle)
-        renderer.project_by_module = {name_text(list(key)): value
-            for key, value in bundle.project_by_module.items()}
+                                 export_root=exported, project_info=project_info, bundle=bundle,
+                                 verso=verso,
+                                default_language=config.default_language,
+                                reference_metadata=lambda identity: config.reference_metadata(target["package"], identity))
         by_module = {page.module: page for page in pages}
         for module in directory_modules(pages):
             if "." not in module or module in by_module:
@@ -418,13 +447,13 @@ def render_target(manifest):
             output.write_text(renderer.render(page), encoding="utf-8")
         roots = {page.module.split(".")[0] for page in pages}
         home = by_module.get(next(iter(roots))) if len(roots) == 1 else None
-        home_info = next((value for key, value in bundle.project_by_module.items()
-            if name_text(list(key)) == home.module), None) if home else None
         contents = "\n\n".join(renderer.render_components(home, Path("index.html"))) if home else ""
         navigation = renderer._theorem_navigation(home, Path("index.html")) if home else ""
         (site / "index.html").write_text(render_index(pages, module_contents=contents,
-            theorem_navigation=navigation, project_info=home_info or bundle.project["metadata"],
-            project_id=bundle.project_id, asset_root="../assets/", package_home_href="../index.html"), encoding="utf-8")
+            theorem_navigation=navigation, project_info=project_info,
+            default_language=config.default_language,
+            project_id=bundle.project_id, asset_root="../assets/", package_home_href="../index.html",
+            verso_data=verso.data(home.module) if home else {}), encoding="utf-8")
         (site / "lean2tex-report.json").write_text(json.dumps({
             "summary": _diagnostic_summary(renderer.diagnostics), "diagnostics": renderer.diagnostics,
         }, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -440,7 +469,8 @@ def render_target(manifest):
                 "window.PS4HTMLLibraries = " + json.dumps(sorted(libraries), ensure_ascii=False).replace("<", "\\u003c") + ";\n", encoding="utf-8")
             index = build / "index.html"
             next_index = index.with_name("index.html.next")
-            next_index.write_text(render_package_index(target["package"], libraries), encoding="utf-8")
+            next_index.write_text(render_package_index(target["package"], libraries,
+                default_language=config.default_language, project_info=config.metadata(target["package"])), encoding="utf-8")
             next_index.replace(index)
         print(f"[PS4HTML] Rendered {target['package']}/{target['library']} from {len(modules)} modules: {output}")
         return output

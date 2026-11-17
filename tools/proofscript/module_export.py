@@ -13,10 +13,6 @@ import uuid
 from pathlib import Path
 
 
-VERSION = "14.0.0"
-PREVIOUS_VERSION = "13.0.0"
-
-
 def _safe(root: Path, relative: str) -> Path:
     if not isinstance(relative, str) or not relative or any(
         part in ("", ".", "..") for part in relative.split("/")
@@ -276,7 +272,7 @@ def _validate_module_files(stage: Path, module: list, has_components: bool):
         if len(documents) != 1:
             raise ValueError(f"module export needs exactly one {kind} document: {module}")
         document = _json(stage / documents[0])
-        if document.get("schemaVersion") != VERSION or document.get("module") != module:
+        if document.get("module") != module:
             raise ValueError(f"invalid {kind} identity: {documents[0]}")
     page = _json(stage / next(path for path in files if path.startswith("pages/")))
     if not isinstance(page.get("components"), list) or not page["components"]:
@@ -292,10 +288,33 @@ def _validate_module_files(stage: Path, module: list, has_components: bool):
     identities = [json.dumps(item.get("identity"), sort_keys=True) for item in records]
     if len(identities) != len(set(identities)):
         raise ValueError("duplicate frozen Info identity")
+    for record in records:
+        identity = record.get("identity")
+        if (not isinstance(identity, dict) or identity.get("kind") not in ("decl", "script")
+                or not isinstance(identity.get("target"), list) or not identity["target"]):
+            raise ValueError("unsupported frozen Info identity; rebuild the module export")
     for proof in (stage / "proofs").rglob("*.json"):
         document = _json(proof)
         if document.get("module") != ".".join(str(part) for part in module):
             raise ValueError(f"proof belongs to another module: {proof}")
+        reference = document.get("semanticCode", {}).get("$resource")
+        if not isinstance(reference, dict) or reference.get("mediaType") != \
+                "application/vnd.proofscript.verso-highlighted+json" or \
+                reference.get("encoding") != "utf-8":
+            raise ValueError(f"proof has no Verso semantic resource: {proof}")
+        path = reference.get("path")
+        if not isinstance(path, str) or not path.startswith(".ProofScript/resources/"):
+            raise ValueError(f"invalid Verso resource path: {proof}")
+        resource = _json(_safe(stage, path.removeprefix(".ProofScript/")))
+        if set(resource) != {"format", "sourceHash", "declaration", "producer", "highlighted"} or \
+                resource["format"] != "proofscript.verso.highlighted.v1" or \
+                resource["producer"] != "verso-v4.32.0/subverso-0076a9e8" or \
+                not isinstance(resource["highlighted"], str) or \
+                not isinstance(resource["declaration"], str) or not resource["declaration"] or \
+                resource["sourceHash"] != hashlib.sha256(json.dumps(
+                    document.get("code"), ensure_ascii=False, separators=(",", ":")
+                ).encode("utf-8")).hexdigest():
+            raise ValueError(f"Verso source integrity mismatch: {proof}")
 
 
 def _validate_owned_paths(value: dict, files: set[str]):
@@ -350,7 +369,7 @@ def _recover(root: Path):
             shutil.rmtree(transaction)
             continue
         record = _json(journal)
-        if record.get("schemaVersion") != VERSION or record.get("state") not in \
+        if record.get("state") not in \
                 ("prepared", "committed") or not isinstance(record.get("touched"), list) or \
                 not isinstance(record.get("existing"), list) or \
                 not set(record["existing"]) <= set(record["touched"]):
@@ -397,7 +416,7 @@ def _commit(root: Path, stage: Path, files: list[str], old_files: set[str],
                 with backup.open("rb") as stream:
                     os.fsync(stream.fileno())
                 existing.append(relative)
-        record = {"schemaVersion": VERSION, "state": "prepared",
+        record = {"state": "prepared",
                   "touched": touched, "existing": existing}
         _write_journal(transaction / "journal.json", record)
         _fsync_directory(transaction)
@@ -435,7 +454,7 @@ def _publish(root: Path, stage: Path, module: list, package: str, library: str,
         raise ValueError("duplicate module output paths")
     _check_casefold_paths(files + [manifest])
     completion = {
-        "schemaVersion": VERSION, "module": module,
+        "module": module,
         "package": package, "library": library,
         "complete": True, "hasComponents": has_components,
         "files": [{"path": path, "sha256": _hash(stage / path)} for path in files],
@@ -453,7 +472,7 @@ def _publish(root: Path, stage: Path, module: list, package: str, library: str,
             if other == destination:
                 continue
             owner = _json(other)
-            if owner.get("schemaVersion") not in (PREVIOUS_VERSION, VERSION) or owner.get("complete") is not True:
+            if owner.get("complete") is not True:
                 raise ValueError(f"invalid previously published module manifest: {other}")
             owned = {item["path"] for item in owner.get("files", [])}
             other_paths = owned | {other.relative_to(root).as_posix()}
@@ -466,8 +485,6 @@ def _publish(root: Path, stage: Path, module: list, package: str, library: str,
                                      previous.get("package") != package or
                                      previous.get("library") != library):
             raise ValueError(f"module export ownership conflict: {manifest}")
-        if previous is not None and previous.get("schemaVersion") not in (PREVIOUS_VERSION, VERSION):
-            raise ValueError(f"incompatible previous module export: {manifest}")
         old_files = {entry["path"] for entry in previous["files"]} if previous else set()
         for current in root.rglob("*"):
             if not current.is_file() or "staging" in current.relative_to(root).parts:
@@ -490,8 +507,6 @@ def _publish(root: Path, stage: Path, module: list, package: str, library: str,
 def publish(descriptor: Path, root: Path, source_root: Path,
             proofscript_root: Path, build_manifest: Path):
     value = _json(descriptor)
-    if value.get("schemaVersion") != VERSION:
-        raise ValueError("unsupported ProofScript module export descriptor")
     module = value["module"]
     if not isinstance(module, list) or not module or any(
         not isinstance(part, (str, int)) or isinstance(part, bool) or part == "" or

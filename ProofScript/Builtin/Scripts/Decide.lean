@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (optConfig)
 
@@ -10,7 +10,7 @@ script_macro «decide»
 script_recorder «decide» auto (clear := [config])
 
 script_info «decide» {
-  template := [{
+  templates := [{
     lang := zh, tag := "判定",
     content := ""
   }, {

@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «exists»
@@ -14,7 +14,7 @@ script_macro «exists»
 script_recorder «exists» auto (clear := [data])
 
 script_info «exists» {
-  template := [{
+  templates := [{
     lang := zh, tag := "选取对象",
     content := ""
   }, {
@@ -35,7 +35,7 @@ script_macro «existsWith»
 script_recorder «existsWith» auto (clear := [data, cond])
 
 script_info «existsWith» {
-  template := [{
+  templates := [{
     lang := zh, tag := "选取对象",
     content := ""
   }, {

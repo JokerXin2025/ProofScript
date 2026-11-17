@@ -1,12 +1,10 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proofscript.local/schema/computation-index-0.0.0.json",
+  "$id": "https://proofscript.local/schema/computation-index.json",
   "title": "ProofScript Finalized Computation Index",
   "type": "object",
-  "required": ["schemaVersion", "abi", "bundles", "pagesUpdated"],
+  "required": ["bundles", "pagesUpdated"],
   "properties": {
-    "schemaVersion": { "const": "0.0.0" },
-    "abi": { "const": "proofscript-json-v1" },
     "bundles": {
       "type": "array",
       "items": {

@@ -10,45 +10,51 @@ import re
 
 STYLES = {"plain": "span", "strong": "strong", "code": "code"}
 ATOM = re.compile(r"\[\[PS4HTML-LITERAL-(plain|strong|code)-([0-9a-f]*)-(p[0-9]+)\]\]")
-SELECTOR = re.compile(r"#([0-9]+)")
 
 
 def atom(value: str, style: str, fragment: str) -> str:
     return f"[[PS4HTML-LITERAL-{style}-" + "".join(f"{ord(char):06x}" for char in value) + f"-{fragment}]]"
 
 
-def linear_template(content: str, children: list) -> bool:
+def linear_template(template, children: list) -> bool:
     """Only top-level selectors in an ungrouped TeX run can become HTML."""
-    if any(char in content for char in "{}$") or "@" in content or "\\" in content:
-        return False
-    references = [int(match) for match in SELECTOR.findall(content)]
+    references = []
+    for instruction in template.instructions:
+        if instruction.kind == "mode_switch":
+            # Mode conversion may introduce a TeX group that cannot be split
+            # at an HTML atom boundary.
+            return False
+        if instruction.kind == "literal":
+            if any(char not in " #0123456789+-,.=<>:;!?()" for char in instruction.content):
+                return False
+        elif instruction.kind == "argument" and instruction.mode == "formula":
+            references.append(template.argument_indices[instruction.index])
+        else:
+            return False
     return (bool(references) and all(index < len(children) for index in references)
             and any(children[index].kind == "literal" and
                     children[index].metadata.get("literalKind") == "literal.str" for index in references)
             and all(child.kind != "literal" or child.metadata.get("literalKind") != "literal.str"
-                    or index in references for index, child in enumerate(children))
-            and all(char in " #0123456789+-,.=<>:;!?()" for char in SELECTOR.sub("", content)))
+                    or index in references for index, child in enumerate(children)))
 
 
 def eligible_literals(root, registry, language: str, selections=None) -> set[int]:
     """Find literals for which the complete render root has a safe HTML layout."""
+    from .macros import DISPLAY_KINDS
+    from .model import RenderTarget, visible_node
+    root = visible_node(root)
     if root.kind == "literal" and root.metadata.get("literalKind") == "literal.str":
         return {id(root)}
-    if root.kind not in ("const", "concept"):
+    if root.kind not in DISPLAY_KINDS:
         return set()
     macro = registry.get(root.macro_name)
-    if macro is None or macro.kind != "concept":
+    if macro is None:
         return set()
-    from .model import RenderTarget
     selected = (selections or {}).get(RenderTarget("constant", root.metadata.get("leanName", root.macro_name)))
-    try:
-        template = registry.template_for(macro, requested=selected, node=root, language=language)
-    except ValueError:
+    template = registry.template_for(macro, requested=selected, node=root, language=language)
+    if template is None or template.mode != "formula" or not linear_template(template, root.children):
         return set()
-    if template.mode != "formula" or not linear_template(template.content, root.children):
-        return set()
-    if any(item.label != template.label and (item.language is None or item.language == language)
-           for item in macro.templates):
+    if any(label != template.label for label in registry.labels(macro, language, root)):
         # A change of the containing constant template may move a literal into
         # a grouped math layout; the immutable browser tree cannot reclassify it.
         return set()

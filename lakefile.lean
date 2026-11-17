@@ -9,21 +9,38 @@ package ProofScript where
 require mathlib from git
   "https://github.com/leanprover-community/mathlib4" @ "v4.32.0"
 
+require verso from git
+  "https://github.com/leanprover/verso" @ "v4.32.0"
+
+require subverso from git
+  "https://github.com/leanprover/subverso" @ "0076a9e8a3670d83c54c93414b2b26d3a8aba08d"
+
 @[default_target]
 lean_lib ProofScript
 
 lean_lib Test where
   roots := #[
     `Test.ClassicalFormula,
+    `Test.PageComponent.Title,
+    `Test.PageComponent.Figure,
+    `Test.PageComponent.LaTeX,
+    `Test.PageComponent.ProofText,
+    `Test.PageTheoremExpressionGallery,
+    `Test.PageTheoremExpressionInteractions,
+    `Test.PageTheoremExpressionBoundaries,
     `Test.PageScriptBoard,
-    `Test.RecorderAuto,
-    `Test.RecorderStage3,
-    `Test.RecorderVersionBase,
-    `Test.RecorderVersionExtension
   ]
 
 lean_exe proofscriptModuleExport where
   root := `ProofScript.Output.ModuleMain
+  supportInterpreter := true
+
+lean_exe proofscriptLibraryInfo where
+  root := `ProofScript.Output.LibraryInfoMain
+  supportInterpreter := true
+
+lean_exe proofscriptVersoRender where
+  root := `ProofScript.Verso.RenderMain
   supportInterpreter := true
 
 namespace ProofScriptPageBuild
@@ -175,7 +192,6 @@ def exportTarget (selection : PageTarget) : FetchM (Job FilePath) := do
       let compiled ← owner.leanArts.fetch
       let closure ← moduleClosure #[owner]
       let manifest := json% {
-         schemaVersion: 1,
          sourcePackages: $(ws.packages.filterMap fun pkg =>
            if sources.contains pkg.keyName then some pkg.baseName.toString else none),
         selectedProject: { "package": $(selection.pkg.baseName.toString),
@@ -205,8 +221,9 @@ def exportTarget (selection : PageTarget) : FetchM (Job FilePath) := do
         let scripts := #[framework / "scripts" / "build-computations.mjs",
            framework / "scripts" / "finalize-computations.mjs",
            framework / "scripts" / "computation-build-paths.mjs",
-           framework / "tools" / "proofscript" / "export_cache.py",
-           framework / "tools" / "proofscript" / "target_manifest.py"]
+            framework / "tools" / "proofscript" / "export_cache.py",
+            framework / "tools" / "proofscript" / "target_manifest.py",
+            framework / "ProofScript" / "Verso" / "Capture.lean"]
         let cache ← IO.Process.output {
           cmd := python,
           args := #[ (framework / "tools" / "proofscript" / "export_cache.py").toString,
@@ -232,11 +249,25 @@ def exportTarget (selection : PageTarget) : FetchM (Job FilePath) := do
     exports.mapM fun _ => do
       let python := (← IO.getEnv "PROOF_SCRIPT_PYTHON").getD "python3"
       let targetName := selection.name.toString
+      let mut infoArgs := #[]
+      if let .library _ := selection then
+        let some freezer ← findLeanExe? `proofscriptLibraryInfo
+          | error "ProofScript library Info exporter not found"
+        let program ← (← freezer.fetch).await
+        let snapshot := build / "exports" / "library" / "library-info.json"
+        IO.FS.createDirAll snapshot.parent.get!
+        proc {
+          cmd := program.toString,
+          args := #[snapshot.toString] ++ owners.map (·.name.toString),
+          cwd := ws.root.dir,
+          env := ← getAugmentedEnv
+        }
+        infoArgs := #["--info", snapshot.toString]
       proc {
         cmd := python,
          args := #[(framework / "tools" / "proofscript" / "target_manifest.py").toString,
-           output.toString, selection.pkg.baseName.toString, selection.lib.name.toString,
-           selection.kind, targetName] ++ owners.map fun mod => s!"{mod.name.toString}={encodedName mod.name}",
+            output.toString, selection.pkg.baseName.toString, selection.lib.name.toString,
+            selection.kind, targetName] ++ (owners.map fun mod => s!"{mod.name.toString}={encodedName mod.name}") ++ infoArgs,
         cwd := ws.root.dir,
         env := ← getAugmentedEnv
       }
@@ -246,20 +277,24 @@ def exportTarget (selection : PageTarget) : FetchM (Job FilePath) := do
 /-- Rendering begins only after Lake has compiled and published every owner. -/
 def renderTarget (selection : PageTarget) : FetchM (Job FilePath) := do
   let exports ← exportTarget selection
+  let some renderer ← findLeanExe? `proofscriptVersoRender
+    | error "ProofScript Verso renderer not found"
+  let executable ← renderer.fetch
   let ws ← getWorkspace
   let framework := ws.packages.findSome? fun pkg =>
     if pkg.baseName == `ProofScript then some pkg.dir else none
   let some framework := framework | error "ProofScript package not found"
-  exports.mapM fun targetFile => do
+  (exports.zipWith (fun targetFile program => (targetFile, program)) executable).mapM fun (targetFile, program) => do
     let python := (← IO.getEnv "PS4HTML_PYTHON").getD "python3"
     let result := ws.root.dir / ".PS4HTML" / "build" /
-      selection.pkg.baseName.toString / selection.lib.name.toString / "index.html"
+      selection.lib.name.toString / "index.html"
     proc {
       cmd := python,
       args := #["-m", "PS4HTML", "_render-target", targetFile.toString],
       cwd := ws.root.dir,
       env := (← getAugmentedEnv).push ("PYTHONPATH", some
         (framework / "tools" / "ps4html").toString)
+        |>.push ("PROOF_SCRIPT_VERSO_RENDERER", some program.toString)
     }
     return result
 

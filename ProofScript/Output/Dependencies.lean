@@ -33,14 +33,14 @@ def printedName (_env : Environment) (text : String) : Except String Name := do
       | none => .str name component
   return name
 
-private def add (dependencies : Array RenderDependency) (dependency : RenderDependency) : Array RenderDependency :=
+private def add (dependencies : Array Name) (dependency : Name) : Array Name :=
   if dependencies.contains dependency then dependencies else dependencies.push dependency
 
 /-- Follow structural edges and effective naming-type annotations from an
     explicit expression root. Ordinary JSON and unrelated metadata are not
     searched for declarations. Citation suppression cannot hide rendering use. -/
 private partial def expressionDependencies (env : Environment) (table root : Json) :
-    Except String (Array RenderDependency) := do
+    Except String (Array Name) := do
   return (← visit root #[] #[]).2
 where
   -- Metadata belongs to an occurrence, even when its structural node is shared.
@@ -54,24 +54,22 @@ where
       let type := type.orElse fun _ => (data.getObjVal? "ProofScript.type").toOption
       return ← occurrence (← value.getObjVal? "expr") none type
     return (reference, value, type)
-  visit (value : Json) (seen : Array String) (dependencies : Array RenderDependency) :
-      Except String (Array String × Array RenderDependency) := do
+  visit (value : Json) (seen : Array String) (dependencies : Array Name) :
+      Except String (Array String × Array Name) := do
     let (reference, value, type) ← occurrence value
     let mut seen := seen
     let mut dependencies := dependencies
     if let some (.str descriptor) := type then
       if descriptor.startsWith "decl:" then
         let name ← printedName env (descriptor.drop 5).toString
-        dependencies := add dependencies { kind := "definition", target := name }
+        dependencies := add dependencies name
     if let some id := reference then
       if seen.contains id then return (seen, dependencies)
       seen := seen.push id
     let kind := (value.getObjValAs? String "kind").toOption.getD ""
     if kind == "const" then
       let name ← printedName env (← value.getObjValAs? String "name")
-      dependencies := add dependencies { kind := "definition", target := name }
-      if let some (.thmInfo _) := env.find? name then
-        dependencies := add dependencies { kind := "theorem", target := name }
+      dependencies := add dependencies name
     let fields : Array String := match kind with
       | "app" => #["fn", "arg"]
       | "lam" | "forall" => #["type", "body"]
@@ -106,7 +104,7 @@ def validateStepBindings (proof : Array Json) (bindings : Array StepBinding)
     field schemas never reinterpret a plain JSON value as an expression. -/
 def recordedDependencies (env : Environment) (table document : Json)
     (bindings : Array StepBinding) (expressionRoots : Array JsonPath) :
-    Except String (Array RenderDependency) := do
+    Except String (Array Name) := do
   let mut dependencies := #[]
   for path in expressionRoots do
     let expression ← JsonPath.get? path document
@@ -116,7 +114,7 @@ def recordedDependencies (env : Environment) (table document : Json)
     let step ← JsonPath.get? binding.path document
     if let .ok theoremName := step.getObjValAs? String "theorem" then
       let name ← printedName env theoremName
-      dependencies := add dependencies { kind := "theorem", target := name }
+      dependencies := add dependencies name
   return dependencies
 
 end ProofScript

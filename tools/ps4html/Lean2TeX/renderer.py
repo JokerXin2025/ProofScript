@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import hashlib
 import re
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
-from .macros import MacroRegistry
+from .macros import DISPLAY_KINDS, MacroRegistry
 from .builtin_styles import STYLE_BY_KEY, target_for_node
 from .numerals import numeral_styles
 from .universes import sort_styles
 from .mixed import atom, eligible_literals, split_math
 from .interactions import TEXT_MARKER
+from .names import select_name
 from .model import DisplayNode, DisplayTemplate, RenderDiagnostic, RenderLimitError, RenderTarget, visible_node
 
 
-_SELECTOR = re.compile(r"(?<!@)(@+)(\d+)(?!\d)|#(\d+|\*)")
 _PHRASE_PLACEHOLDER = re.compile(r"\$\{([A-Za-z_][A-Za-z0-9_]*)\}")
 _FORALL_PHRASES = {
     "zh": "${body}对一切 $${binder}\\in ${type}$ 成立",
@@ -30,6 +30,16 @@ class _Rendered:
     fixity: str = "atom"
     precedence: int = 100
     associativity: str = "none"
+    identity: tuple[str, str, str | None] | None = None
+
+
+@dataclass(frozen=True)
+class _Layout:
+    mode: str
+    precedence: int
+    fixity: str = "custom"
+    associativity: str = "none"
+    identity: tuple[str, str, str | None] | None = None
 
 
 class LayoutRenderer:
@@ -38,10 +48,10 @@ class LayoutRenderer:
     MAX_OUTPUT_CHARACTERS = 1_048_576
     MAX_INTERMEDIATE_CHARACTERS = 8_388_608
 
-    def __init__(self, registry: MacroRegistry, definition_names: dict[str, str] | None = None,
-                 theorem_names: dict[str, str] | None = None):
+    def __init__(self, registry: MacroRegistry, declaration_names: dict[str, list] | None = None,
+                   theorem_names: dict[str, tuple[list, str | None]] | None = None):
         self.registry = registry
-        self.definition_names = definition_names if definition_names is not None else {}
+        self.declaration_names = declaration_names if declaration_names is not None else {}
         self.theorem_names = theorem_names if theorem_names is not None else {}
         self.diagnostics: list[RenderDiagnostic] = []
 
@@ -137,22 +147,27 @@ class LayoutRenderer:
                              else r"\operatorname{未知}")
         if kind in ("const", "theorem"):
             name = node.metadata.get("leanName", node.macro_name)
-            names = self.theorem_names if kind == "theorem" else self.definition_names
-            return _Rendered(self._constant(names.get(name) or name))
+            names = self.theorem_names if kind == "theorem" else self.declaration_names
+            canonical = node.metadata.get("displayName", name)
+            configured = names.get(canonical, ([], None) if kind == "theorem" else [])
+            entries, last = configured if kind == "theorem" else (configured, None)
+            return _Rendered(self._constant(select_name(entries, self.language, canonical,
+                                                        theorem=kind == "theorem", lean_last_component=last)))
         # A built-in display kind must not accidentally use a same-named declaration.
-        macro = self.registry.get(node.macro_name) if node.metadata.get("headConst") and kind in (
-            "concept", "operator", "relation", "projection") else None
+        macro = self.registry.get(node.macro_name) if node.metadata.get("headConst") and kind in DISPLAY_KINDS else None
         if macro is not None:
-            if macro.kind in ("operator", "relation"):
-                return self._render_symbolic(node, macro, requested)
-            try:
-                key = RenderTarget("constant", node.metadata.get("leanName", node.macro_name))
-                label = self.selections.get(key, requested if node is self.root_node else None)
-                style = self.registry.template_for(macro, label, node, language=self.language)
-            except ValueError:
-                self.diagnostics.append(RenderDiagnostic("error", "L2T006", "no template matches expression structure", node.macro_name))
-                return _Rendered(f"\\operatorname{{{self._short_name(node.macro_name)}}}")
-            return self._render_macro(node, style, requested)
+            key = RenderTarget("constant", node.metadata.get("leanName", node.macro_name))
+            label = self.selections.get(key, requested if node is self.root_node else None)
+            template = self.registry.template_for(macro, label, node, language=self.language)
+            if template is not None:
+                return self._render_macro(node, template, requested)
+            name = node.metadata.get("leanName", node.macro_name)
+            head = _Rendered(self._constant(select_name(self.declaration_names.get(name, []),
+                                                        self.language, name)))
+            if not node.children:
+                return head
+            style = self.selections.get(RenderTarget("builtin", "application"), "call")
+            return self._render_application([head, *(self._render(child, requested) for child in node.children)], style)
         if kind == "literal":
             if node.metadata.get("literalKind") == "literal.str":
                 if id(node) in self.html_literals:
@@ -170,21 +185,7 @@ class LayoutRenderer:
         if kind == "application":
             style = self._builtin_style(node, requested)
             rendered = [self._render(child, requested) for child in node.children]
-            if not rendered:
-                return _Rendered("\\operatorname{app}\\left(\\right)", precedence=90, fixity="application")
-            layout = DisplayTemplate("call", "formula", "", "application", 90, "left")
-            head = self._child_tex(rendered[0], layout, 0)
-            args = [self._child_tex(item, layout, 1) for item in rendered[1:]]
-            if style == "juxtaposed":
-                # f (g x) must not become the left-associated f g x.
-                args = [f"\\left({arg}\\right)" if item.mode == "formula" and
-                        item.fixity == "application" and item.precedence == 90 else arg
-                        for item, arg in zip(rendered[1:], args)]
-                return _Rendered(self._bounded_join([head, *args], r"\,", self.MAX_OUTPUT_CHARACTERS, "TeX output"),
-                                 precedence=90, fixity="application", associativity="left")
-            args = self._bounded_join([self._switch_mode(item.tex, item.mode, "formula")
-                                       for item in rendered[1:]], ",", self.MAX_OUTPUT_CHARACTERS, "TeX output")
-            return _Rendered(f"{head}\\left({args}\\right)", precedence=90, fixity="application", associativity="left")
+            return self._render_application(rendered, style)
         if kind == "lambda":
             return self._render_chain(node, requested)
         if kind == "forall":
@@ -193,7 +194,7 @@ class LayoutRenderer:
             return self._render_chain(node, requested)
         if kind == "projection":
             source = self._render(node.children[0], requested)
-            source_tex = f"\\left({source.tex}\\right)" if source.precedence < 90 else source.tex
+            source_tex = self._child_tex(source, _Layout("formula", 90, "postfix"), 0)
             return _Rendered(f"{source_tex}.\\operatorname{{{self._escape_text(node.macro_name)}}}", precedence=90, fixity="postfix")
         self.diagnostics.append(RenderDiagnostic("warning", "L2T010", f"unknown display node {node.macro_name}"))
         return _Rendered(f"\\texttt{{[unknown: {self._escape_text(node.macro_name)}]}}", mode="text")
@@ -204,7 +205,7 @@ class LayoutRenderer:
             tex = f"\\htmlData{{ps-expr-fragment={fragment}}}{{{rendered.tex}}}"
         else:
             tex = self._tag_text(rendered.tex, self.fragments[id(node)], fragment)
-        return _Rendered(tex, rendered.mode, rendered.fixity, rendered.precedence, rendered.associativity)
+        return replace(rendered, tex=tex)
 
     def _tag_text(self, tex: str, occurrence: str, fragment: str) -> str:
         # Text-mode expressions may contain inline math. Existing child
@@ -218,98 +219,97 @@ class LayoutRenderer:
                 chunks.append(f"[[PS4HTML-START-{fragment}]]{part}[[PS4HTML-END-{fragment}]]")
         return "".join(chunks)
 
-    def _render_symbolic(self, node, macro, requested) -> _Rendered:
-        arity = 2 if macro.fixity == "infix" else 1
-        if len(node.children) != arity:
-            self.diagnostics.append(RenderDiagnostic("error", "L2T006", f"{macro.kind} requires {arity} operands", node.macro_name))
-            return _Rendered(f"\\operatorname{{{self._short_name(node.macro_name)}}}")
-        layout = DisplayTemplate("formula", "formula", "", macro.fixity,
-                                 macro.precedence, macro.associativity)
-        children = [self._child_tex(self._render(child, requested), layout, index)
-                    for index, child in enumerate(node.children)]
-        symbol = macro.symbol
-        self._check_length(len(symbol), self.MAX_OUTPUT_CHARACTERS, "operator symbol")
-        if symbol.startswith("\\") and symbol[-1:].isalpha():
-            symbol += " "
-        if macro.fixity == "prefix":
-            tex = symbol + children[0]
-        elif macro.fixity == "postfix":
-            tex = children[0] + symbol
+    def _render_application(self, rendered: list[_Rendered], style: str) -> _Rendered:
+        identity = ("builtin:application", style, None)
+        layout = _Layout("formula", 90, "application", "left", identity)
+        if not rendered:
+            return _Rendered(r"\operatorname{app}\left(\right)", precedence=90,
+                             fixity="application", identity=identity)
+        head = self._child_tex(rendered[0], layout, 0)
+        if style == "juxtaposed":
+            args = [self._child_tex(item, layout, 1) for item in rendered[1:]]
+            tex = self._bounded_join([head, *args], r"\,", self.MAX_OUTPUT_CHARACTERS, "TeX output")
         else:
-            tex = children[0] + symbol + children[1]
-        self._check_length(len(tex), self.MAX_OUTPUT_CHARACTERS, "symbolic layout")
-        return _Rendered(tex, "formula", macro.fixity, macro.precedence, macro.associativity)
+            # The call's delimiters already isolate each argument.
+            args = self._bounded_join([self._switch_mode(item.tex, item.mode, "formula")
+                                       for item in rendered[1:]], ",", self.MAX_OUTPUT_CHARACTERS, "TeX output")
+            tex = f"{head}\\left({args}\\right)"
+        return _Rendered(tex, precedence=90, fixity="application", associativity="left", identity=identity)
 
-    def _render_macro(self, node, style: DisplayTemplate, requested) -> _Rendered:
-        self._check_length(len(style.content), self.MAX_OUTPUT_CHARACTERS, "macro template")
-        # Binder selectors render only the referenced binder/body. Rendering all
-        # arguments first would create a hidden lambda occurrence for Exists.
+    def _render_macro(self, node, template: DisplayTemplate, requested) -> _Rendered:
+        self._check_length(len(template.content), self.MAX_OUTPUT_CHARACTERS, "macro template")
+        identity = (node.metadata.get("leanName", node.macro_name), *template.identity)
+        fixity = "infix" if template.label in ("$infix", "$infixl", "$infixr") else "custom"
+        layout = _Layout(template.mode, template.precedence, fixity,
+                         template.effective_associativity, identity)
+        # Cache by semantic node, not selector text: repeating/reordering a raw
+        # argument or selecting its binders must preserve the same identities.
         children: dict[int, _Rendered] = {}
-        result_length = len(style.content)
+        position = 0
 
-        def checked_replacement(match, replacement):
-            nonlocal result_length
-            result_length += len(replacement) - len(match.group())
-            self._check_length(result_length, self.MAX_OUTPUT_CHARACTERS, "TeX output")
-            return replacement
+        def render_instructions(instructions, mode):
+            parts = []
+            length = 0
+            for instruction in instructions:
+                value = render_instruction(instruction, mode)
+                length += len(value)
+                self._check_length(length, self.MAX_OUTPUT_CHARACTERS, "TeX output")
+                parts.append(value)
+            return "".join(parts)
 
-        def replace(match: re.Match) -> str:
-            index = int(match.group(2) or match.group(3))
-            if index >= len(node.children):
-                self.diagnostics.append(RenderDiagnostic("error", "L2T004", "template references a missing child", node.macro_name))
-                return checked_replacement(match, f"[missing {match.group()}]")
-            child = visible_node(node.children[index]) if match.group(1) else node.children[index]
-            # A text template can contain inline $...$ math. Selectors inside
-            # that run must use formula mode, otherwise they insert another
-            # pair of dollar delimiters into the existing math run.
-            layout = (DisplayTemplate(style.label, "formula", style.content, style.fixity,
-                                      style.precedence, style.associativity, style.binders,
-                                      style.isolated_arguments, style.language) if style.mode == "text" and
-                      style.content[:match.start()].count("$") % 2 else style)
-            if match.group(1):
-                depth = len(match.group(1))
-                required = style.binders.get(index)
-                if required is None or depth > required + 1:
-                    self.diagnostics.append(RenderDiagnostic("error", "L2T004", "invalid @ selector", node.macro_name))
-                    return checked_replacement(match, f"[missing {match.group()}]")
-                for _ in range(depth - 1):
-                    if child.kind != "lambda" or len(child.children) != 3:
-                        self.diagnostics.append(RenderDiagnostic("error", "L2T004", "binder selector requires a lambda", node.macro_name))
-                        return checked_replacement(match, f"[missing {match.group()}]")
-                    child = visible_node(child.children[2])
-                if depth == required + 1:
-                    if child.kind == "lambda" and len(child.children) == 3:
-                        return checked_replacement(match, self._child_tex(self._render(child.children[0], requested), layout, index))
-                    return checked_replacement(match, self._child_tex(self._render(child, requested), layout, index))
-                if child.kind == "lambda" and len(child.children) == 3:
-                    return checked_replacement(match, self._child_tex(self._render(child.children[0], requested), layout, index))
-                self.diagnostics.append(RenderDiagnostic("error", "L2T004", "binder selector requires a lambda", node.macro_name))
-                return checked_replacement(match, f"[missing {match.group()}]")
-            if index not in children:
-                children[index] = self._render(node.children[index], requested)
-            return checked_replacement(match, children[index].tex if id(child) in self.html_literals
-                                       else self._child_tex(children[index], layout, index))
+        def render_instruction(instruction, mode):
+            nonlocal position
+            self._visit()
+            if instruction.kind == "literal":
+                value = instruction.content
+            elif instruction.kind == "mode_switch":
+                value = self._switch_mode(render_instructions(instruction.instructions, instruction.mode),
+                                          instruction.mode, mode)
+            else:
+                index = instruction.index
+                child = node.children[template.argument_indices[index]]
+                if instruction.kind in ("binder", "body"):
+                    for _ in range(instruction.depth - (1 if instruction.kind == "binder" else 0)):
+                        child = visible_node(child).children[2]
+                    if instruction.kind == "binder":
+                        child = visible_node(child).children[0]
+                if id(child) not in children:
+                    children[id(child)] = self._render(child, requested)
+                rendered = children[id(child)]
+                insertion = replace(layout, mode=instruction.mode)
+                if id(child) in self.html_literals:
+                    # The page boundary splits this atom out of the formula.
+                    # A surrounding \\text group would straddle that split.
+                    value = rendered.tex
+                elif instruction.max_precedence:
+                    value = self._switch_mode(rendered.tex, rendered.mode, instruction.mode)
+                else:
+                    value = self._child_tex(rendered, insertion, position)
+                position += 1
+            return value
+        return _Rendered(render_instructions(template.instructions, template.mode), template.mode, fixity, template.precedence,
+                         template.effective_associativity, identity)
 
-        result = _SELECTOR.sub(replace, style.content)
-        return _Rendered(result, style.mode, style.fixity, style.precedence, style.associativity)
-
-    def _child_tex(self, child: _Rendered, parent: DisplayTemplate, position: int) -> str:
-        tex = self._switch_mode(child.tex, child.mode, parent.mode)
-        if position in parent.isolated_arguments:
-            return tex
-        if child.mode != parent.mode:
-            return tex
-        if parent.mode == "text":
-            return tex
+    def _child_tex(self, child: _Rendered, parent: _Layout, position: int) -> str:
         parenthesize = child.precedence < parent.precedence
-        if child.precedence == parent.precedence and parent.fixity == "infix" and child.fixity == "infix":
-            if parent.associativity == "none":
-                parenthesize = True
-            elif parent.associativity == "left" and position > 0:
-                parenthesize = True
-            elif parent.associativity == "right" and position == 0:
-                parenthesize = True
-        return f"\\left({tex}\\right)" if parenthesize else tex
+        if child.precedence == parent.precedence:
+            # Only the same actual infix template (or built-in associative
+            # layout) may omit equal-priority parentheses. Alias identity is
+            # deliberately the original constant, not its resolved target.
+            same = (parent.identity is not None and child.identity == parent.identity and
+                    parent.fixity in ("infix", "application") and child.fixity == parent.fixity)
+            parenthesize = not (same and ((parent.associativity == "left" and position == 0) or
+                                         (parent.associativity == "right" and position > 0)))
+        if not parenthesize:
+            return self._switch_mode(child.tex, child.mode, parent.mode)
+        if child.mode == "formula":
+            # A formula child in text receives brackets inside its $...$ run.
+            return self._switch_mode(f"\\left({child.tex}\\right)", child.mode, parent.mode)
+        tex = self._switch_mode(child.tex, child.mode, parent.mode)
+        if parent.mode == "formula":
+            # A text child in formula is converted before adding math brackets.
+            return f"\\left({tex}\\right)"
+        return f"({tex})"
 
     def _builtin_style(self, node, requested):
         target = target_for_node(node)
@@ -399,9 +399,9 @@ class LayoutRenderer:
                                  precedence=20, fixity="binder")
             elif arrow:
                 symbol = r"\to" if style == "arrow" else r"\implies"
-                layout = DisplayTemplate("formula", "formula", "", "infix", 30, "right")
+                layout = _Layout("formula", 30, "infix", "right", ("builtin:forall.arrow", style, None))
                 body = _Rendered(f"{self._child_tex(type_node, layout, 0)}{symbol} {self._child_tex(body, layout, 1)}",
-                                 "formula", "infix", 30, "right")
+                                 "formula", "infix", 30, "right", layout.identity)
             elif style == "symbol":
                 body = _Rendered(f"\\forall {binder.tex}\\in {self._switch_mode(type_node.tex, type_node.mode, 'formula')},\\ "
                                  f"{self._switch_mode(body.tex, body.mode, 'formula')}",
@@ -448,10 +448,6 @@ class LayoutRenderer:
     @classmethod
     def _constant(cls, name: str) -> str:
         return f"\\operatorname{{{cls._escape_text(name)}}}"
-
-    @staticmethod
-    def _short_name(name: str) -> str:
-        return name.rsplit(".", 1)[-1]
 
     @staticmethod
     def _html_data(tex: str, kind: str, prefix: str, identity: str, *, generated: bool = False) -> str:

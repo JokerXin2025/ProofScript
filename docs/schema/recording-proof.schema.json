@@ -1,14 +1,26 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proofscript.local/schema/recording-proof-0.4.0.json",
-  "title": "ProofScript recording proof document 0.4.0",
+  "$id": "https://proofscript.local/schema/recording-proof.schema.json",
+  "title": "ProofScript recording proof document",
   "$comment": "This schema validates shape only. The decoder additionally checks contiguous expression IDs, reference ownership and structural postorder, unique valid root paths, exact root targets, and invocation contract coverage and bindings. Only expressionRoots authorizes entry from proof data into the expression graph; unlisted JSON remains literal data. Nodes encode native Lean expressions. Metadata contains only opaque scalar values and one structural expr edge; syntax values and empty metadata wrappers are omitted. Parameter and value recording do not collect literature references; rendering configuration dependencies are resolved separately.",
   "type": "object",
-  "required": ["schemaVersion", "module", "code", "statement", "expressions", "expressionRoots"],
+  "required": ["module", "code", "statement", "expressions", "expressionRoots"],
   "properties": {
-    "schemaVersion": {"const": "0.4.0"},
     "module": {"type": "string", "minLength": 1},
     "code": {"type": "string"},
+    "semanticCode": {
+      "type": "object", "required": ["$resource"], "additionalProperties": false,
+      "properties": {"$resource": {
+        "type": "object", "required": ["path", "hash", "mediaType", "encoding"],
+        "additionalProperties": false,
+        "properties": {
+          "path": {"type": "string", "pattern": "^\\.ProofScript/resources/"},
+          "hash": {"type": "string", "pattern": "^[0-9a-f]{64}$"},
+          "mediaType": {"const": "application/vnd.proofscript.verso-highlighted+json"},
+          "encoding": {"const": "utf-8"}
+        }
+      }}
+    },
     "statement": {"$ref": "#/$defs/statement"},
     "expressions": {"$ref": "#/$defs/expressions"},
     "expressionRoots": {"type": "array", "items": {"$ref": "#/$defs/expressionRootPath"}, "uniqueItems": true},

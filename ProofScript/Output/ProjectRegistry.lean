@@ -1,5 +1,4 @@
 import ProofScript.Output.Dependencies
-import ProofScript.Info.Freeze
 
 namespace ProofScript
 
@@ -9,7 +8,7 @@ open Lean System
 structure ProjectKey where
   package : String
   library : String
-  deriving Inhabited, BEq, Repr, ToJson, FromJson
+  deriving BEq, ToJson, FromJson
 
 /-- The package inventory and the ownership of this export's modules. -/
 structure ProjectRegistry where
@@ -22,7 +21,6 @@ structure ProjectRegistry where
   closure : Array (Name × ProjectKey)
   /-- Page-mode build paths for selected-library modules in the compiled closure. -/
   libraryOleas : Array (Name × FilePath)
-  deriving Inhabited
 
 def ProjectRegistry.projectFor? (registry : ProjectRegistry) (moduleName : Name) : Option ProjectKey :=
   (registry.closure.find? (·.1 == moduleName)).map (·.2)
@@ -36,17 +34,6 @@ def ProjectRegistry.declarationProject? (registry : ProjectRegistry) (env : Envi
 
 def ProjectKey.projectId (project : ProjectKey) : String :=
   (toJson project).compress
-
-/-- Resolve project updates only from the owner's import closure and
-    only from modules owned by this Lake library. -/
-def ProjectRegistry.metadataFor (registry : ProjectRegistry) (env : Environment)
-    (owner : Name) :
-    Except Diagnostic ProjectInfo := do
-  let query : Query := { moduleName := owner }
-  let resolved ← freezeProjectInfo env query registry.selected.projectId fun moduleName =>
-    registry.projectFor? moduleName == some registry.selected
-  return if resolved.value.title.isEmpty then
-    { resolved.value with title := registry.selected.library } else resolved.value
 
 private def field [FromJson α] (value : Json) (key : String) : IO α :=
   match value.getObjValAs? α key with

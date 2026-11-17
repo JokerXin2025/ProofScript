@@ -3,7 +3,7 @@ import json
 from string import Template
 
 from PS4HTML.project import PS4HTMLError
-from PS4HTML.schema import SCHEMA_VERSION, validate_computation_function
+from PS4HTML.schema import validate_computation_function
 
 
 TEMPLATE = Template('''<section class="computation-component" data-computation data-renderer="$renderer" data-status="$status" data-bundle-id="$bundle_id">
@@ -15,9 +15,9 @@ TEMPLATE = Template('''<section class="computation-component" data-computation d
 
 
 def validate_computation(value):
-    """Validate provenance independently of the unchanged execution protocol."""
-    if not isinstance(value, dict) or value.get("schemaVersion") != SCHEMA_VERSION:
-        raise PS4HTMLError("Unsupported computation schema; rebuild with lake build <Library>:ps4html")
+    """Validate computation provenance."""
+    if not isinstance(value, dict):
+        raise PS4HTMLError("Invalid computation component")
     return validate_computation_function(value.get("function"))
 
 

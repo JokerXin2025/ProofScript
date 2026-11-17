@@ -1,7 +1,7 @@
 import ProofScript.Script.Command
 import ProofScript.Page.Component.Core
 import ProofScript.Output.Path
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 open Lean
 open ProofScript
@@ -12,13 +12,13 @@ private structure LatexComponent where
   language : String := "latex"
   source : String
   svg : Json
-deriving Inhabited, ToJson, FromJson
+deriving ToJson
 
 private def latexPreamble :=
   "\\documentclass[border=2pt,varwidth]{standalone}\n" ++
   "\\def\\pgfsysdriver{pgfsys-dvisvgm.def}\n" ++
   "\\usepackage{amsmath,amssymb,bm,mathrsfs}\n" ++
-  "\\usepackage{tikz,graphicx,booktabs,array,longtable,tabularx,multirow}\n" ++
+  "\\usepackage{tikz,tikz-cd,graphicx,booktabs,array,longtable,tabularx,multirow , mathrsfs}\n" ++
   "\\usetikzlibrary{cd}\n"
 
 private def cleanSvg (raw : String) : String :=
@@ -68,18 +68,15 @@ script_recorder «latex» => do
     | .ok value => pure value
     | .error message => throwErrorAt metadata message
   let content ← compileLatexToSvg code.getString
-  let (env, svg) := recordTextResource (← getEnv) "svg" "svg" "image/svg+xml" content
-  setEnv env
   record_value "metadata" (toJson metadata)
-  record_value "language" "latex"
-  record_value "source" code.getString
-  record_value "svg" svg
+  record_value "code" content
+  record_value "source" (Json.mkObj [("lang", toJson ("latex" : String)), ("code", toJson code.getString)])
   execute
   record_goal "$goal_after"
   record_context "$context_after"
 
 script_info «latex» {
-  renderer := «media»
+  renderer := «svg»
 }
 
 page_component "latex" metadata:componentMeta code:str => do
@@ -98,7 +95,7 @@ page_component "latex" metadata:componentMeta code:str => do
           | some label => #[("figure", label)]
           | none => #[]
         let (env, _) := recordTextResource (← getEnv) "svg" "svg" "image/svg+xml" content
-        match addComponent env { kind := "latex", value := toJson value } #[] labels with
+        match addComponent env { kind := "latex", value := toJson value } {} labels with
         | .ok env => setEnv env
         | .error message => throwErrorAt code.raw message
     | .error message => throwErrorAt metadata.raw message

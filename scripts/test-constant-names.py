@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Bare constants and fallback heads use frozen names without constant templates."""
+"""Frozen names, zero-arity templates, and theorem/application fallback names."""
 
 from pathlib import Path
 import json
@@ -15,6 +15,31 @@ from Lean2TeX.interactions import ExpressionInteractions
 from Lean2TeX.macros import MacroRegistry, macro_from_data
 from Lean2TeX.model import RenderTarget
 
+def argument(index, mode="formula"):
+    return {"kind": "argument", "index": index, "mode": mode, "max_precedence": False}
+
+
+def template(*parts, indices=(), label="formula", lang=None, mode="formula", precedence=60,
+              auto_arity=True):
+    instructions = [{"kind": "literal", "content": part} if isinstance(part, str) else dict(part)
+                    for part in parts]
+    content = "".join(part["content"] if part["kind"] == "literal" else
+                      ("#" if part["kind"] == "argument" else "@" * part["depth"]) + str(part["index"])
+                      for part in instructions)
+    return {"label": label, "lang": lang, "mode": mode, "content": content,
+            "precedence": precedence,
+            "auto_arity": auto_arity,
+            "argument_indices": list(indices), "instructions": instructions}
+
+
+def definition(name, *, arity=0, binder_infos=None, kind="concept", templates=(), default_template="formula", **fields):
+    infos = list(binder_infos) if binder_infos is not None else ["explicit"] * arity
+    return {"name": name, "names": [], "tags": [], "var_name": "", "kind": kind, "wrapper_index": None, "alias_target": None,
+            "templates": list(templates), "default_template": default_template, "calc_symbol": None,
+            "parameter_template": None, "extra": {}, "arity": len(infos), "binder_infos": infos,
+            "parameter_argument_indices": [index for index, info in enumerate(infos) if info == "explicit"],
+            **fields}
+
 
 def constant(name, kind=None):
     node = {"kind": "const", "name": name, "levels": []}
@@ -26,63 +51,79 @@ def app(fn, arg):
     return {"kind": "app", "fn": fn, "arg": arg}
 
 
+def localized(value, lang="zh"):
+    return [{"lang": lang, "value": value}]
+
+
 class ConstantNamesTest(unittest.TestCase):
     def setUp(self):
         registry = MacroRegistry()
-        registry.add(macro_from_data({
-            "name": "Names.fun", "kind": "concept", "argument_indices": [0, 1],
-            "default": "formula", "templates": [
-                {"label": "formula", "content": "#0+#1"},
-                {"label": "alternate", "lang": "en", "content": "#0\\cdot #1"}],
-        }))
-        registry.add(macro_from_data({
-            "name": "Names.atomic", "kind": "concept", "argument_indices": [],
-            "default": "formula", "templates": [{"label": "formula", "content": "WRONG"}],
-        }))
-        registry.add(macro_from_data({
-            "name": "Names.thm", "kind": "concept", "argument_indices": [0, 1],
-            "default": "formula", "templates": [{"label": "formula", "content": "WRONG"}],
-        }))
+        registry.add(macro_from_data(definition("Names.fun", arity=2, templates=[
+            template(argument(0), "+", argument(1), indices=[0, 1]),
+            template(argument(0), r"\cdot ", argument(1), indices=[0, 1], label="alternate", lang="en")],
+        )))
+        registry.add(macro_from_data(definition("Names.token", templates=[
+            template(r"\tau"), template("T", label="alternate")],
+        )))
+        registry.add(macro_from_data(definition("Names.thm", arity=2,
+            templates=[template("WRONG", indices=[0, 1])],
+        )))
         registry.aliases["Names.alias"] = "Names.atomic"
-        registry.declarations["Names.thm"] = {"kind": "theorem"}
-        self.renderer = Expr2TeX(registry, definition_names={
-            "Names.fun": "Function", "Names.atomic": "A_B", "Names.alias": "Alias",
-            "Names.proofDef": "Proof definition", "Names.thm": "Definition title",
-        }, theorem_names={"Names.thm": "Theorem title"})
+        registry.aliases["Names.tokenAlias"] = "Names.token"
+        registry.theorems.add("Names.thm")
+        self.renderer = Expr2TeX(registry, declaration_names={
+            "Names.fun": localized("Function"), "Names.atomic": localized("A_B"), "Names.alias": localized("Alias"),
+            "Names.proofDef": localized("Proof definition"), "Names.thm": localized("Definition title"),
+        }, theorem_names={"Names.thm": (localized("Theorem title"), "thm")})
 
     def render(self, expr):
         return self.renderer.render(expr, parent="Formula")
 
     def test_bare_and_partially_applied_constants(self):
         self.assertEqual(self.render(constant("Names.atomic")), r"\operatorname{A\_B}")
-        self.assertEqual(self.render(constant("Names.alias")), r"\operatorname{Alias}")
+        self.assertEqual(self.render(constant("Names.alias")), r"\operatorname{A\_B}")
         self.assertEqual(self.render(app(constant("Names.fun"), constant("Names.atomic"))),
                          r"\operatorname{Function}\left(\operatorname{A\_B}\right)")
         self.assertEqual(self.render(constant("Names.unconfigured")), r"\operatorname{Names.unconfigured}")
 
     def test_complete_application_still_uses_template(self):
         expr = app(app(constant("Names.fun"), constant("Names.atomic")), constant("Names.alias"))
-        self.assertEqual(self.render(expr), r"\operatorname{A\_B}+\operatorname{Alias}")
+        self.assertEqual(self.render(expr), r"\operatorname{A\_B}+\operatorname{A\_B}")
 
-    def test_theorem_identity_uses_declaration_kind_not_proof_type(self):
+    def test_zero_argument_template_and_alias_are_used_on_bare_constants(self):
+        self.assertEqual(self.render(constant("Names.token")), r"\tau")
+        self.assertEqual(self.render(constant("Names.tokenAlias")), r"\tau")
+        self.assertEqual(self.renderer.render(constant("Names.token"), parent="Formula", label="alternate"), "T")
+        self.assertEqual(self.render(app(constant("Names.token"), constant("Names.atomic"))),
+                         r"\operatorname{Names.token}\left(\operatorname{A\_B}\right)")
+
+    def test_theorem_identity_uses_frozen_info_kind_not_expression_metadata(self):
         theorem = constant("Names.thm", "theorem")
         self.assertEqual(self.renderer.convert(theorem).kind, "theorem")
         self.assertEqual(self.render(theorem), r"\operatorname{Theorem title}")
         self.assertEqual(self.renderer.convert(constant("Names.thm")).kind, "theorem")
+        self.assertEqual(self.renderer.convert(constant("Names.thm", "definition")).kind, "theorem")
         self.assertEqual(self.render(app(theorem, constant("Names.atomic"))),
                          r"\operatorname{Theorem title}\left(\operatorname{A\_B}\right)")
         complete = app(app(theorem, constant("Names.atomic")), constant("Names.alias"))
         self.assertEqual(self.renderer.convert(complete).children[0].kind, "theorem")
         self.assertEqual(self.render(complete),
-                         r"\operatorname{Theorem title}\left(\operatorname{A\_B},\operatorname{Alias}\right)")
+                          r"\operatorname{Theorem title}\left(\operatorname{A\_B},\operatorname{A\_B}\right)")
         proof_definition = constant("Names.proofDef", "definition")
         self.assertEqual(self.renderer.convert(proof_definition).kind, "const")
         self.assertEqual(self.render(proof_definition), r"\operatorname{Proof definition}")
 
+    def test_native_theorem_with_concept_kind_uses_configured_template(self):
+        configured = constant("Names.fun", "theorem")
+        self.assertEqual(self.renderer.convert(configured).kind, "const")
+        complete = app(app(configured, constant("Names.atomic")), constant("Names.alias"))
+        self.assertEqual(self.renderer.convert(complete).kind, "concept")
+        self.assertEqual(self.render(complete), r"\operatorname{A\_B}+\operatorname{A\_B}")
+
     def test_configuration_passes_frozen_names_to_renderer(self):
         config = EffectiveConfiguration(self.renderer.registry, {}, {},
-                                        {"Names.atomic": "Frozen constant"},
-                                        {"Names.thm": "Frozen theorem"})
+                                         {"Names.atomic": localized("Frozen constant")},
+                                         {"Names.thm": (localized("Frozen theorem"), "thm")})
         renderer = Expr2TeX.from_config(config)
         self.assertEqual(renderer.render(constant("Names.atomic"), parent="Formula"),
                          r"\operatorname{Frozen constant}")
@@ -95,8 +136,8 @@ class ConstantNamesTest(unittest.TestCase):
         cases = []
         for suffix in ("First", "Second"):
             config = EffectiveConfiguration(self.renderer.registry, {}, {},
-                {"Names.atomic": f"{suffix}_constant", "Names.fun": "Function"},
-                {"Names.thm": f"{suffix} theorem"})
+                {"Names.atomic": localized(f"{suffix}_constant", "en"), "Names.fun": localized("Function", "en")},
+                {"Names.thm": (localized(f"{suffix} theorem", "en"), "thm")})
             renderer = Expr2TeX.from_config(config)
             renderer.interactions = interactions
             expressions = [constant("Names.atomic"), constant("Names.thm", "theorem"),
@@ -137,8 +178,8 @@ process.stdout.write(JSON.stringify(Object.fromEntries(Object.entries(roots).map
         choice = RenderTarget("constant", "Names.fun")
         for root_id, suffix in (("r4", "First"), ("r9", "Second")):
             config = EffectiveConfiguration(self.renderer.registry, {}, {},
-                {"Names.atomic": f"{suffix}_constant", "Names.fun": "Function"},
-                {"Names.thm": f"{suffix} theorem"})
+                {"Names.atomic": localized(f"{suffix}_constant", "en"), "Names.fun": localized("Function", "en")},
+                {"Names.thm": (localized(f"{suffix} theorem", "en"), "thm")})
             expr = app(app(constant("Names.fun"), constant("Names.atomic")),
                        constant("Names.thm", "theorem"))
             expected = Expr2TeX.from_config(config).render(

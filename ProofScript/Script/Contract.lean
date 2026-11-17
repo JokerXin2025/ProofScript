@@ -7,13 +7,8 @@ namespace ProofScript
 open Lean
 open scoped InfoJson
 
-def recordingContractVersion : String := "2"
-def recordingProtocolVersion : String := "0.4.0"
-
 /-- Immutable invocation metadata; generated parser/elaborator names are not contract identity. -/
 structure RecordingContract where
-  contractVersion : String := recordingContractVersion
-  recordingVersion : String := recordingProtocolVersion
   ruleId : Name
   name : String
   kind : ScriptKind

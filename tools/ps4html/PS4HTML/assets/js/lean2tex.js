@@ -238,7 +238,7 @@
         const kindClass = occurrence?.kind === "fvar" ? "ps-expression-fvar"
             : occurrence?.kind === "bvar" ? "ps-expression-bvar"
             : occurrence?.kind === "binder" ? "ps-expression-binder" : null;
-        // Only a variable occurrence may activate its nested legacy marker.
+        // Only a variable occurrence may activate its nested variable marker.
         // A parent expression must never light up its child fvar/bvar.
         const reference = kindClass && (node.matches("[data-l2t-ref]")
             ? node : node.querySelector("[data-l2t-ref]"));
@@ -413,7 +413,7 @@
                 occurrenceNodes.get(id).push(node);
                 const entityKey = occurrences[id]?.entityKey;
                 if (entityKey) node.dataset.psEntityKey = entityKey;
-                if (entityKey && window.PS4HTMLTemplateSwitcher?.hasChoices?.(entityKey, occurrences[id])) {
+                if (entityKey && window.PS4HTMLTemplateSwitcher?.hasChoices?.(entityKey, occurrences[id], id)) {
                     node.classList.add("ps-expression-switchable");
                 }
             });
@@ -449,7 +449,7 @@
                 ? state.candidates[state.selected] : candidates[0];
             return id ? {anchor, id, occurrence: occurrences[id]} : null;
         },
-        replaceFragments(root, mapping) {
+        replaceFragments(root, mapping, templateIdentities = {}) {
             const old = root.querySelectorAll("[data-ps-expr-fragment]");
             const replaced = new Set(Array.from(old, item => item.dataset.psExprFragment));
             Object.values(occurrences).forEach(item => {
@@ -463,6 +463,9 @@
                     if (!occurrences[parent].fragmentIds.includes(id)) occurrences[parent].fragmentIds.push(id);
                     parent = occurrences[parent].parentId;
                 }
+            });
+            Object.entries(templateIdentities).forEach(([id, identity]) => {
+                if (occurrences[id]) occurrences[id].details.templateIdentity = identity;
             });
             clearPinned();
             clearHover();

@@ -72,7 +72,6 @@ def resourceJson (path : FilePath) (content mediaType : String) := json% {
 structure TextResource where
   path : FilePath
   content : String
-  deriving Inhabited
 
 initialize textResourceExt : SimplePersistentEnvExtension TextResource Unit ←
   registerSimplePersistentEnvExtension {

@@ -8,7 +8,7 @@ inductive ReferenceKind where
 | heading
 | theorem
 | figure
-deriving Inhabited, Repr, BEq, Hashable, ToJson, FromJson
+deriving Repr, BEq, Hashable, ToJson
 
 inductive Inline where
 | text (value : String)
@@ -26,7 +26,7 @@ inductive Inline where
 | math (latex : String)
 | softBreak
 | hardBreak
-deriving Inhabited, Repr, ToJson, FromJson
+deriving ToJson
 
 private def validLabel (label : String) : Bool :=
   match label.toList with

@@ -27,4 +27,4 @@ Script 模板继续使用实际表达式字段占位符，例如 `${subject}`；
 
 每个定理创建独立 ProofEngine 和渲染器。外部调用者复用实例时应在定理边界调用 `renderer.reset()`。`render` 在转换或排版异常时恢复本次新增的计数和缓存；分开调用时，成功的 `convert` 提交分配，`render_display` 不改变分配状态。局部定义的类型和值由专用 `let` 步骤展示，后续引用不生成声明悬停提示。
 
-命名系统只保留表达式注解、声明前缀、前缀计数器、fvar 自动名称缓存和绑定身份。内置 `Nat/Int → n`、`Rat → q` 由基础配置提供，`Real → x` 可由用户或 Mathlib 相关配置提供；没有名字池、名称占用或作用域释放接口。模块导出协议为 `14.0.0`，录制协议为 `0.4.0`，调用契约为 `2`；旧缓存须重新执行 `lake build MyLibrary:ps4html`。完整接口见 [Lean2TeX 说明](Lean2TeX/README.md)。
+命名系统只保留表达式注解、声明前缀、前缀计数器、fvar 自动名称缓存和绑定身份。`Nat/Int → n`、`Rat → q`、`Real → x` 等前缀通过页面或用户配置模块的 decl_info.var_name 明确设置；没有名字池、名称占用或作用域释放接口。格式变化后须重新执行 `lake build MyLibrary:ps4html`。完整接口见 [Lean2TeX 说明](Lean2TeX/README.md)。

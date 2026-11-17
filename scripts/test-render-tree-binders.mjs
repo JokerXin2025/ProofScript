@@ -12,12 +12,20 @@ const exists = {occurrence: 'exists', name: 'Exists', kind: 'concept', metadata:
     ]},
 ]};
 const key = '["constant", "Exists"]';
-const catalog = {[key]: {kind: 'concept', default: 'formula', templates: [
-    {label: 'formula', lang: null, mode: 'formula', content: '\\exists\\ @1\\in #0,\\ @@1',
-        binders: {'1': 1}, isolatedArguments: [], fixity: 'binder', precedence: 20, associativity: 'none'},
-    {label: 'function', lang: 'en', mode: 'formula', content: 'Exists(#0,#1)',
-        binders: {}, isolatedArguments: [], fixity: 'binder', precedence: 20, associativity: 'none'},
+const argument = index => ({kind: 'argument', index, mode: 'formula', max_precedence: false});
+const binder = (index, depth) => ({kind: 'binder', index, depth, mode: 'formula', max_precedence: false});
+const body = (index, depth) => ({kind: 'body', index, depth, mode: 'formula', max_precedence: false});
+const literal = content => ({kind: 'literal', content});
+const template = (label, instructions, options = {}) => ({
+    label, lang: null, mode: 'formula', content: 'inspection only',
+    autoArity: true, argumentIndices: [0, 1],
+    precedence: 60, instructions, ...options,
+});
+const catalog = {[key]: {kind: 'concept', arity: 2, default: 'formula', templates: [
+    template('formula', [literal('\\exists\\ '), binder(1, 1), literal('\\in '), argument(0), literal(',\\ '), body(1, 1)]),
+    template('function', [literal('Exists('), argument(0), literal(','), argument(1), literal(')')], {lang: 'en'}),
 ]}};
+exists.metadata.headConst = 'Exists';
 const owned = [];
 const tex = render(exists, catalog, {}, 'zh', 'formula', id => {
     owned.push(id);
@@ -28,21 +36,38 @@ assert.doesNotMatch(tex, /\\mapsto|\\operatorname\{fun\}/);
 assert.ok(!owned.includes('lambda'), 'the lambda itself is not rendered when the template uses binder selectors');
 assert.ok(owned.includes('binder') && owned.includes('body') && owned.includes('exists'));
 
-const symbolicCatalog = {
-    '["constant", "Add"]': {kind: 'operator', symbol: '+', fixity: 'infix', precedence: 65,
-        associativity: 'left', templates: [], default: 'formula'},
-    '["constant", "Eq"]': {kind: 'relation', symbol: '=', fixity: 'infix', precedence: 50,
-        associativity: 'none', templates: [], default: 'formula'},
-    '["constant", "Neg"]': {kind: 'operator', symbol: '-', fixity: 'prefix', precedence: 75,
-        associativity: 'none', templates: [], default: 'formula'},
+const unifiedCatalog = {
+    '["constant", "Add"]': {kind: 'operator', arity: 2, default: '$infixl', templates: [
+        template('$infixl', [argument(0), literal('+'), argument(1)], {precedence: 65})]},
+    '["constant", "Eq"]': {kind: 'relation', arity: 2, default: '$relation', templates: [
+        template('$relation', [argument(0), literal('='), argument(1)], {precedence: 50})]},
+    '["constant", "Neg"]': {kind: 'operator', arity: 1, default: '$prefix', templates: [
+        template('$prefix', [literal('-'), argument(0)], {precedence: 75, argumentIndices: [0]})]},
 };
-const sum = {occurrence: 'sum', name: 'Add', kind: 'operator', metadata: {leanName: 'Add'},
+const sum = {occurrence: 'sum', name: 'Add', kind: 'operator', metadata: {leanName: 'Add', headConst: 'Add'},
     children: [leaf('a', 'a', 'fvar'), leaf('b', 'b', 'fvar')]};
-const equality = {occurrence: 'eq', name: 'Eq', kind: 'relation', metadata: {leanName: 'Eq'},
+const equality = {occurrence: 'eq', name: 'Eq', kind: 'relation', metadata: {leanName: 'Eq', headConst: 'Eq'},
     children: [sum, leaf('c', 'c', 'fvar')]};
-const negative = {occurrence: 'neg', name: 'Neg', kind: 'operator', metadata: {leanName: 'Neg'}, children: [sum]};
-assert.equal(render(equality, symbolicCatalog, {}, 'zh', 'formula'), 'a+b=c');
-assert.equal(render(negative, symbolicCatalog, {}, 'zh', 'formula'), '-\\left(a+b\\right)');
+const negative = {occurrence: 'neg', name: 'Neg', kind: 'operator', metadata: {leanName: 'Neg', headConst: 'Neg'}, children: [sum]};
+assert.equal(render(equality, unifiedCatalog, {}, 'zh', 'formula'), 'a+b=c');
+assert.equal(render(negative, unifiedCatalog, {}, 'zh', 'formula'), '-\\left(a+b\\right)');
+
+function nested(label, left) {
+    const inner = {occurrence: 'inner', name: 'Assoc', kind: 'operator',
+        metadata: {leanName: 'Assoc', headConst: 'Assoc'}, children: [leaf('a', 'a', 'fvar'), leaf('b', 'b', 'fvar')]};
+    const outer = {occurrence: 'outer', name: 'Assoc', kind: 'operator',
+        metadata: {leanName: 'Assoc', headConst: 'Assoc'},
+        children: left ? [inner, leaf('c', 'c', 'fvar')] : [leaf('c', 'c', 'fvar'), inner]};
+    const templates = {'["constant", "Assoc"]': {kind: 'operator', arity: 2, default: label,
+        templates: [template(label, [argument(0), literal('+'), argument(1)], {precedence: 65})]}};
+    return render(outer, templates, {}, 'zh', 'formula');
+}
+assert.equal(nested('$infixl', true), 'a+b+c');
+assert.equal(nested('$infixl', false), 'c+\\left(a+b\\right)');
+assert.equal(nested('$infixr', true), '\\left(a+b\\right)+c');
+assert.equal(nested('$infixr', false), 'c+a+b');
+assert.equal(nested('$infix', true), '\\left(a+b\\right)+c');
+assert.equal(nested('$infix', false), 'c+\\left(a+b\\right)');
 
 const letKey = '["builtin", "let"]';
 const letCatalog = {[letKey]: {default: 'where', templates: [

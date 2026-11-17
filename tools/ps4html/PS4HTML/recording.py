@@ -1,7 +1,5 @@
 """Recorded step envelopes and access to their actual template values."""
 
-PROOF_SCHEMA_VERSION = "0.4.0"
-UNRECORDED_RULE_ID = "ProofScript.unrecorded"
 RULE_ID_FIELD = "$ruleId"
 BRANCHES_FIELD = "$branches"
 

@@ -55,6 +55,23 @@ class SemanticConverter:
             self._link_occurrences(root)
             return root
 
+    def convert_relation_head(self, expr: dict) -> DisplayNode | None:
+        """A calc symbol denotes its constant head, without displaying arguments."""
+        self.diagnostics.clear()
+        self._expanded_nodes = 0
+        head, args = flatten_app(expr, visit=self._visit)
+        structural, _ = unwrap_mdata(head, visit=self._visit)
+        if not isinstance(structural, dict) or structural.get("kind") != "const":
+            return None
+        node = self.convert(head)
+        macro = self.registry.get(structural["name"])
+        node.kind = macro.kind if macro is not None else "const"
+        whole, data = unwrap_mdata(expr)
+        node.metadata.update(_occurrence_details(data))
+        node.metadata.update(headConst=structural["name"], rawArgumentCount=len(args),
+                             originalExprKind=whole.get("kind"))
+        return node
+
     def _convert(self, expr: object, path: tuple[int, ...], bindings: list[_Binding]) -> DisplayNode:
         self._visit()
         if self._depth >= self.MAX_DEPTH:
@@ -88,20 +105,25 @@ class SemanticConverter:
             return self._convert_app(occurrence, path, bindings)
         if kind == "const":
             name = str(expr.get("name", ""))
-            chain = self.registry.alias_chain(name)
             _, data = unwrap_mdata(occurrence)
             declaration = _declaration_details(data)
-            if declaration["kind"] is None:
-                declaration["kind"] = (self.registry.declarations.get(name) or {}).get("kind")
+            is_theorem = name in self.registry.theorems
+            chain = [name] if is_theorem else self.registry.alias_chain(name)
             metadata = {
                 "leanName": name, "displayName": chain[-1], "aliasChain": chain,
                 "traits": ("alias",) if len(chain) > 1 else (), "originalExprKind": kind,
                 "declaration": declaration, "levels": expr.get("levels"),
             }
             if len(chain) > 1:
-                metadata["aliasTarget"] = {"name": chain[-1],
-                                           "declaration": self.registry.declarations.get(chain[-1])}
-            return DisplayNode(name, "theorem" if declaration["kind"] == "theorem" else "const", metadata=metadata)
+                metadata["aliasTarget"] = {"name": chain[-1]}
+            if is_theorem or chain[-1] in self.registry.theorems:
+                return DisplayNode(name, "theorem", metadata=metadata)
+            macro = self.registry.get(name)
+            if macro is not None and macro.templates and macro.arity == 0:
+                return DisplayNode(macro.name, macro.kind, metadata={
+                    **metadata, "headConst": name, "rawArgumentCount": 0,
+                })
+            return DisplayNode(name, "const", metadata=metadata)
         if kind == "lit":
             literal = expr.get("lit", {})
             value = literal.get("value", "?") if isinstance(literal, dict) else "?"
@@ -153,9 +175,7 @@ class SemanticConverter:
             chain = self.registry.alias_chain(name)
             canonical_name = chain[-1]
             _, head_data = unwrap_mdata(head)
-            declaration_kind = _string(head_data, "ProofScript.declarationKind") or (
-                self.registry.declarations.get(name) or {}).get("kind")
-            if declaration_kind == "theorem":
+            if name in self.registry.theorems or canonical_name in self.registry.theorems:
                 return self._application_fallback(head, args, path, bindings, name)
             levels = structural_head.get("levels")
             identity = {"leanName": name, "displayName": canonical_name, "aliasChain": chain,
@@ -164,11 +184,10 @@ class SemanticConverter:
                         "levels": levels,
                         "headExpressionType": _string(head_data, "ProofScript.exprType")}
             if len(chain) > 1:
-                identity["aliasTarget"] = {"name": canonical_name,
-                                           "declaration": self.registry.declarations.get(canonical_name)}
+                identity["aliasTarget"] = {"name": canonical_name}
             unwrap = self.registry.unwraps.get(name) or self.registry.unwraps.get(canonical_name)
             if unwrap is not None:
-                if unwrap.argument < len(args):
+                if len(args) == unwrap.arity:
                     child = self._convert(args[unwrap.argument], path + (unwrap.argument,), bindings)
                     return DisplayNode(name, "wrapper", [child], metadata={
                         **identity, "traits": (*identity["traits"], "wrapper"),
@@ -176,23 +195,18 @@ class SemanticConverter:
                         "unwrapArgument": unwrap.argument, "unwrapRuleName": unwrap.name,
                         "originalExprKind": "app",
                     })
-                self._diagnose("L2T002", f"unwrap argument index {unwrap.argument} out of range for {len(args)} arguments", path, name)
-            name = canonical_name
-            macro = self.registry.get(name)
+                return self._application_fallback(head, args, path, bindings, name)
+            macro = self.registry.get(canonical_name)
             if macro is not None:
-                selected = list(macro.arguments)
-                if macro.kind == "concept" and not macro.auto_arity:
-                    selected = list(range(len(args)))
-                if any(index >= len(args) for index in selected):
-                    self._diagnose("L2T002", f"macro argument index out of range for {len(args)} arguments", path, name)
-                    converted_head = self._convert(head, path + (0,), bindings)
-                    children = [converted_head] + [self._convert(arg, path + (i + 1,), bindings) for i, arg in enumerate(args)]
-                    return DisplayNode("application", "application", children, metadata={
-                        **identity, "headConst": name, "rawArgumentCount": len(args)})
-                children = [self._convert(args[index], path + (index,), bindings) for index in selected]
-                display = DisplayNode(name, macro.kind, children, metadata={
+                if not macro.templates or len(args) != macro.arity:
+                    return self._application_fallback(head, args, path, bindings, name)
+                # Each native slot is converted exactly once. All templates,
+                # including raw/explicit variants and structural fallbacks,
+                # share these children and their allocated variable identities.
+                children = [self._convert(arg, path + (index,), bindings) for index, arg in enumerate(args)]
+                display = DisplayNode(canonical_name, macro.kind, children, metadata={
                     **identity, "headConst": name, "rawArgumentCount": len(args),
-                    "selectedArgumentIndices": selected, "originalExprKind": "app",
+                    "originalExprKind": "app",
                 })
                 return display
         if head_name is not None:
@@ -201,6 +215,10 @@ class SemanticConverter:
 
     def _application_fallback(self, head, args, path, bindings, name):
         converted_head = self._convert(head, path + (0,), bindings)
+        if converted_head.metadata.get("originalExprKind") == "const" and converted_head.kind != "theorem":
+            # Even an overapplied zero-arity declaration uses its ordinary name
+            # as the application head, rather than its zero-argument template.
+            converted_head.kind = "const"
         children = [converted_head] + [self._convert(arg, path + (i + 1,), bindings) for i, arg in enumerate(args)]
         metadata = {"headConst": name, "rawArgumentCount": len(args)}
         if isinstance(name, str):
@@ -212,8 +230,7 @@ class SemanticConverter:
                             levels=structural_head.get("levels"),
                             headExpressionType=_string(head_data, "ProofScript.exprType"))
             if len(chain) > 1:
-                metadata["aliasTarget"] = {"name": chain[-1],
-                                           "declaration": self.registry.declarations.get(chain[-1])}
+                metadata["aliasTarget"] = {"name": chain[-1]}
         return DisplayNode("application", "application", children, metadata=metadata)
 
     def _convert_fvar(self, expr, occurrence) -> DisplayNode:
@@ -274,7 +291,7 @@ class SemanticConverter:
 
     def _link_occurrences(self, root: DisplayNode) -> None:
         # The ID is local to one converter's render session; a page renderer
-        # prefixes it with the theorem and language-panel instance in phase 4.
+        # prefixes it with the theorem and language-panel instance.
         pending = [(root, None)]
         while pending:
             node, parent_id = pending.pop()

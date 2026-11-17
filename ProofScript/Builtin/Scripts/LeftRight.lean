@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «left»
@@ -11,7 +11,7 @@ script_macro «left»
 )
 
 script_info «left» {
-  template := [{
+  templates := [{
     lang := zh, tag := "明确目标",
     content := ""
   }, {
@@ -29,7 +29,7 @@ script_macro «right»
 )
 
 script_info «right» {
-  template := [{
+  templates := [{
     lang := zh, tag := "明确目标",
     content := ""
   }, {

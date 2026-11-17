@@ -6,11 +6,13 @@ import json
 import re
 import hashlib
 
-from .model import RenderTarget
+from .model import RenderTarget, visible_node
 from .builtin_styles import ACTIVE_KEYS, STYLE_BY_KEY, target_for_node
 from .numerals import numeral_styles
 from .universes import sort_styles
 from .mixed import ATOM, STYLES, eligible_literals
+from .macros import DISPLAY_KINDS
+from .names import select_name
 import html
 
 
@@ -32,27 +34,51 @@ class ExpressionInteractions:
         self._render_depth = 0
 
     def add_root(self, root, mapping, registry, language, parent_mode,
-                 definition_names=None, theorem_names=None):
+                  declaration_names=None, theorem_names=None, *, selections=None, label=None):
         self._root_count += 1
         root_id = f"r{self._root_count}"
         dependencies = set()
-        names = {"definition": {}, "theorem": {}}
+        names = {"decl": {}, "theorem": {}}
         template_keys = set()
-        html_literals = eligible_literals(root, registry, language) if parent_mode == "text" else set()
+        initial = {target.as_key(): value for target, value in (selections or {}).items()}
+        visible_root = visible_node(root)
+        root_key = self._key(visible_root, "")
+        html_literals = eligible_literals(root, registry, language, selections) if parent_mode == "text" else set()
+        mixed_root = bool(html_literals and visible_root.kind != "literal")
 
         def serialize(node):
             key = self._key(node, "")
             if key and json.loads(key)[0] in ("constant", "builtin"):
                 dependencies.add(key)
-                if node.kind in ("concept", "operator", "relation") and node.metadata.get("originalExprKind") == "app":
+                if node.kind in DISPLAY_KINDS and node.metadata.get("headConst"):
                     template_keys.add(key)
-            if node.kind in ("const", "theorem"):
+                    if node.children:
+                        # A language or binder mismatch may use ordinary
+                        # application, whose page-wide style remains selectable.
+                        dependencies.add(RenderTarget("builtin", "application").as_key())
+            if node.kind in ("const", "theorem") or node.kind in DISPLAY_KINDS:
                 original = node.metadata.get("leanName", node.macro_name)
-                source = theorem_names if node.kind == "theorem" else definition_names
-                names["theorem" if node.kind == "theorem" else "definition"][original] = (source or {}).get(original) or original
+                source = theorem_names if node.kind == "theorem" else declaration_names
+                category = "theorem" if node.kind == "theorem" else "decl"
+                canonical = node.metadata.get("displayName", original)
+                configured = (source or {}).get(canonical, ([], None) if category == "theorem" else [])
+                entries, last = configured if category == "theorem" else (configured, None)
+                names[category][original] = select_name(entries, language, canonical,
+                    theorem=category == "theorem", lean_last_component=last)
             metadata = {name: value for name, value in node.metadata.items() if name in (
                 "leanName", "headConst", "originalExprKind", "isArrow", "literalKind",
-                "fvarId", "bindId", "bindRef")}
+                "fvarId", "bindId", "bindRef", "rawArgumentCount")}
+            if node.kind in DISPLAY_KINDS and node.metadata.get("headConst"):
+                macro = registry.get(node.macro_name)
+                requested = initial.get(key, label if node is visible_root else None)
+                selected = registry.template_for(macro, requested, node, language) if macro else None
+                identity = {"label": selected.label, "lang": selected.language} if selected else None
+                metadata["templateIdentity"] = identity
+                self.occurrences[mapping[id(node)]]["details"]["templateIdentity"] = identity
+            if label is not None and node is visible_root and root_key is not None:
+                metadata["requestedTemplate"] = label
+            if mixed_root and node is visible_root:
+                metadata["mixedRoot"] = True
             if node.kind == "literal" and node.metadata.get("literalKind") == "literal.str":
                 metadata["htmlEligible"] = id(node) in html_literals
                 self.occurrences[mapping[id(node)]]["details"]["htmlEligible"] = metadata["htmlEligible"]
@@ -75,8 +101,6 @@ class ExpressionInteractions:
             }
 
         tree = serialize(root)
-        if html_literals and root.kind != "literal":
-            tree["metadata"]["mixedRoot"] = True
         catalog = {}
         for key in sorted(dependencies):
             category, name = json.loads(key)
@@ -91,24 +115,22 @@ class ExpressionInteractions:
             if key not in template_keys:
                 continue
             macro = registry.get(name)
-            if macro is None:
+            if macro is None or not macro.templates:
                 continue
             catalog[key] = {
-                "default": macro.default_label, "kind": macro.kind, "symbol": macro.symbol,
-                "fixity": macro.fixity, "precedence": macro.precedence,
-                "associativity": macro.associativity,
+                "default": macro.default_label, "kind": macro.kind, "arity": macro.arity,
                 "templates": [{"label": item.label, "lang": item.language,
                                "mode": item.mode, "content": item.content,
-                               "fixity": item.fixity, "precedence": item.precedence,
-                               "associativity": item.associativity,
-                               "binders": item.binders,
-                               "isolatedArguments": sorted(item.isolated_arguments)}
+                               "precedence": item.precedence,
+                               "autoArity": item.auto_arity,
+                               "argumentIndices": list(item.argument_indices),
+                               "instructions": [instruction.as_dict() for instruction in item.instructions]}
                               for item in macro.templates],
             }
         self.render_roots[root_id] = {
             "tree": tree, "dependencies": sorted(dependencies), "catalog": catalog,
             "names": names,
-            "language": language, "parentMode": parent_mode,
+            "language": language, "parentMode": parent_mode, "initialSelections": initial,
         }
         return root_id
 
@@ -267,7 +289,7 @@ class ExpressionInteractions:
         return ATOM.sub(literal, output)
 
     def as_dict(self):
-        return {"version": 2, "entities": self.entities, "occurrences": self.occurrences,
+        return {"entities": self.entities, "occurrences": self.occurrences,
                 "renderRoots": self.render_roots}
 
     def retain_visible(self, html: str) -> None:

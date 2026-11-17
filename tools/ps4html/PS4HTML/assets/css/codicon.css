@@ -54,6 +54,7 @@
 .codicon-triangle-right:before { content: "\eb70" }
 .codicon-symbol-color:before { content: "\eb5c" }
 .codicon-home:before { content: "\eb06" }
+.codicon-search:before { content: "\ea6d" }
 .codicon-globe:before { content: "\eb01" }
 .codicon-settings:before { content: "\eb52" }
 .codicon-share:before { content: "\ec25" }
@@ -61,3 +62,4 @@
 .codicon-vm-connect:before { content: "\eba9" }
 .codicon-add:before { content: "\ea60" }
 .codicon-remove:before { content: "\eb3b" }
+.codicon-copy:before { content: "\ebcc" }

@@ -19,13 +19,40 @@ ET.register_namespace("xlink", "http://www.w3.org/1999/xlink")
 TEMPLATE_DIR = Path(__file__).absolute().parent.parent / "Templates"
 TEMPLATE_MEDIA = Template((TEMPLATE_DIR / "media.html").read_text())
 TEMPLATE_LATEX = Template((TEMPLATE_DIR / "latex.html").read_text())
-TEMPLATE_INLINE_LATEX = Template((TEMPLATE_DIR / "inline_latex.html").read_text())
 TEMPLATE_MEDIA_ERROR = Template((TEMPLATE_DIR / "media_error.html").read_text())
 
 
+def render_svg(value, proof, *, language):
+    """Render recorded SVG using the page media presentation."""
+    metadata = value["metadata"]
+    code = value["code"]
+    source = value.get("source")
+    if not code:
+        return "<!-- Silent Step: svg (empty) -->"
+    try:
+        svg = _sanitize_svg(code)
+    except ValueError as error:
+        rendered, diagnostics = _error(_title(metadata, "SVG"), str(error))
+        proof.diagnostics.extend(diagnostics)
+        return rendered
+    encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
+    parameters = dict(
+        anchor=html.escape(f"figure-{metadata['label']}" if metadata.get("label") else "", quote=True),
+        title=html.escape(_title(metadata, "SVG")),
+        extra=html.escape(json.dumps(metadata.get("extra", []), ensure_ascii=False), quote=True),
+        uri=html.escape(f"data:image/svg+xml;base64,{encoded}", quote=True),
+        alt=html.escape(_title(metadata, "SVG"), quote=True),
+    )
+    if source is None:
+        return TEMPLATE_MEDIA.substitute(**parameters, kind="svg", source_block="")
+    highlighted = highlight_code(source["code"], source["lang"], theme="light")[0]
+    return TEMPLATE_LATEX.substitute(**parameters, source=highlighted,
+                                     source_language=html.escape(source["lang"]),
+                                     source_button_title="查看源代码")
+
+
 def render_latex(value, project_root: Path | None = None,
-                 resource_loader: ResourceLoader | None = None, *,
-                 inline: bool = False) -> tuple[str, list[dict]]:
+                 resource_loader: ResourceLoader | None = None) -> tuple[str, list[dict]]:
     if not isinstance(value, dict):
         return _error("LaTeX", "Invalid LaTeX component")
     metadata, svg, source = value.get("metadata"), value.get("svg"), value.get("source")
@@ -52,8 +79,6 @@ def render_latex(value, project_root: Path | None = None,
         title = html.escape(_title(metadata, "LaTeX")),
         extra = html.escape(json.dumps(metadata.get("extra", []), ensure_ascii = False), quote = True),
     )
-    if inline:
-        return TEMPLATE_INLINE_LATEX.substitute(**parameters, svg_code=svg), []
     highlighted_source = highlight_code(source, "latex", theme="light")[0]
     encoded = base64.b64encode(svg.encode("utf-8")).decode("ascii")
     return TEMPLATE_LATEX.substitute(
@@ -61,35 +86,30 @@ def render_latex(value, project_root: Path | None = None,
         uri=html.escape(f"data:image/svg+xml;base64,{encoded}", quote=True),
         alt="LaTeX SVG",
         source=highlighted_source,
+        source_language="LaTeX",
+        source_button_title="查看 LaTeX 源代码",
     ), []
 
 
-def render_figure(value, project_root: Path, export_root: Path | None = None) -> tuple[str, list[dict]]:
+def render_figure(value, export_root: Path) -> tuple[str, list[dict]]:
     if not isinstance(value, dict):
         return _error("Figure", "Invalid figure component")
     metadata, resource, extension = value.get("metadata"), value.get("path"), value.get("extension")
     if not isinstance(metadata, dict) or not isinstance(resource, str) or not isinstance(extension, str):
         return _error("Figure", "Figure component is missing required fields")
-    relative = Path(resource)
-    if relative.is_absolute():
-        return _error(_title(metadata, "Figure"), "Figure resource path must be relative")
-    source_root = project_root
-    if export_root is not None:
-        descriptor = value.get("resource", {}).get("$resource") if isinstance(value.get("resource"), dict) else None
-        if not isinstance(descriptor, dict) or descriptor.get("path") != resource or not resource.startswith(".ProofScript/resources/"):
-            raise PS4HTMLError("Figure has no matching exported resource")
-        relative = Path(resource.removeprefix(".ProofScript/"))
-        source_root = export_root
-    path = (source_root / relative).resolve()
+    descriptor = value.get("resource", {}).get("$resource") if isinstance(value.get("resource"), dict) else None
+    if not isinstance(descriptor, dict) or descriptor.get("path") != resource or not resource.startswith(".ProofScript/resources/"):
+        raise PS4HTMLError("Figure has no matching exported resource")
+    path = (export_root / resource.removeprefix(".ProofScript/")).resolve()
     try:
-        path.relative_to(source_root.resolve())
+        path.relative_to(export_root.resolve())
     except ValueError:
         return _error(_title(metadata, "Figure"), "Figure resource escapes the Lean project")
     try:
         content = path.read_bytes()
     except OSError as error:
         return _error(_title(metadata, "Figure"), f"Unable to read figure resource: {error}")
-    if export_root is not None and hashlib.sha256(content).hexdigest() != descriptor.get("hash"):
+    if hashlib.sha256(content).hexdigest() != descriptor.get("hash"):
         raise PS4HTMLError("Figure resource hash mismatch")
     mime = mimetypes.guess_type(path.name)[0]
     if mime is None:
@@ -107,7 +127,7 @@ def _render(kind, metadata, uri, alt, source):
         title = html.escape(_title(metadata, kind.title())),
         uri = html.escape(uri, quote = True),
         alt = html.escape(alt, quote = True),
-        source = html.escape(source, quote = True),
+        source_block = f'<span class="page-media-source" title="{html.escape(source, quote=True)}">{html.escape(source)}</span>',
         extra = html.escape(json.dumps(metadata.get("extra", []), ensure_ascii = False), quote = True),
     )
 

@@ -1,3 +1,5 @@
+import html
+
 from PS4HTML.engine import render_cal_step
 from PS4HTML.i18n import tr
 
@@ -17,13 +19,13 @@ def rule_infer(infer, proof, *, language):
         if link["rhs"] is None or link["proof"] is None:
             raise ValueError("infer chain entries cannot contain null values")
         rhs = link["rhs"]
-        lhs_tex = proof.tex(lhs) if lhs is not None else ""
-        rhs_tex = proof.tex(rhs) if rhs is not None else ""
+        lhs_tex = html.escape(proof.tex(lhs)) if lhs is not None else ""
+        rhs_tex = html.escape(proof.tex(rhs)) if rhs is not None else ""
         infer_steps.append(
             render_cal_step(
                 tag = tr("strategy.inference", language) if i == 0 else "",
                 lhs = lhs_tex if i == 0 else "",
-                rel = "\\ \\Longrightarrow\\ ",
+                rel = r"$\ \Longrightarrow\ $",
                 rhs = rhs_tex,
             )
         )

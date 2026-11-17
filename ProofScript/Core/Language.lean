@@ -4,7 +4,7 @@
     Authors: JokerXin
 -/
 
-import Lean
+import ProofScript.Core.Codec
 
 open Lean
 
@@ -13,7 +13,7 @@ namespace ProofScript
 
 /-- A language with an English name, a local name, and a code. Includes the 100
 Wikipedia languages with the most users (6 November 2026). Use `Language.custom`
-to provide information for custom language. -/
+to provide code for custom language. -/
 inductive Language where
 | en | es | fr | de | zh | ru | pt | it | ar | ja | tr | simple | id | pl | nl
 | fa | he | vi | sv | ko | uk | hi | cs | ro | no | fi | hu | sr | ca | da | th
@@ -22,7 +22,7 @@ inductive Language where
 | tl | tg | nn | ast | te | lv | ceb | my | ang | sco | mk | als | zh_classical
 | is | ban | cy | mn | gan | kn | be_tarask | br | crh | an | sw | gu | bar | si
 | ne | ckb | ga | zh_min_nan | jv | lb | war | oc | azb | nds | tly
-| custom (englishName localName code : String)
+| custom (code : String)
 deriving Inhabited, BEq
 
 namespace Language
@@ -129,7 +129,7 @@ private def info : Language → String × String × String
 | .azb          => ("South Azerbaijani", "تۆرکجه", "azb")
 | .nds          => ("Low German", "Plattdüütsch", "nds")
 | .tly          => ("Talysh", "tolışi", "tly")
-| .custom englishName localName code => (englishName, localName, code)
+| .custom code  => ("?", "?", code)
 
 /-- The language's name in English. -/
 def englishName (lang : Language) : String := lang.info.1
@@ -144,5 +144,28 @@ end Language
 
 instance : ToJson Language where
   toJson lang := toJson lang.code
+
+/-- Parse a built-in language constructor or `Language.custom` with one code string.
+Built-in names are stored as language codes in configuration input. -/
+instance : InfoCodec Language where
+  decode stx := do
+    if stx.raw.isOfKind ``Lean.Parser.Term.app then
+      let args := stx.raw[1].getArgs
+      if stx.raw[0].isIdent
+          && stx.raw[0].getId.eraseMacroScopes.toString == "Language.custom"
+          && args.size == 1 then
+        return .custom (← InfoCodec.decode (⟨args[0]!⟩ : TSyntax `term))
+      throwErrorAt stx "expected Language.custom with one string literal"
+    match stx with
+    | `(term| $name:ident) =>
+      let identifier := name.getId.eraseMacroScopes
+      let constructor := ``Language ++ Name.mkSimple identifier.getString!
+      unless identifier == .str .anonymous identifier.getString! &&
+          (← getEnv).contains constructor do
+        throwErrorAt stx m!"unknown language constructor `{identifier}`"
+      -- configuration persists only the language code, not the constructor's names
+      let code := identifier.getString!.replace "_" "-"
+      return .custom code
+    | _ => throwErrorAt stx "expected a Language constructor"
 
 end ProofScript

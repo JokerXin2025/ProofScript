@@ -1,12 +1,12 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «contradiction»
 "contradiction" => `(tactic| contradiction)
 
 script_info «contradiction» {
-  template := [{
+  templates := [{
     lang := zh, tag := "矛盾",
     content := ""
   }, {

@@ -1,37 +1,49 @@
 document.addEventListener('DOMContentLoaded', () => {
-    const minimumCodeHeight = 300;
-
     document.querySelectorAll('.theorem-proof, .page-media-latex, .proof-text-card').forEach(card => {
         const inner = card.querySelector('.proof-flip-inner');
         const button = card.querySelector('.flip-btn');
         if (!inner || !button) return;
+        const front = inner.querySelector(':scope > .proof-flip-front');
+        const back = inner.querySelector(':scope > .proof-flip-back');
+        if (!front || !back) return;
+
+        // The reverse side is absolutely positioned, so measure its natural content height.
+        const syncHeight = () => {
+            if (inner.classList.contains('flipped') && inner.getBoundingClientRect().width) {
+                const height = back.getBoundingClientRect().height;
+                if (height && Math.abs(inner.getBoundingClientRect().height - height) > 1) {
+                    inner.style.height = `${height}px`;
+                    document.dispatchEvent(new Event('ps4html:layoutchange'));
+                }
+            }
+        };
+        if (window.ResizeObserver) {
+            new ResizeObserver(syncHeight).observe(back);
+        }
+        window.addEventListener('resize', syncHeight);
 
         button.addEventListener('click', () => {
             const flipped = !inner.classList.contains('flipped');
+            const currentHeight = inner.getBoundingClientRect().height;
+            inner.style.height = `${currentHeight}px`;
+            inner.getBoundingClientRect();
             if (flipped) {
-                const frontHeight = inner.getBoundingClientRect().height;
-                inner.dataset.frontHeight = String(frontHeight);
-                inner.style.height = `${frontHeight}px`;
-                inner.getBoundingClientRect();
                 inner.classList.add('flipped');
                 card.classList.add('is-flipped');
-                requestAnimationFrame(() => {
-                    inner.style.height = `${Math.max(frontHeight, minimumCodeHeight)}px`;
-                    document.dispatchEvent(new Event('ps4html:layoutchange'));
-                });
             } else {
-                const frontHeight = Number(inner.dataset.frontHeight);
                 inner.classList.remove('flipped');
                 card.classList.remove('is-flipped');
-                inner.style.height = `${frontHeight || inner.scrollHeight}px`;
-                window.setTimeout(() => {
-                    if (!inner.classList.contains('flipped')) {
-                        inner.style.height = '';
-                        delete inner.dataset.frontHeight;
-                        document.dispatchEvent(new Event('ps4html:layoutchange'));
-                    }
-                }, 550);
             }
+            requestAnimationFrame(() => {
+                if (inner.classList.contains('flipped') !== flipped) return;
+                const targetHeight = flipped ? back.getBoundingClientRect().height : front.getBoundingClientRect().height;
+                if (!flipped && Math.abs(currentHeight - targetHeight) < 1) {
+                    inner.style.height = '';
+                } else {
+                    inner.style.height = `${targetHeight}px`;
+                }
+                document.dispatchEvent(new Event('ps4html:layoutchange'));
+            });
             button.innerHTML = flipped
                 ? '<i class="codicon codicon-file-symlink-file"></i>'
                 : '<i class="codicon codicon-file-code"></i>';
@@ -42,12 +54,9 @@ document.addEventListener('DOMContentLoaded', () => {
         });
 
         inner.addEventListener('transitionend', event => {
-            // Descendant hover colors and dashboard animations bubble here too.
-            // Only this container's own flip/height transition changes its layout.
-            if (event.target !== inner || !['height', 'transform'].includes(event.propertyName)) return;
-            if (event.propertyName === 'height' && !inner.classList.contains('flipped')) {
+            if (event.target !== inner || event.propertyName !== 'height') return;
+            if (!inner.classList.contains('flipped')) {
                 inner.style.height = '';
-                delete inner.dataset.frontHeight;
             }
             document.dispatchEvent(new Event('ps4html:layoutchange'));
         });

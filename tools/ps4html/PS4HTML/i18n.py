@@ -2,17 +2,16 @@
 
 from __future__ import annotations
 
-import html
-
-
 SUPPORTED_LANGUAGES = ("zh", "en")
-DEFAULT_LANGUAGE = "zh"
+DEFAULT_LANGUAGE = "en"
 
 TRANSLATIONS = {
     "zh": {
         "proof.indent_title": "调整当前证明的层级缩进",
         "proof.indent_label": "证明缩进",
         "proof.source_title": "查看 Lean 源代码",
+        "proof.back_title": "返回证明",
+        "proof.copy_source": "复制源码",
         "proof.lines": "行",
         "strategy.induction": "数学归纳法",
         "strategy.complete_induction": "强数学归纳法",
@@ -27,7 +26,6 @@ TRANSLATIONS = {
         "strategy.have": "我们有",
         "strategy.decompose": "目标拆解",
         "strategy.unknown": "未知策略",
-        "script.unrecorded": "未导出数据",
         "dashboard.before": "原状态",
         "dashboard.after": "新状态",
         "dashboard.removed": "删除",
@@ -50,6 +48,7 @@ TRANSLATIONS = {
         "language.en": "English",
         "display_options.label": "显示选项",
         "display_options.wrappers": "展示工程细节",
+        "display_options.beta_reduce": "自动beta规约",
         "share.title": "分享链接",
         "share.description": "包含当前模版配置",
         "share.local": "复制本地链接",
@@ -79,6 +78,14 @@ TRANSLATIONS = {
         "expression.title.relation": "关系",
         "expression.title.wrapper": "包装器",
         "expression.title.expression": "表达式",
+        "expression.template.menu": "切换模版",
+        "expression.template.relation": "关系模版",
+        "expression.template.prefix": "前缀模版",
+        "expression.template.infix": "中缀模版",
+        "expression.template.infixl": "左结合中缀模版",
+        "expression.template.infixr": "右结合中缀模版",
+        "expression.template.postfix": "后缀模版",
+        "expression.template.unavailable": "此处无法展示该模版",
         "expression.field.display": "显示名称",
         "expression.field.literal": "内容",
         "expression.field.expression": "表达式",
@@ -118,6 +125,8 @@ TRANSLATIONS = {
         "proof.indent_title": "Adjust the nesting indentation of this proof",
         "proof.indent_label": "Proof indentation",
         "proof.source_title": "View Lean source code",
+        "proof.back_title": "Return to proof",
+        "proof.copy_source": "Copy source",
         "proof.lines": "lines",
         "strategy.induction": "By induction,",
         "strategy.complete_induction": "By strong induction,",
@@ -132,7 +141,6 @@ TRANSLATIONS = {
         "strategy.have": "In particular,",
         "strategy.decompose": "To decompose the goal,",
         "strategy.unknown": "For an unknown strategy,",
-        "script.unrecorded": "Data not exported",
         "dashboard.before": "Original state",
         "dashboard.after": "New state",
         "dashboard.removed": "Removed",
@@ -155,6 +163,7 @@ TRANSLATIONS = {
         "language.en": "English",
         "display_options.label": "Display options",
         "display_options.wrappers": "Show technical details",
+        "display_options.beta_reduce": "Automatic beta reduction",
         "share.title": "Share link",
         "share.description": "Including the current template configuration",
         "share.local": "Copy local link",
@@ -184,6 +193,14 @@ TRANSLATIONS = {
         "expression.title.relation": "Relation",
         "expression.title.wrapper": "Wrapper",
         "expression.title.expression": "Expression",
+        "expression.template.menu": "Choose template",
+        "expression.template.relation": "Relation template",
+        "expression.template.prefix": "Prefix template",
+        "expression.template.infix": "Infix template",
+        "expression.template.infixl": "Left-associative infix template",
+        "expression.template.infixr": "Right-associative infix template",
+        "expression.template.postfix": "Postfix template",
+        "expression.template.unavailable": "This template cannot be displayed here",
         "expression.field.display": "Displayed name",
         "expression.field.literal": "Value",
         "expression.field.expression": "Expression",
@@ -237,19 +254,3 @@ def tr(key: str, language: str | None = None, **values) -> str:
         if value is not None:
             return value.format(**values)
     return key
-
-
-def localized(text: str | dict[str, str], language: str | None = None) -> str:
-    if isinstance(text, str):
-        return text
-    for candidate in language_fallbacks(language):
-        if isinstance(text.get(candidate), str):
-            return text[candidate]
-    return ""
-
-
-def language_spans(values: dict[str, str]) -> str:
-    return "".join(
-        f'<span class="language-text" data-language="{html.escape(language, quote=True)}">{value}</span>'
-        for language, value in values.items()
-    )

@@ -1,5 +1,5 @@
 import ProofScript.Utils.Json
-import ProofScript.Info.Declaration
+import ProofScript.Output.DeclarationFacts
 
 namespace ProofScript
 
@@ -15,7 +15,7 @@ structure TheoremExport where
   proofRefs : Array RefInfo
   /-- Automatic references restricted to the frozen source project, for theorem navigation. -/
   proofDependencies : Array Name
-  deriving Inhabited, ToJson
+  deriving ToJson
 
 private def validateName (name : Name) : Except String Unit := do
   -- Use the same component validation as the wire codec, including quoted dots and numeric parts.

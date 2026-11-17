@@ -24,18 +24,3 @@
 
 与其他页面组件相同，标题在页面构建时解析、登记并导出；普通验证跳过内容校验。
 标题组件可在模块的任何合法命令位置添加；仅当 `pageBuild = true` 时记录到页面。
-
-[专用测试模块](../Test/PageTitle.lean)展示第一至第八级、六十四级标题、行内格式、标签和引用，
-并检查标题格式及重复标签。构建可预览的测试页面：
-
-```sh
-lake build +Test.PageTitle:ps4html
-```
-
-页面位于 `.PS4HTML/build/Test/Test/PageTitle.html`。
-自动回归检查：
-
-```sh
-lake build ProofScript Test
-python3 Test/test_page_title.py
-```

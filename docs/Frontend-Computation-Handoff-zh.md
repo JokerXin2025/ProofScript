@@ -5,7 +5,7 @@ Lean/Wasm bundle，并将计算结果交给具体页面组件。
 
 当前内置实现位于 `tools/ps4html/PS4HTML/assets/js/computation.js`，注册入口为
 `PS4HTMLComputation.register`。本文 TypeScript/React 片段为下游接入参考，不表示内置实现使用 React。
-component、pending 和 bundle 的 `schemaVersion` 仍为 `0.0.0`，执行 ABI 为 `proofscript-json-v1`。函数来源信息采用 `function.recordingVersion = "0.4.0"`；缺失或旧版本必须重新运行 `lake build MyLibrary:proofscriptExport`。缓存读取不会迁移旧来源数据。
+component、pending 和 bundle 不携带版本字段；函数来源信息保留独立的表达式图。格式变化后应重新运行 `lake build MyLibrary:proofscriptExport`。
 
 ## 站点构建器职责
 
@@ -55,7 +55,6 @@ Finalized component 示例：
   "data": {
     "computation": {
       "value": {
-        "schemaVersion": "0.0.0",
         "metadata": {
           "title": "Typed computation",
           "label": "typed-computation",
@@ -63,7 +62,6 @@ Finalized component 示例：
         },
         "renderer": "proofscript/test-json-v1",
         "function": {
-          "recordingVersion": "0.4.0",
           "declaration": "Demo.compute",
           "type": "Bool → Nat",
           "expression": {"$ref": "e1"},
@@ -82,7 +80,6 @@ Finalized component 示例：
         "execution": {
           "backend": "wasm",
           "status": "ready",
-          "abi": "proofscript-json-v1",
           "bundleId": "Demo.Computation",
           "entry": "Demo.compute",
           "wrapper": "__proofScript_compute",
@@ -117,7 +114,6 @@ Finalized component 示例：
 ```text
 execution.backend = wasm
 execution.status = ready
-execution.abi = proofscript-json-v1
 ```
 
 遇到 `pending` 时不得尝试运行，应显示 fallback 或“计算资源尚未完成构建”。

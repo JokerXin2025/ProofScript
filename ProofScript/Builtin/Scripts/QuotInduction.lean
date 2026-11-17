@@ -1,5 +1,5 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 #guard_msgs (drop info) in
@@ -12,7 +12,7 @@ script_macro «quotInduction»
 script_recorder «quotInduction» auto (intro := [a])
 
 script_info «quotInduction» {
-  template := [{
+  templates := [{
     lang := zh, tag := "商归纳",
     content := ""
   }, {

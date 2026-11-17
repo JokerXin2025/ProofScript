@@ -1,5 +1,6 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
+import ProofScript.Utils.Sundry
 
 
 #guard_msgs (drop info) in
@@ -30,7 +31,7 @@ script_macro «splitAnd» (kind := strategy)
 )
 
 script_info «splitAnd» {
-  template := [{
+  templates := [{
     lang := zh, tag := "目标拆解",
     introducer := {tag := "拆解", content := "先证明 L , 再证明 R"},
     cases := [
@@ -74,5 +75,10 @@ script_macro «splitAnd!» (kind := strategy)
 )
 
 script_info «splitAnd!» {
-  renderer := «strategy»
+  templates := [
+    { lang := zh, tag := "递归拆分合取", introducer := { tag := "目标拆解", content := "逐项证明生成的子目标" },
+      case := { tag := "子目标 ${index'}", title := "" } },
+    { lang := en, tag := "To split the conjunction recursively,",
+      introducer := { tag := "To decompose the goal,", content := "prove the resulting subgoals one by one" },
+      case := { tag := "Subgoal ${index'},", title := "" } }]
 }

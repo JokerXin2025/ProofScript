@@ -6,8 +6,6 @@ def rule_admit(admit, proof, *, language):
     text = admit["reason"]
     if not isinstance(text, str):
         raise ValueError("admit.reason must be a string")
-    if not text:
-        return "<!-- Silent Step: admit (empty) -->"
     return render_annotation(
         sort="admit",
         icon="<i class=\"codicon codicon-workspace-unknown\"></i>",

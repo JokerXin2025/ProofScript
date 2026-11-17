@@ -13,7 +13,7 @@ open Lean
 inductive JsonPath.Part where
 | key (name : String)
 | index (num : Nat)
-deriving Inhabited, Repr, BEq
+deriving BEq
 
 instance : ToJson JsonPath.Part where toJson
 | .key name => toJson name

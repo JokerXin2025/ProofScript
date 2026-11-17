@@ -1,12 +1,12 @@
 import ProofScript.Script.Command
-import ProofScript.Info.Commands
+import ProofScript.Info.Script.Commands
 
 
 script_macro «trivial»
 "trivial" => `(tactic| trivial)
 
 script_info «trivial» {
-  template := [{
+  templates := [{
     lang := zh, tag := "显然",
     content := "显然该命题成立"
   }, {

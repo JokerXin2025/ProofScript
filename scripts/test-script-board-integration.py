@@ -33,16 +33,13 @@ class ScriptBoardIntegrationTest(unittest.TestCase):
         records = json.loads(INFO.read_text())["records"]
         scripts = {record["identity"]["target"][-1]: record["value"]
                    for record in records if record["identity"]["kind"] == "script"}
-        self.assertEqual(next(record for record in records
-                              if record["identity"]["kind"] == "script")["schemaVersion"],
-                         "2.1.0")
         for rule, fields in {
             "boardSimp": {"requested_rules", "location", "used_lemmas", "duration_ns"},
             "boardLinear": {"premises", "conclusion", "proof_dependencies", "duration_ns"},
             "norm_num": {"verification", "duration_ns"},
         }.items():
             self.assertEqual({entry["value"] for entry in scripts[rule]["board"]}, fields)
-            self.assertTrue(scripts[rule]["template"])
+            self.assertTrue(scripts[rule]["templates"])
 
         upper = proof_for("board_upper_bound")
         equality = proof_for("board_equality")
@@ -87,6 +84,15 @@ class ScriptBoardIntegrationTest(unittest.TestCase):
         self.assertIn(["proof", 0, "verification"], optimum["expressionRoots"])
         self.assertIn(["proof", 0, "$context_before", "h"], upper["expressionRoots"])
 
+        svg_proof = proof_for("svg_renderer_example")
+        raw_svg, compiled_svg = svg_proof["proof"][:2]
+        self.assertEqual(raw_svg["metadata"]["title"], "SVG example")
+        self.assertIn("<svg", raw_svg["code"])
+        self.assertNotIn("source", raw_svg)
+        self.assertEqual(compiled_svg["metadata"]["title"], "LaTeX example")
+        self.assertIn("<svg", compiled_svg["code"])
+        self.assertEqual(compiled_svg["source"], {"lang": "latex", "code": "\\(P\\)"})
+
         page = PAGE.read_text()
         for text in ("board_upper_bound", "board_equality", "board_optimum",
                      "实际使用的引理", "输入算术事实", "证明项依赖的局部命题",
@@ -102,6 +108,28 @@ class ScriptBoardIntegrationTest(unittest.TestCase):
         self.assertIn('src="../../assets/js/proof-dashboard.js"', page)
         self.assertTrue((ASSETS / "css/proof-dashboard.css").is_file())
         self.assertTrue((ASSETS / "js/proof-dashboard.js").is_file())
+        self.assertIn('page-media page-media-svg', page)
+        self.assertIn('page-media page-media-latex', page)
+        self.assertIn('class="code-header"><span>latex</span>', page)
+        self.assertNotIn('diagram-figure', page)
+        self.assertNotIn('css/diagram.css', page)
+        self.assertNotIn('js/diagram.js', page)
+        dynamic = proof_for("dynamic_strategy_example")
+        self.assertEqual(len(dynamic["proof"][0]["$branches"]), 3)
+        self.assertEqual(scripts["splitAnd!"]["renderer"], "default")
+        self.assertEqual(scripts["splitAnd!"]["templates"][0]["kind"], "dynamicStrategy")
+        self.assertIn('data-ps-render-root=', page)
+        self.assertIn('子目标 <span data-ps-render-root=', page)
+        self.assertIn('Subgoal <span data-ps-render-root=', page)
+        interaction_data = json.loads(page.split('id="ps-expression-data">', 1)[1].split('</script>', 1)[0])
+        number_roots = [root for root in interaction_data["renderRoots"].values()
+                        if root["tree"]["kind"] == "literal" and
+                        root["tree"]["metadata"].get("literalKind") == "literal.nat" and
+                        root["tree"].get("generated")]
+        self.assertGreaterEqual(len(number_roots), 3)
+        self.assertEqual({"1", "2", "3"}, {root["tree"]["name"] for root in number_roots})
+        self.assertEqual(number_roots[0]["tree"]["metadata"]["styles"]["roman"], "\\mathrm{I}")
+        self.assertIn('["builtin", "literal.nat"]', number_roots[0]["catalog"])
 
 
 if __name__ == "__main__":

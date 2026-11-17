@@ -8,7 +8,7 @@
       <span class="proof-indent-value">20</span>
       <input class="proof-indent-slider" type="range" min="15" max="30" value="20" step="1" aria-label="${indent_label}">
     </label>
-    <button class="flip-btn" type="button" title="${source_title}">
+    <button class="flip-btn" type="button" title="${source_title}" data-front-title="${source_title}" data-back-title="${back_title}">
       <i class="codicon codicon-file-code"></i>
     </button>
   </h2>
@@ -24,15 +24,10 @@ ${content}
         </div>
       </div>
       <div class="proof-flip-back proof-source-card">
-        <div class="code-header">
-          <span>Lean</span>
-          <span>${lines_count} ${lines_label}</span>
+        <div class="verso-container">
+          <pre class="verso-source">${code}</pre>
+          <button class="verso-copy" type="button" data-verso-source="${source}" aria-label="${copy_label}" title="${copy_label}"><i class="codicon codicon-copy" aria-hidden="true"></i></button>
         </div>
-        <pre><code>
-
-${code}
-
-        </code></pre>
       </div>
     </div>
   </div>

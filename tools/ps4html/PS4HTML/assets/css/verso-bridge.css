@@ -1,0 +1,34 @@
+.verso-container {
+    position: relative;
+    border: 1px solid transparent;
+    border-radius: 8px;
+    transition: border-color 0.2s ease;
+}
+.verso-container:hover,
+.verso-container:focus-within { border-color: #d1d5db; }
+.proof-source-card .verso-source {
+    margin: 0;
+    padding: 24px 28px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    color: #374151;
+    font: 13px/1.65 'SF Mono', 'Cascadia Code', 'Fira Code', Consolas, monospace;
+    tab-size: 2;
+}
+.verso-source > code.hl.lean.block { display: block; white-space: pre; }
+.verso-copy {
+    position: absolute;
+    top: 0px;
+    right: 0px;
+    padding: 8px;
+    border: 0;
+    background: transparent;
+    color: #374151;
+    cursor: pointer;
+}
+.verso-copy .codicon { font-size: 20px; }
+.verso-container:hover .verso-copy,
+.verso-container:focus-within .verso-copy { opacity: 1; pointer-events: auto; }
+.verso-copy:focus-visible { opacity: 1; pointer-events: auto; }
+.verso-copy:hover { color: #2563eb; }
+.verso-source .tactic-toggle { position: absolute; }

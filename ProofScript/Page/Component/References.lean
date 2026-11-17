@@ -11,8 +11,7 @@ page_component "references" => do
     let references : Array RefInfo := (← getTheoremRefs).toArray
     let component : Component := {
       kind := "references", value := toJson references, references }
-    let requests := references.map fun reference =>
-      (⟨⟨"theorem", .inl reference.name⟩, false, "references component", none⟩ : InfoRequest)
+    let requests : InfoRequests := { decls := references.map (·.name) }
     match addComponent (← getEnv) component requests with
     | .error message => throwError message
     | .ok env =>

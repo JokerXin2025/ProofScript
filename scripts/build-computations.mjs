@@ -460,8 +460,6 @@ uint32_t proof_script_invoke(uint32_t entry_ptr, uint32_t entry_len,
   await smokeTest(modulePath);
   const wasm = readFileSync(wasmPath);
   const manifest = {
-    schemaVersion: "0.0.0",
-    abi: "proofscript-json-v1",
     bundleId,
     module: moduleName,
     entries: entryRows.map(({ id, wrapper }) => ({ id, wrapper })),

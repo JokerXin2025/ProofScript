@@ -1,5 +1,5 @@
 <figure class="page-media page-media-latex" id="${anchor}" data-extra="${extra}">
-  <button class="flip-btn page-media-flip-button" type="button" title="查看 LaTeX 源代码" data-front-title="查看 LaTeX 源代码" data-back-title="返回渲染结果">
+    <button class="flip-btn page-media-flip-button" type="button" title="${source_button_title}" data-front-title="${source_button_title}" data-back-title="返回渲染结果">
     <i class="codicon codicon-file-code"></i>
   </button>
   <div class="page-media-stage">
@@ -8,7 +8,7 @@
         <img src="${uri}" alt="${alt}">
       </div>
       <div class="proof-flip-back page-media-flip-back">
-        <div class="code-header"><span>LaTeX</span></div>
+        <div class="code-header"><span>${source_language}</span></div>
         <pre><code>${source}</code></pre>
       </div>
     </div>

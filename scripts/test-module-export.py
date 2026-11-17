@@ -34,16 +34,16 @@ class ModuleExportTests(unittest.TestCase):
         files = list(files)
         if files and not any(path.startswith("info/") for path, _ in files):
             files.append(("info/Project/A.json", {
-                "schemaVersion": export.VERSION, "module": list(module), "records": []}))
-        files = [(path, dict({"schemaVersion": export.VERSION, "module": list(module),
+                "module": list(module), "records": []}))
+        files = [(path, dict({"module": list(module),
                              "info": ".ProofScript/info/Project/A.json",
                              "components": [{"data": {"title": {"value": "test"}}}]}, **contents))
                  if path.startswith("pages/") else
-                 (path, dict({"schemaVersion": export.VERSION, "module": list(module)}, **contents))
+                  (path, dict({"module": list(module)}, **contents))
                  if path.startswith("info/") else (path, contents)
                  for path, contents in files]
         value = {
-            "schemaVersion": export.VERSION, "module": list(module),
+            "module": list(module),
             "package": "Project", "library": "Project", "hasComponents": bool(files),
             "resourceModule": "Project/A",
             "manifest": "manifests/modules/Project/A.json",
@@ -66,16 +66,15 @@ class ModuleExportTests(unittest.TestCase):
         self.assertEqual([entry["path"] for entry in manifest["files"]],
                          ["info/Project/A.json", "pages/Project/A.json"])
 
-    def test_upgrades_previous_module_manifest_and_cleans_old_files(self):
+    def test_replaces_previous_module_manifest_and_cleans_obsolete_files(self):
         self.publish([("pages/Project/A.json", {"title": "old"}),
-                      ("proofs/Project/A/obsolete.json", {"module": "Project.A", "old": True})])
+                       ("resources/Project/A/generated/obsolete.txt", "old")])
         manifest_path = self.root / "manifests/modules/Project/A.json"
         old = json.loads(manifest_path.read_text())
-        old["schemaVersion"] = export.PREVIOUS_VERSION
-        manifest_path.write_text(json.dumps(old))
         self.publish([("pages/Project/A.json", {"title": "new"})])
-        self.assertEqual(json.loads(manifest_path.read_text())["schemaVersion"], export.VERSION)
-        self.assertFalse((self.root / "proofs/Project/A/obsolete.json").exists())
+        self.assertNotEqual(json.loads(manifest_path.read_text()), old)
+        self.assertFalse((self.root / "resources/Project/A/generated/obsolete.txt").exists())
+        self.assertEqual(json.loads((self.root / "pages/Project/A.json").read_text())["title"], "new")
 
     def test_missing_image_keeps_previous_module(self):
         self.publish([("pages/Project/A.json", {"title": "old"})])
@@ -85,6 +84,15 @@ class ModuleExportTests(unittest.TestCase):
                          [{"source": "missing.png", "path": "resources/Project/A/images/image.png"}])
         self.assertEqual((self.root / "manifests/modules/Project/A.json").read_bytes(), manifest)
         self.assertEqual(json.loads((self.root / "pages/Project/A.json").read_text())["title"], "old")
+
+    def test_accepts_declaration_record_without_version(self):
+        self.publish([("pages/Project/A.json", {"title": "old"})])
+        completion = self.root / "manifests/modules/Project/A.json"
+        record = {"identity": {"kind": "decl", "target": ["Project", "value"]},
+                   "value": {}}
+        self.publish([("pages/Project/A.json", {"title": "new"}),
+                      ("info/Project/A.json", {"records": [record]})])
+        self.assertEqual(json.loads((self.root / "info/Project/A.json").read_text())["records"], [record])
 
     def test_image_is_copied_and_sealed(self):
         image = self.source / "image.png"
@@ -150,10 +158,17 @@ class ModuleExportTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "duplicate frozen Info identity"):
             self.publish([("pages/Project/A.json", {"title": "new"}),
                           ("info/Project/A.json", {"records": [
-                              {"identity": {"kind": "project", "target": "Project"}},
-                              {"identity": {"kind": "project", "target": "Project"}},
+                               {"identity": {"kind": "decl", "target": ["Project", "A"]}},
+                               {"identity": {"kind": "decl", "target": ["Project", "A"]}},
                           ]})])
         self.assertEqual((self.root / "manifests/modules/Project/A.json").read_bytes(), old_manifest)
+
+    def test_rejects_project_info_in_new_protocol(self):
+        with self.assertRaisesRegex(ValueError, "unsupported frozen Info identity"):
+            self.publish([("pages/Project/A.json", {}),
+                          ("info/Project/A.json", {"records": [
+                              {"identity": {"kind": "project", "target": "Project"}}
+                          ]})])
 
     def test_failure_in_computation_build_preserves_old_module(self):
         self.publish([("pages/Project/A.json", {"title": "old"})])
@@ -173,17 +188,17 @@ class ModuleExportTests(unittest.TestCase):
                 with tempfile.TemporaryDirectory(dir=self.workspace) as directory:
                     descriptor = Path(directory) / "descriptor.json"
                     descriptor.write_text(json.dumps({
-                        "schemaVersion": export.VERSION, "module": ["Project", name],
+                        "module": ["Project", name],
                         "package": "Project", "library": "Project", "hasComponents": True,
                         "resourceModule": f"Project/{name}",
                         "manifest": f"manifests/modules/Project/{name}.json",
                         "files": [
                             {"path": f"pages/Project/{name}.json", "json": {
-                                "schemaVersion": export.VERSION, "module": ["Project", name],
+                                "module": ["Project", name],
                                 "info": f".ProofScript/info/Project/{name}.json",
                                 "components": [{"data": {"title": {"value": name}}}]}},
                             {"path": f"info/Project/{name}.json", "json": {
-                                "schemaVersion": export.VERSION, "module": ["Project", name],
+                                "module": ["Project", name],
                                 "records": []}},
                         ], "figures": [],
                     }))
@@ -211,7 +226,7 @@ class ModuleExportTests(unittest.TestCase):
         (journal / "backup/manifests/modules/Project").mkdir(parents=True)
         (journal / "backup/manifests/modules/Project/A.json").write_bytes(old_manifest)
         (journal / "journal.json").write_text(json.dumps({
-            "schemaVersion": export.VERSION, "state": "prepared",
+            "state": "prepared",
             "touched": ["pages/Project/A.json", "manifests/modules/Project/A.json",
                         "resources/Project/A/generated/new.svg"],
             "existing": ["pages/Project/A.json", "manifests/modules/Project/A.json"],
@@ -232,14 +247,14 @@ class ModuleExportTests(unittest.TestCase):
                       ("resources/Project/A/generated/old.svg", {"svg": "old"})])
         original = (self.root / "manifests/modules/Project/A.json").read_bytes()
         self.descriptor.write_text(json.dumps({
-            "schemaVersion": export.VERSION, "module": ["Project", "A"],
+            "module": ["Project", "A"],
             "package": "Project", "library": "Project", "hasComponents": True,
             "resourceModule": "Project/A", "manifest": "manifests/modules/Project/A.json",
             "files": [
                 {"path": "info/Project/A.json", "json": {
-                    "schemaVersion": export.VERSION, "module": ["Project", "A"], "records": []}},
+                    "module": ["Project", "A"], "records": []}},
                 {"path": "pages/Project/A.json", "json": {
-                    "schemaVersion": export.VERSION, "module": ["Project", "A"],
+                    "module": ["Project", "A"],
                     "info": ".ProofScript/info/Project/A.json", "components": [{}], "title": "new"}},
             ], "figures": [],
         }))
@@ -274,7 +289,7 @@ class ModuleExportTests(unittest.TestCase):
         journal = self.root / "staging/transactions/corrupt"
         journal.mkdir(parents=True)
         (journal / "journal.json").write_text(json.dumps({
-            "schemaVersion": export.VERSION, "state": "prepared",
+            "state": "prepared",
             "touched": ["pages/Project/A.json"], "existing": ["pages/Project/A.json"],
         }))
         with export._lock(self.root):

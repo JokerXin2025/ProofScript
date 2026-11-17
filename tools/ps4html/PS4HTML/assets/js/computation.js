@@ -1,9 +1,6 @@
 (function () {
   "use strict";
 
-  const ABI = "proofscript-json-v1";
-  const SCHEMA_VERSION = "0.0.0";
-  const RECORDING_VERSION = "0.4.0";
   const DEFAULTS = { inputBytes: 64 * 1024, outputBytes: 8 * 1024 * 1024, timeoutMs: 2000 };
   const bundles = new Map();
   const renderers = new Map();
@@ -42,7 +39,6 @@
   async function createClient(execution, base, cacheKey) {
     const [manifestBytes] = await Promise.all([fetchVerified(base, execution.manifest), fetchVerified(base, execution.module), fetchVerified(base, execution.wasm)]);
     const manifest = JSON.parse(new TextDecoder().decode(manifestBytes));
-    if (manifest.schemaVersion !== SCHEMA_VERSION || manifest.abi !== ABI) throw new Error("Unsupported computation bundle schema or ABI");
     const source = URL.createObjectURL(new Blob([workerSource()], { type: "text/javascript" }));
     const worker = new Worker(source, { type: "module" });
     URL.revokeObjectURL(source);
@@ -53,9 +49,7 @@
   async function mount(root, base=new URL(document.documentElement.dataset.projectBaseUrl || "./", document.baseURI)) {
     if (location.protocol === "file:") throw new Error("Computation requires HTTP. Run `ps4html serve` and open the served URL.");
     const value=JSON.parse(root.querySelector("[data-computation-value]").textContent), execution=value.execution;
-    if (value.schemaVersion !== SCHEMA_VERSION) throw new Error(`Unsupported computation schema: ${value.schemaVersion}`);
-    if (value.function?.recordingVersion !== RECORDING_VERSION) throw new Error("Unsupported computation recording version; rebuild with lake build <Library>:ps4html");
-    if (execution.status !== "ready" || execution.backend !== "wasm" || execution.abi !== ABI) {
+    if (execution.status !== "ready" || execution.backend !== "wasm") {
       const fallback = root.querySelector("[data-computation-fallback]");
       const status = root.querySelector("[data-computation-status]");
       const target = root.querySelector("[data-computation-renderer]");

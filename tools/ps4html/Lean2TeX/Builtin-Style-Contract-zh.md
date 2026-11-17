@@ -23,7 +23,7 @@
 
 原生 `mdata` 在语义转换时已经并入 occurrence，不影响识别链；若 body 经过一个仍保有独立 occurrence 的透明展示 wrapper，则本阶段在 wrapper 处中断链，以免吞掉交互范围。内层节点和绑定身份都保留。连续 lambda 和 let 沿 body 收集；连续 forall 逐层用现有 `isArrow` 分类，**只有相同分类才合并**。例如 `dependent → arrow → dependent` 是三段；下一段是上一段的正文。let 的后续值仍处在之前 binder 的作用域内。样式函数分别接收有序条目和最终正文，而不是拼接后再反解析的 TeX。链内层 occurrence 会保留独立片段；菜单预览从整条链的头部开始。`let.stacked` 的内层 let 片段目前锚定在对应声明行，而不是完整后缀。
 
-符号运算符采用冻结的 `decl_info.operator_info` 优先级与结合性；内置 application、binder 等使用同一布局标度的固定优先级并按父子关系加括号。原生 `Expr` 不提供 parser 源码的运算符优先级。`juxtaposed` 也必须保护复合函数头和参数；其选择不得改变“是否匹配常量宏”的判定。
+常量采用实际选中模板的冻结 precedence；`$infixl` 和 `$infixr` 模板分别按左结合和右结合处理，`$infix` 无结合性；内置 application、binder 等使用同一布局标度的固定优先级并按父子关系加括号。原生 `Expr` 不提供 parser 源码的运算符优先级。`juxtaposed` 也必须保护复合函数头和参数；其选择不得改变“是否匹配常量宏”的判定。
 
 ## 数字体系与范围
 
