@@ -51,63 +51,48 @@ import ProofScript.Builtin.Scripts.Svg
 These are provided as *built-in tactics*:
 + *admit*
   - Lean syntax: `"admit" reason:str`
-  - clear: `reason`
 + *assumption*
   - Lean syntax: `"assumption"`
 + *betaReduce*
   - Lean syntax: `"beta_reduce" loc:(location)?`
-  - clear: `loc`
 + *by*
   - Lean syntax: `"by " tac:tactic decr:(str)?`
-  - clear: `tac`, `decr`
 + *change*
   - Lean syntax: `"change " eq:term loc:(location)?`
-  - clear: `eq`, `loc`
 + *congr*
   - Lean syntax: `"congr" num:(ppSpace num)?`
-  - clear: `num`
 + *contradiction*
   - Lean syntax: `"contradiction"`
 + *decide*
   - Lean syntax: `"decide" config:optConfig`
-  - clear: `config`
 + *nativeDecide*
   - Lean syntax: `"native_decide" config:optConfig`
-  - clear: `config`
 + *exfalso*
   - Lean syntax: `"exfalso"`
 + *exists*
   - Lean syntax: `"exists " data:term`
-  - clear: `data`
 + *existsWith*
   - Lean syntax: `"exists " data:term "with" cond:term`
-  - clear: `data`, `cond`
 + *left*
   - Lean syntax: `"left"`
 + *right*
   - Lean syntax: `"right"`
 + *omega*
   - Lean syntax: `"omega" config:optConfig`
-  - clear: `config`
 + *bvOmega*
   - Lean syntax: `"bv_omega"`
 + *pointwise*
   - Lean syntax: `"pointwise" loc:(location)?`
-  - clear: `loc`
 + *quotInduction*
   - Lean syntax: `"quot_induction " q:term "with" a:ident`
 + *rewrite*
   - Lean syntax: `"rewrite" config:optConfig rules:rwRuleSeq loc:(location)?`
-  - clear: `config`, `rules`, `loc`
 + *rw*
   - Lean syntax: `"rw " config:optConfig rules:rwRuleSeq loc:(location)?`
-  - clear: `config`, `rules`, `loc`
 + *rwPos*
   - Lean syntax: `"rw_pos " h:term loc:(location)?`
-  - clear: `h`, `loc`
 + *rwNeg*
   - Lean syntax: `"rw_neg " h:term loc:(location)?`
-  - clear: `h`, `loc`
 + *rfl*
   - Lean syntax: `"rfl"`
 + *rfl'*
@@ -120,14 +105,12 @@ These are provided as *built-in tactics*:
   - Lean syntax: `"ac_rfl"`
 + *symm*
   - Lean syntax: `"symm" loc:(location)?`
-  - clear: `loc`
 + *symmSaturate*
   - Lean syntax: `"symm_saturate"`
 + *trivial*
   - Lean syntax: `"trivial"`
 + *unfold*
   - Lean syntax: `"unfold" defs:(ppSpace colGt ident)+ loc:(location)?`
-  - clear: `defs`, `loc`
 "#
 
 
@@ -152,13 +135,10 @@ These are provided as *built-in strategies*:
 These are provided as *built-in metadata collectors*:
 + *cite*
   - Lean syntax: `"cite " thm:ident`
-  - clear: `thm`
 + *remark*
   - Lean syntax: `"remark" text:str`
-  - clear: `text`
 + *svg*
   - Lean syntax: `"svg" code:str`
-  - clear: `code`
 "#
 
 
@@ -565,6 +545,7 @@ script_info «obtain_exist» {
     content := ""
   }]
 }
+
 
 script_macro «obtain_exist'»
 "obtain_exist" "⟨" h₁:ident "," h₂:ident "," h₃:ident "⟩" ":=" h:term => `(tactic| focus

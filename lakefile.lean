@@ -20,6 +20,8 @@ lean_lib ProofScript
 
 lean_lib Test where
   roots := #[
+    `Test.SharedDeclInfo,
+    `Test.«ECNU20260523-Problem22»,
     `Test.ClassicalFormula,
     `Test.PageComponent.Title,
     `Test.PageComponent.Figure,
@@ -28,7 +30,9 @@ lean_lib Test where
     `Test.PageTheoremExpressionGallery,
     `Test.PageTheoremExpressionInteractions,
     `Test.PageTheoremExpressionBoundaries,
+    `Test.PageBetaReduction,
     `Test.PageScriptBoard,
+    `Test.TransientProofDependencies,
   ]
 
 lean_exe proofscriptModuleExport where

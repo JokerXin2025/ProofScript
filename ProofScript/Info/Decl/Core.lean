@@ -13,31 +13,25 @@ structure DefinitionArgumentFacts where
 def DefinitionArgumentFacts.arity (facts : DefinitionArgumentFacts) : Nat :=
   facts.binder_infos.size
 
-/-- Inspect the declaration's native telescope, reducing function type aliases as needed.
-    Local constants keep dependent binder types closed during kernel reduction. -/
+/-- Inspect the declaration's native telescope without unfolding its result type.
+    In particular, `Set.Ioo a b : Set α` is a complete interval expression: the
+    reducible `Set α = α → Prop` must not introduce another template argument. -/
 partial def definitionArgumentFacts (env : Environment) (target : Name) :
     Except String DefinitionArgumentFacts := do
   let some declaration := env.find? target
     | throw <| infoTargetError "decl" target.toString "unknown declaration"
-  loop declaration.type {} {}
+  return loop declaration.type {}
 where
-  loop (type : Expr) (context : LocalContext) (facts : DefinitionArgumentFacts) :
-      Except String DefinitionArgumentFacts := do
-    let type ← match type.consumeMData with
-      | type@(.forallE ..) => pure type
-      | type => (Kernel.whnf env context type).mapError fun _ =>
-          infoTargetError "decl" target.toString "unable to reduce declaration parameter type"
+  loop (type : Expr) (facts : DefinitionArgumentFacts) : DefinitionArgumentFacts :=
     match type.consumeMData with
-    | .forallE name domain body binderInfo =>
+    | .forallE _ _ body binderInfo =>
       let index := facts.arity
-      let argumentId : FVarId := ⟨Name.num `_declInfoArgument index⟩
-      let context := context.mkLocalDecl argumentId name domain binderInfo
       let facts := { facts with
         binder_infos := facts.binder_infos.push binderInfo
         explicit_indices := if binderInfo == .default then facts.explicit_indices.push index
           else facts.explicit_indices }
-      loop (body.instantiate1 (.fvar argumentId)) context facts
-    | _ => return facts
+      loop body facts
+    | _ => facts
 
 /-- Follow aliases through configured or defaulted declaration records. -/
 partial def resolveDeclChain (env : Environment) (moduleName : Name) (declaration : Name) :
@@ -118,7 +112,7 @@ private def validateSymbolLayout (template : DefinitionTemplate)
     | "$prefix" => operands.size == 1 && !blank runs[0]! && blank runs[1]!
     | "$postfix" => operands.size == 1 && blank runs[0]! && !blank runs[1]!
     | "$infix" | "$infixl" | "$infixr" => operands.size == 2 && operands[0]! != operands[1]! &&
-        blank runs[0]! && !blank runs[1]! && blank runs[2]!
+        blank runs[0]! && blank runs[2]!
     | _ => false
   unless valid do
     throw <| constraint "content" s!"invalid {template.label} layout: expected distinct operands and one symbol run"

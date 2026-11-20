@@ -228,7 +228,9 @@ private def elaborateDefinitionSymbol (layout : SymbolLayout) (target : TSyntax 
     CommandElabM Unit := do
   let declaration ← liftCoreM <| resolveDeclaration target
   let text := symbol.getString
-  if text.isEmpty then
+  if text.isEmpty && (match layout with
+      | .infix | .infixl | .infixr => false
+      | _ => true) then
     throwErrorAt symbol "symbol must not be empty"
   let (label, parts, arity) ←
     match layout with

@@ -1,6 +1,7 @@
 """Cross-runtime template instruction semantics, including interaction ownership."""
 import copy
 import json
+import re
 from pathlib import Path
 import subprocess
 import sys
@@ -181,6 +182,52 @@ process.stdout.write(window.PS4HTMLRenderTree.render(d.tree, d.catalog, {}, 'zh'
     def test_mode_switch_disables_html_atom_splitting(self):
         macro = macro_from_data(definition([switch("text", lit("prefix")), arg()]))
         self.assertFalse(linear_template(macro.templates[0], [DisplayNode("s", "literal")]))
+
+    def test_mixed_template_owns_html_literals_in_both_runtimes(self):
+        record = definition([arg(0), lit("+"), arg(1), lit("+"), arg(2)])
+        record["arity"] = 3
+        record["binder_infos"] = ["explicit"] * 3
+        record["templates"][0]["argument_indices"] = [0, 1, 2]
+        registry = MacroRegistry()
+        registry.add(macro_from_data(record))
+        literal = DisplayNode('加<&>', "literal", metadata={"literalKind": "literal.str"})
+        root = DisplayNode("F", "concept", [DisplayNode("x", "fvar"), literal, DisplayNode("y", "fvar")],
+                           metadata={"leanName": "F", "headConst": "F"})
+        interactions = ExpressionInteractions()
+        mapping = interactions.register(root, "mixed-template", "zh")
+        python = LayoutRenderer(registry).render(root, interactions=interactions, fragments=mapping)
+        root_id = interactions.add_root(root, mapping, registry, "zh", "text")
+        frozen = interactions.render_roots[root_id]
+        script = """
+const fs = require('node:fs'), vm = require('node:vm'), window = {};
+vm.runInNewContext(fs.readFileSync(process.argv[1], 'utf8'), {window});
+const d = JSON.parse(fs.readFileSync(0, 'utf8')), outputs = [];
+for (const style of ['plain', 'strong', 'code']) {
+    const owners = {};
+    const tex = window.PS4HTMLRenderTree.render(d.tree, d.catalog,
+        {'["builtin", "literal.str"]': style}, 'zh', 'text',
+        owner => { const id = 'p' + (Object.keys(owners).length + 1); owners[id] = owner; return id; });
+    outputs.push({tex, owners});
+}
+process.stdout.write(JSON.stringify(outputs));
+"""
+        result = subprocess.run(["node", "-e", script,
+                                 str(ROOT / "tools/ps4html/PS4HTML/assets/js/render-tree.js")],
+                                input=json.dumps(frozen), text=True, capture_output=True, check=True)
+        for output in [{"tex": python, "owners": interactions.fragments}, *json.loads(result.stdout)]:
+            with self.subTest(tex=output["tex"]):
+                match = re.search(r"\[\[PS4HTML-START-(p\d+)\]\]"
+                                  r"\[\[PS4HTML-LITERAL-(?:plain|strong|code)-[0-9a-f]*-(p\d+)\]\]"
+                                  r"\[\[PS4HTML-END-\1\]\]", output["tex"])
+                self.assertIsNotNone(match, "HTML atom needs its own containing-template anchor")
+                self.assertEqual(output["owners"][match[1]], mapping[id(root)])
+                self.assertEqual(output["owners"][match[2]], mapping[id(literal)])
+                math_anchors = re.findall(r"ps-expr-fragment=(p\d+)", output["tex"])
+                self.assertEqual(sum(output["owners"][fragment] == mapping[id(root)] for fragment in math_anchors), 2)
+        interactions.collect(python)
+        html = interactions.materialize_text(python)
+        self.assertIn('加&lt;&amp;&gt;', html)
+        self.assertEqual(len(interactions.occurrences[mapping[id(root)]]["fragmentIds"]), 3)
 
     def test_reject_invalid_wire_data(self):
         valid = definition([arg()])

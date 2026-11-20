@@ -67,7 +67,7 @@ def eligible_literals(root, registry, language: str, selections=None) -> set[int
             and child.metadata.get("literalKind") == "literal.str"}
 
 
-def split_math(tex: str, wrap_math=None) -> str:
+def split_math(tex: str, wrap_math=None, wrap_text=None) -> str:
     """Turn top-level HTML atoms into math/text/math runs, retaining TeX runs."""
     result = []
     offset = 0
@@ -75,7 +75,7 @@ def split_math(tex: str, wrap_math=None) -> str:
         if match.start() > offset:
             part = tex[offset:match.start()]
             result.append("$" + (wrap_math(part) if wrap_math else part) + "$")
-        result.append(match.group())
+        result.append(wrap_text(match.group()) if wrap_text else match.group())
         offset = match.end()
     if offset < len(tex):
         part = tex[offset:]

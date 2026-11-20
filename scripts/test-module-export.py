@@ -1,6 +1,7 @@
 """Exercise module publication and failure isolation without requiring a Wasm toolchain."""
 
 import importlib.util
+import hashlib
 import json
 import multiprocessing
 import os
@@ -169,6 +170,58 @@ class ModuleExportTests(unittest.TestCase):
                           ("info/Project/A.json", {"records": [
                               {"identity": {"kind": "project", "target": "Project"}}
                           ]})])
+
+    def validate_proof_module(self, module, printed):
+        stage = self.workspace / "validation"
+        code = "theorem test : True := by trivial"
+        semantic = {
+            "format": "proofscript.verso.highlighted.v1",
+            "sourceHash": hashlib.sha256(json.dumps(code, ensure_ascii=False,
+                separators=(",", ":")).encode("utf-8")).hexdigest(),
+            "declaration": "test", "producer": "verso-v4.32.0/subverso-0076a9e8",
+            "highlighted": "test",
+        }
+        export._write(stage / "info/module.json", {"module": module, "records": []})
+        export._write(stage / "pages/module.json", {
+            "module": module, "info": ".ProofScript/info/module.json", "components": [{}]})
+        export._write(stage / "proofs/test.json", {
+            "module": printed, "code": code,
+            "semanticCode": {"$resource": {
+                "path": ".ProofScript/resources/semantic.json", "encoding": "utf-8",
+                "mediaType": "application/vnd.proofscript.verso-highlighted+json"}},
+        })
+        export._write(stage / "resources/semantic.json", semantic)
+        export._validate_module_files(stage, module, True)
+
+    def test_accepts_proof_module_with_escaped_components(self):
+        cases = [
+            (["Project", "A"], "Project.A"),
+            (["Test", "ECNU20260523-Problem22"], "Test.«ECNU20260523-Problem22»"),
+            (["Project", "With.Dot"], "Project.«With.Dot»"),
+            (["Project", "测试₁"], "Project.测试₁"),
+            (["Project", 1], "Project.1"),
+            (["Project", "1"], "Project.«1»"),
+        ]
+        for module, printed in cases:
+            with self.subTest(module=module, printed=printed):
+                self.validate_proof_module(module, printed)
+
+    def test_rejects_foreign_or_malformed_proof_module(self):
+        cases = [
+            (["Project", "A"], "Other.A"),
+            (["Project", "With.Dot"], "Project.With.Dot"),
+            (["Project", "1"], "Project.1"),
+            (["Project", 1], "Project.«1»"),
+            (["Project", "A"], "Project.«A»Extra"),
+            (["Project", "A"], "Project.«A"),
+            (["Project", "A"], "Project..A"),
+            (["Project", "A"], "Project.A."),
+            (["Project", "A"], None),
+        ]
+        for module, printed in cases:
+            with self.subTest(module=module, printed=printed):
+                with self.assertRaisesRegex(ValueError, "proof belongs to another module"):
+                    self.validate_proof_module(module, printed)
 
     def test_failure_in_computation_build_preserves_old_module(self):
         self.publish([("pages/Project/A.json", {"title": "old"})])

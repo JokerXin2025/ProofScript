@@ -36,6 +36,15 @@ def printedName (_env : Environment) (text : String) : Except String Name := do
 private def add (dependencies : Array Name) (dependency : Name) : Array Name :=
   if dependencies.contains dependency then dependencies else dependencies.push dependency
 
+/-- Recorder replay can create auxiliary constants that disappear when its
+    temporary elaboration state is restored. They are not independent rendering
+    targets, even when an auxiliary with the same name survives in the final
+    environment. Strip the private prefix so private user declarations still
+    contribute their Info; only the remaining internal name is excluded. -/
+private def addExpressionDependency (dependencies : Array Name) (dependency : Name) : Array Name :=
+  if (privateToUserName dependency).isInternal then dependencies
+  else add dependencies dependency
+
 /-- Follow structural edges and effective naming-type annotations from an
     explicit expression root. Ordinary JSON and unrelated metadata are not
     searched for declarations. Citation suppression cannot hide rendering use. -/
@@ -62,14 +71,14 @@ where
     if let some (.str descriptor) := type then
       if descriptor.startsWith "decl:" then
         let name ← printedName env (descriptor.drop 5).toString
-        dependencies := add dependencies name
+        dependencies := addExpressionDependency dependencies name
     if let some id := reference then
       if seen.contains id then return (seen, dependencies)
       seen := seen.push id
     let kind := (value.getObjValAs? String "kind").toOption.getD ""
     if kind == "const" then
       let name ← printedName env (← value.getObjValAs? String "name")
-      dependencies := add dependencies name
+      dependencies := addExpressionDependency dependencies name
     let fields : Array String := match kind with
       | "app" => #["fn", "arg"]
       | "lam" | "forall" => #["type", "body"]

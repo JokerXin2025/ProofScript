@@ -7,3 +7,6 @@ import ProofScript.Extensions.Title
 import ProofScript.Extensions.LaTeX
 import ProofScript.Extensions.Figure
 import ProofScript.Builtin.Scripts
+import ProofScript.Builtin.Symbols
+import ProofScript.Builtin.Types
+import ProofScript.Builtin.Wrappers

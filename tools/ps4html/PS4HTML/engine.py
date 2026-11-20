@@ -31,6 +31,17 @@ TEMPLATE_PAGE = Template((CURRENT_DIR / "Templates/page.html").read_text())
 TEMPLATE_ANNOTATION = Template((CURRENT_DIR / "Templates/annotation.html").read_text())
 
 
+_PREFORMATTED = re.compile(r"(<pre\b[^>]*>.*?</pre\s*>)", re.I | re.S)
+
+
+def indent_markup(markup: str, prefix: str) -> str:
+    """Indent HTML layout without changing whitespace inside preformatted code."""
+    return "".join(
+        part if index % 2 else indent(part, prefix)
+        for index, part in enumerate(_PREFORMATTED.split(markup))
+    )
+
+
 def render_step(tag, content, sort = "", style = "", dashboard = ""):
     dashboard_id = f"ps-proof-dashboard-{next(_DASHBOARD_IDS)}" if dashboard else ""
     return TEMPLATE_STEP.substitute(
@@ -62,14 +73,14 @@ def render_details(open, tag, title, content):
         open = "open" if open else "close",
         tag = tag,
         title = title,
-        content = indent(content, "    ")
+        content = indent_markup(content, "    ")
     )
 
 def render_strategy(sort, tag, content, style = ""):
     return TEMPLATE_STRATEGY.substitute(
         sort = sort,
         tag = tag,
-        content = indent(content, "    "),
+        content = indent_markup(content, "    "),
         style = style,
     )
 
@@ -84,7 +95,7 @@ def render_proof(proof_state, title, content, lines_count, code, anchor = "", la
     return TEMPLATE_PROOF.substitute(
         proof_state = proof_state,
         title = html.escape(title),
-        content = indent(content, "        "),
+        content = indent_markup(content, "        "),
         statement = statement,
         lines_count = lines_count,
         code = code,
@@ -127,8 +138,8 @@ def render_page(title, contents, index_href, navigation = "", default_language="
         asset_root = html.escape(asset_root or project_base_url + "assets/", quote=True),
         title = html.escape(title),
         index_href = html.escape(index_href, quote = True),
-        navigation = indent(navigation, "        "),
-        contents = indent(contents, "    "),
+        navigation = indent_markup(navigation, "        "),
+        contents = indent_markup(contents, "    "),
         default_language = default_language,
         html_language = "zh-CN" if language == "zh" else "en",
         project_base_url = html.escape(project_base_url, quote=True),
@@ -281,6 +292,11 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
         <i class="codicon codicon-home" aria-hidden="true"></i>
       </a>
     </div>'''
+    # The package's library list is filled in at publication time, when the
+    # complete set of published libraries is known under the build lock.
+    library_boundary = current_parts[0] if current_parts and len(current_parts) <= 2 else None
+    before = f'<!-- ps4html-libraries-before:{html.escape(library_boundary)} -->' if library_boundary else ""
+    after = f'<!-- ps4html-libraries-after:{html.escape(library_boundary)} -->' if library_boundary else ""
     return f'''<aside class="module-sidebar" aria-label="{html.escape(tr("page.module_directory", language), quote=True)}">
   <div class="module-sidebar-inner">
     <div class="module-sidebar-heading">
@@ -317,7 +333,7 @@ def render_module_navigation(pages, current_output: Path, current_module: str | 
     </div>
     {path_html}
     <nav class="module-directory-scroll" aria-label="{html.escape(tr("page.nearby_modules", language), quote=True)}">
-      <ul class="module-context-tree">{tree_html}{extra_nodes}</ul>
+      <ul class="module-context-tree">{before}{tree_html}{after}{extra_nodes}</ul>
     </nav>
     {theorem_navigation}
   </div>

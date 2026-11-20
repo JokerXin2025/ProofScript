@@ -107,6 +107,36 @@ run_cmd do
 
 -- Page mode exercises persistence, final-view merging and symbol shorthands.
 set_option pageBuild true
+
+def templateDSLJuxtapose (a b : Nat) := a * b
+decl_info infix templateDSLJuxtapose "" (mode := formula, precedence := 70)
+decl_info infixl templateDSLJuxtapose "" (mode := formula, precedence := 70)
+decl_info infixr templateDSLJuxtapose "" (mode := formula, precedence := 70)
+run_cmd do
+  let (frozen, _) ← ofExcept <| freezeDeclInfo (← getEnv) (← getEnv).mainModule ``templateDSLJuxtapose
+  let templates ← ofExcept <| frozen.getObjValAs? (Array Json) "templates"
+  unless templates.size == 3 do throwError "empty infix shorthands were not retained"
+  for template in templates do
+    let instructions ← ofExcept <| template.getObjVal? "instructions"
+    unless instructions == toJson (#[DefinitionTemplateInstruction.argument 0 .formula,
+        .literal "  ", .argument 1 .formula] : Array DefinitionTemplateInstruction) do
+      throwError "empty infix shorthand must keep its operand separator"
+
+-- A returned predicate is an interval object, not another native argument.
+-- Counting its reducible function type would prevent the endpoint template
+-- from matching complete interval applications in theorem statements.
+def TemplateDSLSet := Nat → Prop
+def templateDSLInterval (a b : Nat) : TemplateDSLSet := fun x => a ≤ x ∧ x ≤ b
+decl_info templateDSLInterval { templates := [{ label := "interval",
+  content := template%:100 ${ "[" arg!(0) "," arg!(1) "]" }$ }] }
+run_cmd do
+  let env ← getEnv
+  let (frozen, _) ← ofExcept <| freezeDeclInfo env env.mainModule ``templateDSLInterval
+  unless (frozen.getObjVal? "arity").toOption == some (toJson (2 : Nat)) &&
+      (frozen.getObjVal? "parameter_argument_indices").toOption ==
+        some (toJson (#[0, 1] : Array Nat)) do
+    throwError "a returned set must not add an argument to the interval template"
+
 def templateDSLPair (a b : Nat) := (a, b)
 decl_info templateDSLPair { templates := [{ label := "mixed",
   content := template% { "从" arg(0) "到" $ arg(1) $ } }] }

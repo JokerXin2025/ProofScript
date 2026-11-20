@@ -2,12 +2,15 @@
 
 import fcntl
 import hashlib
+import html
 import json
 import shutil
 import os
+import re
 import tempfile
 from contextlib import contextmanager
 from pathlib import Path
+from urllib.parse import quote as quote_url_path
 
 from Lean2TeX.configuration import interpret
 from PS4HTML.config import load_config
@@ -47,6 +50,39 @@ def _replace_tree(source, destination):
         raise
     if backup.exists():
         shutil.rmtree(backup)
+
+
+_LIBRARY_SLOTS = re.compile(
+    r'(<!-- ps4html-libraries-before:([^\n]*?) -->)(.*?)(<!-- ps4html-libraries-after:\2 -->)', re.S)
+
+
+def _publish_library_navigation(build, libraries):
+    """Fill static sidebar slots for every published library under the build lock."""
+    for library in libraries:
+        for page in (build / library).rglob("*.html"):
+            if page.is_symlink():
+                continue
+            source = page.read_text(encoding="utf-8")
+            def replace(match):
+                current = html.unescape(match[2])
+                if current != library:
+                    return match[0]
+                path = page.parent
+                def node(name):
+                    href = quote_url_path(os.path.relpath(build / name / "index.html", path))
+                    return (f'<li><a class="module-tree-node" data-ps-library-link '
+                            f'href="{html.escape(href, quote=True)}">'
+                            f'<span class="module-tree-node-mark" aria-hidden="true"></span>'
+                            f'{html.escape(name)}</a></li>')
+                before = "".join(node(name) for name in libraries if name < current)
+                after = "".join(node(name) for name in libraries if name > current)
+                # Strip previously published siblings before rebuilding from the
+                # authoritative directory list; the current branch remains intact.
+                branch = re.sub(r'<li><a class="module-tree-node" data-ps-library-link .*?</li>', '', match[3], flags=re.S)
+                return match[1] + before + branch + after + match[4]
+            updated = _LIBRARY_SLOTS.sub(replace, source)
+            if updated != source:
+                page.write_text(updated, encoding="utf-8")
 
 
 def _encoded_name(parts):
@@ -464,9 +500,9 @@ def render_target(manifest, config=None):
             publish_assets(build / "assets")
             _replace_tree(site, output)
             libraries = [directory.name for directory in build.iterdir()
-                         if directory.is_dir() and (directory / "index.html").is_file()]
-            (build / "assets" / "js" / "libraries.js").write_text(
-                "window.PS4HTMLLibraries = " + json.dumps(sorted(libraries), ensure_ascii=False).replace("<", "\\u003c") + ";\n", encoding="utf-8")
+                          if directory.is_dir() and (directory / "index.html").is_file()]
+            libraries.sort()
+            _publish_library_navigation(build, libraries)
             index = build / "index.html"
             next_index = index.with_name("index.html.next")
             next_index.write_text(render_package_index(target["package"], libraries,

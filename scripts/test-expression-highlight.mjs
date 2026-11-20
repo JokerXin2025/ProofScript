@@ -25,8 +25,13 @@ class Element {
     getClientRects() { return this.rects; }
     getBoundingClientRect() { return this.rects[0] || rect(0, 0, 0, 0); }
     matches() { return false; }
+    contains(node) {
+        for (let current = node; current; current = current.parent) if (current === this) return true;
+        return false;
+    }
     querySelector() { return null; }
     closest(selector) {
+        if (selector === '[data-ps-render-root]' && this.dataset.psRenderRoot) return this;
         if (selector === '.proof-dashboard-reveal') return this.hiddenPanel || this.parent?.hiddenPanel || null;
         if (selector === 'svg' && this.isSvg) return this;
         if (selector === 'svg' && this.parent?.isSvg) return this.parent;
@@ -96,6 +101,28 @@ assert.equal(fragmentAt(150, 70), target, 'hover reaches the top of the tall arr
 assert.equal(fragmentAt(0, 20), null, 'the detached zero-origin box does not become a hit target');
 assert.equal(visibleRects(closedFragment).length, 0, 'closed dashboard nodes have no highlight geometry');
 assert.equal(fragmentAt(1, 90), null, 'closed dashboard expressions cannot intercept pointer hits');
+// A multiplication can have a narrow inline piece across a much taller sum /
+// fraction. The ancestor's smaller area must not hide the nested expression.
+const sum = new Element([rect(100, 60, 240, 140)], target);
+sum.dataset.psExprFragment = 'p2';
+const fraction = new Element([rect(150, 70, 230, 130)], sum);
+fraction.dataset.psExprFragment = 'p3';
+const originalTargetRects = target.rects;
+target.rects = [rect(100, 80, 240, 100)];
+target.children = [];
+// Use a fresh root to avoid relying on any internal cache invalidation API.
+const nestedMath = new Element([rect(95, 50, 260, 150)], null, ['katex']);
+target.parent = nestedMath;
+nestedMath.children.push(target, sum, fraction);
+assert.equal(fragmentAt(120, 90), sum, 'sum wins over a smaller enclosing multiplication fragment');
+assert.equal(fragmentAt(180, 90), fraction, 'fraction wins over both enclosing sum and multiplication');
+const reverseMath = new Element([rect(95, 50, 260, 150)], null, ['katex']);
+target.parent = reverseMath;
+reverseMath.children.push(fraction, sum, target);
+assert.equal(fragmentAt(180, 90), fraction, 'a later ancestor cannot replace its descendant');
+target.parent = math;
+target.rects = originalTargetRects;
+target.children = [arrow, detached];
 occurrenceNodes.set('o1', [hoveredLeft, hoveredRight]);
 occurrenceNodes.set('o2', [linkedLeft, linkedRight]);
 occurrenceNodes.get('o2').push(closedFragment);
@@ -131,8 +158,66 @@ assert.deepEqual(highlights.children.map(box => [box.style.left, box.style.width
 occurrenceNodes.set('o5', [new Element([rect(100, 85, 110, 110), rect(100, 135, 140, 160)])]);
 paintHighlights();
 assert.deepEqual(highlights.children.map(box => [box.style.top, box.style.width]),
-    [['85px', '10px'], ['135px', '40px']],
-    'one fragment wrapped across lines keeps its distinct layout rectangles');
+    [['85px', '40px']],
+    'one fragment wrapped across lines receives one enclosing rectangle');
+assert.equal(highlights.children[0].style.height, '75px');
+const island = new Element();
+island.dataset.psRenderRoot = 'r1';
+const inlinePieces = new Element([rect(100, 200, 120, 221), rect(120, 200, 140, 221)], island);
+assert.equal(visibleRects(inlinePieces).length, 2, 'hit testing retains original fragment areas');
+occurrenceNodes.set('o5', [inlinePieces]);
+paintHighlights();
+assert.deepEqual(highlights.children.map(box => [box.style.left, box.style.width]),
+    [['100px', '40px']], 'multiple client rects on one inline line form one outline');
+const textPiece = new Element([rect(140, 200.5, 180, 221)], island);
+const mathPiece = new Element([rect(180, 200, 210, 221)], island);
+// Occurrence fragment IDs are allocated in render order, not visual order.
+occurrenceNodes.set('o5', [mathPiece, inlinePieces, textPiece]);
+paintHighlights();
+assert.deepEqual(highlights.children.map(box => [box.style.left, box.style.width, box.style.height]),
+    [['100px', '110px', '21px']], 'adjacent text and formula anchors have no internal borders');
+const gap = new Element([rect(220, 200, 240, 221)], island);
+occurrenceNodes.set('o5', [inlinePieces, gap]);
+paintHighlights();
+assert.deepEqual(highlights.children.map(box => [box.style.left, box.style.width]),
+    [['100px', '140px']], 'one template gets its minimal enclosing rectangle across component gaps');
+const otherIsland = new Element();
+otherIsland.dataset.psRenderRoot = 'r2';
+occurrenceNodes.set('o5', [inlinePieces, new Element([rect(140, 200, 180, 221)], otherIsland)]);
+paintHighlights();
+assert.equal(highlights.children.length, 2, 'touching render islands stay independent');
+activeOccurrences.add('o4');
+occurrenceNodes.set('o4', [textPiece]);
+occurrenceNodes.set('o5', [inlinePieces]);
+paintHighlights();
+assert.equal(highlights.children.length, 2, 'linked semantic occurrences never compose their boxes');
+activeOccurrences.delete('o4');
+const tallMath = new Element([rect(95, 180, 260, 280)], island, ['katex']);
+const tall = new Element([rect(100, 200, 140, 221)], tallMath);
+const tallLeaf = new Element([rect(110, 185, 135, 260)], tall);
+tall.children.push(tallLeaf);
+occurrenceNodes.set('o5', [tall, new Element([rect(140, 240, 180, 261)], island)]);
+paintHighlights();
+assert.equal(highlights.children.length, 1, 'one template includes every line and overflowing math ink');
+assert.deepEqual(highlights.children.map(box => [box.style.top, box.style.height]), [['185px', '76px']]);
+const wrapped = new Element([rect(100, 300, 160, 321), rect(100, 330, 130, 351)], island);
+occurrenceNodes.set('o5', [wrapped, new Element([rect(130, 330.5, 190, 351)], island)]);
+paintHighlights();
+assert.deepEqual(highlights.children.map(box => [box.style.top, box.style.width, box.style.height]),
+    [['300px', '90px', '51px']], 'a wrapped mixed template has exactly one minimal enclosing box');
+// The middle HTML atom can be taller than both math runs (strong/code styles).
+const literalParent = new Element([rect(140, 190, 180, 230)], island);
+occurrenceNodes.set('o5', [inlinePieces, literalParent, mathPiece]);
+paintHighlights();
+assert.deepEqual(highlights.children.map(box => [box.style.left, box.style.top, box.style.width, box.style.height]),
+    [['100px', '190px', '110px', '40px']], 'HTML atom height participates in the parent template bounds');
+assert.equal(literalParent.classList.contains('ps-expression-active'), false,
+    'enclosing a child does not activate that child as a separate selected expression');
+activeOccurrences.clear();
+activeOccurrences.add('o4');
+occurrenceNodes.set('o4', [inlinePieces, mathPiece]);
+paintHighlights();
+assert.equal(highlights.children.length, 2, 'repeated binder selectors in one render root stay separate symbols');
 updateClasses();
 assert.equal(closedFragment.classList.contains('ps-expression-active'), false,
     'hidden linked expressions are not styled');

@@ -366,7 +366,10 @@
                     parts.push(`$${fragments && mixedRoot ?
                         `\\htmlData{ps-expr-fragment=${fragmentFor(rootNode.occurrence)}}{${part}}` : part}$`);
                 }
-                parts.push(match[0]);
+                if (fragments && mixedRoot) {
+                    const id = fragmentFor(rootNode.occurrence);
+                    parts.push(`[[PS4HTML-START-${id}]]${match[0]}[[PS4HTML-END-${id}]]`);
+                } else parts.push(match[0]);
                 offset = marker.lastIndex;
             }
             if (offset < rendered.tex.length) {

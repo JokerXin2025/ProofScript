@@ -261,6 +261,37 @@ def _seal_text_references(stage: Path):
                 _write(path, document)
 
 
+def _printed_name_parts(value):
+    """Read Lean's printed name without splitting dots inside escaped components."""
+    if not isinstance(value, str) or not value:
+        return None
+    parts = []
+    start = 0
+    while start < len(value):
+        if value[start] == "«":
+            end = value.find("»", start + 1)
+            if end < 0 or end == start + 1:
+                return None
+            part = value[start + 1:end]
+            end += 1
+        else:
+            end = value.find(".", start)
+            if end < 0:
+                end = len(value)
+            part = value[start:end]
+            if not part or "«" in part or "»" in part:
+                return None
+            if part.isascii() and part.isdecimal():
+                part = int(part)
+        parts.append(part)
+        if end == len(value):
+            return parts
+        if value[end] != ".":
+            return None
+        start = end + 1
+    return None
+
+
 def _validate_module_files(stage: Path, module: list, has_components: bool):
     files = set(_files(stage))
     if not has_components:
@@ -295,7 +326,7 @@ def _validate_module_files(stage: Path, module: list, has_components: bool):
             raise ValueError("unsupported frozen Info identity; rebuild the module export")
     for proof in (stage / "proofs").rglob("*.json"):
         document = _json(proof)
-        if document.get("module") != ".".join(str(part) for part in module):
+        if _printed_name_parts(document.get("module")) != module:
             raise ValueError(f"proof belongs to another module: {proof}")
         reference = document.get("semanticCode", {}).get("$resource")
         if not isinstance(reference, dict) or reference.get("mediaType") != \

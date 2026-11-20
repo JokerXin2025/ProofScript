@@ -84,6 +84,13 @@
         styledNodes.clear();
     }
 
+    function unionRect(target, rect) {
+        target.left = Math.min(target.left, rect.left);
+        target.right = Math.max(target.right, rect.right);
+        target.top = Math.min(target.top, rect.top);
+        target.bottom = Math.max(target.bottom, rect.bottom);
+    }
+
     function visibleRects(node) {
         if (inactiveDashboard(node)) return [];
         if (measuredRects.has(node)) return measuredRects.get(node);
@@ -132,14 +139,30 @@
                         Math.abs((item.top + item.bottom - rect.top - rect.bottom) / 2);
                     return score(candidate) < score(best) ? candidate : best;
                 });
-                group.left = Math.min(group.left, rect.left);
-                group.right = Math.max(group.right, rect.right);
-                group.top = Math.min(group.top, rect.top);
-                group.bottom = Math.max(group.bottom, rect.bottom);
+                unionRect(group, rect);
             }
         }
         measuredRects.set(node, groups);
         return groups;
+    }
+
+    function highlightRects(id, nodes) {
+        const groups = new Map();
+        // Template components belong to one visual expression, including HTML
+        // atoms and wrapped lines. Repeated variable/binder anchors remain
+        // individual symbols, even when a template reuses the same selector.
+        const symbol = ["fvar", "bvar", "binder", "const", "theorem", "literal", "sort", "metavariable"]
+            .includes(occurrences[id]?.kind);
+        for (const node of nodes) {
+            const scope = symbol ? node : node.closest("[data-ps-render-root]") || node.closest(".katex") || node;
+            for (const rect of visibleRects(node)) {
+                if (groups.has(scope)) unionRect(groups.get(scope), rect);
+                else groups.set(scope, {...rect});
+            }
+        }
+        // These enclosing boxes are paint-only: hit testing still uses the
+        // original fragment rectangles, never the whitespace enclosed here.
+        return [...groups.values()];
     }
 
     function invalidateRects() {
@@ -183,7 +206,13 @@
             for (const rect of visibleRects(candidate)) {
                 if (!containsPoint(rect, x, y)) continue;
                 const area = (rect.right - rect.left) * (rect.bottom - rect.top);
-                if (area < bestArea || (area === bestArea && direct === candidate)) {
+                // KaTeX splits an ancestor's inline box around vlists. One of
+                // those pieces can be smaller than a descendant's full sum or
+                // fraction while overlapping its ink. DOM containment, not
+                // fragment area, determines specificity for nested anchors.
+                const inside = best && best !== candidate && best.contains(candidate);
+                const outside = best && best !== candidate && candidate.contains(best);
+                if (inside || (!outside && (area < bestArea || (area === bestArea && direct === candidate)))) {
                     best = candidate;
                     bestArea = area;
                 }
@@ -202,26 +231,27 @@
         highlightFrame = null;
         const marked = new Set();
         const boxes = [];
-        // Semantic occurrences select the anchors to highlight, but each
-        // rendered fragment owns its own geometry. Never bridge the space
-        // between separate anchors, even when they share an occurrence.
+        // Compose each occurrence separately; entity-linked occurrences on the
+        // page must never be enclosed by a single page-spanning rectangle.
         for (const id of activeOccurrences) {
             const occurrence = occurrences[id];
             const style = isWrapper(id) ? "wrapper" : occurrence?.kind === "binder" ? "binder"
                 : ["fvar", "bvar"].includes(occurrence?.kind) ? "variable" : "expression";
+            const nodes = [];
             for (const node of occurrenceNodes.get(id) || []) {
                 if (marked.has(node)) continue;
                 marked.add(node);
-                for (const rect of visibleRects(node)) {
-                    const box = document.createElement("span");
-                    box.className = `ps-expression-highlight ps-expression-highlight-${style}`;
-                    if (state.pinned?.id === id) box.classList.add("is-selected");
-                    box.style.left = `${rect.left}px`;
-                    box.style.top = `${rect.top}px`;
-                    box.style.width = `${rect.right - rect.left}px`;
-                    box.style.height = `${rect.bottom - rect.top}px`;
-                    boxes.push(box);
-                }
+                nodes.push(node);
+            }
+            for (const rect of highlightRects(id, nodes)) {
+                const box = document.createElement("span");
+                box.className = `ps-expression-highlight ps-expression-highlight-${style}`;
+                if (state.pinned?.id === id) box.classList.add("is-selected");
+                box.style.left = `${rect.left}px`;
+                box.style.top = `${rect.top}px`;
+                box.style.width = `${rect.right - rect.left}px`;
+                box.style.height = `${rect.bottom - rect.top}px`;
+                boxes.push(box);
             }
         }
         highlights.replaceChildren(...boxes);

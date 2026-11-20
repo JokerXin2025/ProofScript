@@ -217,7 +217,7 @@ decl_info interval {
 | `parameter_template` | `none`，定理参数的文字描述 |
 | `extra` | 附加信息，按键合并；未知根字段也存入这里 |
 
-普通常量在完整应用且有可用模板时使用模板。原生参数数量包含隐式、严格隐式及实例参数；缺参、多参时回退普通应用，保留全部参数，不能提前套用模板。原生零参数常量可使用零参数模板。裸函数常量和普通应用回退的头部按当前语言选择 names。
+普通常量在完整应用且有可用模板时使用模板。原生参数数量包含隐式、严格隐式及实例参数，只数声明类型最外层连续的函数绑定，不展开返回类型的别名。例如 `Set.Ioo a b : Set α` 的显式参数只有两个端点，不会因 `Set α` 可展开为 `α → Prop` 而多算一个元素参数。缺参、多参时回退普通应用，保留全部参数，不能提前套用模板。原生零参数常量可使用零参数模板。裸函数常量和普通应用回退的头部按当前语言选择 names。
 
 `InternationalName` 的 `lang` 可以省略（等同 `none`，语言无关），`value` 必须非空。名称选择依次尝试当前语言、无语言、英语，仍无匹配时回退 Lean 名称。原生 theorem/lemma 的 Lean 回退名称为末尾分量，普通声明为完整名称；Lean 声明身份始终不变。当前站点只提供中英文切换。`tags` 目前仅保存和导出，不用于界面展示。`names`、`tags` 根字段整体替换；可以用以下命令编辑当前可见列表：
 
@@ -289,7 +289,7 @@ decl_info templates Eq - [("call", none)]
 
 六种符号简写中，relation 设置 kind 为 relation；prefix、postfix、infix、infixl、infixr 设置 kind 为 operator，分别生成 `$relation`、`$prefix`、`$postfix`、`$infix`、`$infixl`、`$infixr` 模板（lang 为 none）并放在列表首位。同身份旧模板先移除，其余项保持顺序，不修改已有显式 default_template。简写默认 **formula 模式**；需要文本模式时可显式填写 `mode := text`。relation 固定使用优先级 50，并原样覆盖 calc_symbol；其它简写不修改 calc_symbol。选项字段顺序任意，重复或未知字段报错。
 
-prefix/postfix 简写要求恰有一个显式参数，relation/infix/infixl/infixr 要求恰有两个。手写的五个保留前中后缀模板在固化时也检查布局：操作数各出现一次，位置符合 label，不得添加其它包围结构或使用 binder 选择器；允许 binder 条件。
+prefix/postfix 简写要求恰有一个显式参数，relation/infix/infixl/infixr 要求恰有两个。infix/infixl/infixr 的符号可以是空字符串（例如用于省略乘号）；prefix/postfix/relation 仍要求非空。手写的五个保留前中后缀模板在固化时也检查布局：操作数各出现一次，位置符合 label，不得添加其它包围结构或使用 binder 选择器；中缀的符号片段可以为空，允许 binder 条件。
 
 整个 `$` label 空间保留，当前只有上述六个名称合法且 lang 必须为 none。`decl_info templates ... +` / `-` 禁止操作保留 label。它们先读取唯一确定的完整列表，再一次写回：添加到末尾，已有身份、批内重复、删除不存在的身份均报错且不留下部分写入。`+ []` / `- []` 也记录一次完整 templates 写入。
 

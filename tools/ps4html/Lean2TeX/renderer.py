@@ -83,7 +83,13 @@ class LayoutRenderer:
             def wrap_math(part):
                 fragment = self.interactions.new_fragment(self.fragments[id(self.root_node)])
                 return f"\\htmlData{{ps-expr-fragment={fragment}}}{{{part}}}"
-            tex = split_math(rendered.tex, wrap_math if self.mixed_root else None)
+            def wrap_text(part):
+                fragment = self.interactions.new_fragment(self.fragments[id(self.root_node)])
+                return f"[[PS4HTML-START-{fragment}]]{part}[[PS4HTML-END-{fragment}]]"
+            # Splitting at an HTML atom must preserve the containing template's
+            # ownership on BOTH sides of the math/text boundary.
+            tex = split_math(rendered.tex, wrap_math if self.mixed_root else None,
+                             wrap_text if self.mixed_root else None)
             self._check_length(len(tex), self.MAX_OUTPUT_CHARACTERS, "TeX output")
             return tex
         tex = self._switch_mode(rendered.tex, rendered.mode, parent_mode)

@@ -23,6 +23,8 @@ MODULE = "Test.PageTheoremExpressionBoundaries"
 sys.path.insert(0, str(ROOT / "tools/ps4html"))
 
 from PS4HTML.page import Page, build_label_index
+from PS4HTML.engine import render_details, render_module_navigation, render_page, render_proof
+from PS4HTML.module_protocol import _publish_library_navigation
 from PS4HTML.project import PS4HTMLError
 from PS4HTML.Rules.media import render_figure
 
@@ -51,6 +53,18 @@ class ModuleRenderTests(unittest.TestCase):
         self.assertEqual(target.anchor, "theorem-OtherNamespace.«name.with.dots».3")
         self.assertEqual(target.output_path, Path("Test/Page.html"))
         self.assertEqual(len(labels), 1)
+
+    def test_layout_does_not_indent_preformatted_code(self):
+        code = "first\n  second\nthird"
+        blocks = (
+            f'<pre class="page-code"><code>{code}</code></pre>',
+            f'<pre class="verso-source"><code class="hl lean block">{code}</code></pre>',
+            f'<pre><code>{code}</code></pre>',
+        )
+        proof = render_proof("", "example", render_details(True, "", "Details", blocks[0]), 3, blocks[1])
+        page = render_page("Example", proof + blocks[2], "index.html")
+        for block in blocks:
+            self.assertIn(block, page)
 
     def test_figures_require_verified_exported_resources(self):
         with tempfile.TemporaryDirectory() as temporary:
@@ -150,15 +164,41 @@ class ModuleRenderTests(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stderr)
         build = SITE.parent
         index = (build / "index.html").read_text()
-        page = (SITE / "Test/PageTitle.html").read_text()
+        page = (SITE / "Test/PageTheoremExpressionBoundaries.html").read_text()
         self.assertIn("<title>ProofScript</title>", index)
         self.assertIn('class="module-sidebar"', index)
         self.assertIn('href="Test/index.html"', index)
         self.assertIn('href="./assets/css/layout.css"', index)
         self.assertIn('href="../assets/css/layout.css"', (SITE / "index.html").read_text())
         self.assertIn('href="../../assets/css/layout.css"', page)
-        self.assertIn('"Test"', (build / "assets/js/libraries.js").read_text())
+        self.assertIn('ps4html-libraries-before:Test', page)
+        self.assertNotIn('js/libraries.js', page)
         self.assertFalse((SITE / "assets").exists())
+
+    def test_library_navigation_is_published_in_html(self):
+        pages = [Page(Path("Test/Area.json"), "Test.Area", Path("Test/Area.lean"), [], Path("Test/Area.json"))]
+        with tempfile.TemporaryDirectory() as temporary:
+            build = Path(temporary)
+            for library in ("Alpha", "Test", "Zeta"):
+                (build / library / "Test").mkdir(parents=True)
+                (build / library / "index.html").write_text("index", encoding="utf-8")
+            output = build / "Test/Test/Area.html"
+            navigation = render_module_navigation(pages, Path("Test/Area.html"), "Test.Area", "../../index.html")
+            output.write_text(navigation, encoding="utf-8")
+            _publish_library_navigation(build, ["Alpha", "Test", "Zeta"])
+            content = output.read_text()
+            self.assertLess(content.index('>Alpha</a>'), content.index('>Test</a>'))
+            self.assertLess(content.index('>Test</a>'), content.index('>Zeta</a>'))
+            self.assertIn('href="../../Alpha/index.html"', content)
+            _publish_library_navigation(build, ["Alpha", "Test", "Zeta"])
+            self.assertEqual(output.read_text(), content)
+            (build / "Beta").mkdir()
+            (build / "Beta/index.html").write_text("index", encoding="utf-8")
+            _publish_library_navigation(build, ["Alpha", "Beta", "Test", "Zeta"])
+            updated = output.read_text()
+            self.assertLess(updated.index('>Alpha</a>'), updated.index('>Beta</a>'))
+            self.assertLess(updated.index('>Beta</a>'), updated.index('>Test</a>'))
+            self.assertEqual(updated.count('>Alpha</a>'), 1)
 
 
 if __name__ == "__main__":

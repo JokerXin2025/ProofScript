@@ -1,4 +1,5 @@
 import ProofScript
+import Test.SharedDeclInfo
 
 open Lean Parser Tactic Elab.Tactic Meta ProofScript
 

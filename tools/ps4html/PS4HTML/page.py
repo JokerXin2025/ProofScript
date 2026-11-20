@@ -129,6 +129,7 @@ class PageRenderer:
             record = self.bundle.theorem(data[tag]["value"]["proof"])
             key = record.key
             graph = self.theorem_graph
+            declaration_names = self.bundle.configuration(record.owner).declaration_names
             identity = theorem_id(key)
             levels = []
             for css_class, title_zh, title_en, keys in (
@@ -141,8 +142,13 @@ class PageRenderer:
                     if css_class == "outgoing" and other_record is not None and other_record.declaration_kind == "lemma":
                         continue
                     destination = graph.destinations.get(other_key)
-                    declaration = html.escape(name_text(list(other_key[1])), quote=True)
-                    label = html.escape(graph.title(other_key, language))
+                    lean_name = name_text(list(other_key[1]))
+                    declaration = html.escape(lean_name, quote=True)
+                    # Auxiliary declarations need not have a page destination.
+                    # Read their names in the current proof owner's frozen view.
+                    label = (graph.title(other_key, language) if destination else
+                             select_name(declaration_names.get(lean_name, []), language, lean_name))
+                    label = html.escape(label)
                     mark = '<span class="theorem-dependency-mark" aria-hidden="true"></span>'
                     if destination and (destination.output_path in self.rendered_outputs or destination.output_path == current_output):
                         href = quote_url_path(os.path.relpath(destination.output_path, current_dir)) + f"#{quote_url_path(destination.anchor)}"
