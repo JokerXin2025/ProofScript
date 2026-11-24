@@ -6,28 +6,26 @@ from PS4HTML.i18n import tr
 
 def rule_calc(calc, proof, *, language):
     init = calc["init"]
-    chain = calc["chain"]
+    relation, rhs, proofs = (calc[key] for key in ("chain_relation", "chain_rhs", "chain_proof"))
     if init is None:
         raise ValueError("calc.init must be a recorded expression")
-    if not isinstance(chain, list) or not chain:
-        raise ValueError("calc.chain must be a nonempty array")
+    if (not all(isinstance(items, list) for items in (relation, rhs, proofs)) or
+            not relation or len(relation) != len(rhs) or len(relation) != len(proofs)):
+        raise ValueError("calc.chain must be nonempty with aligned columns")
     calc_steps = []
     lhs = init
-    for i, link in enumerate(chain):
-        if not isinstance(link, dict) or not {"rhs", "relation", "proof"} <= link.keys():
-            raise ValueError("calc chain entry requires rhs, relation and proof")
-        if link["rhs"] is None or link["relation"] is None or link["proof"] is None:
+    for i, (link_relation, link_rhs, proof_value) in enumerate(zip(relation, rhs, proofs)):
+        if link_rhs is None or link_relation is None or proof_value is None:
             raise ValueError("calc chain entries cannot contain null values")
-        rhs = link["rhs"]
         lhs_tex = html.escape(proof.tex(lhs)) if lhs is not None else ""
-        rhs_tex = html.escape(proof.tex(rhs)) if rhs is not None else ""
+        rhs_tex = html.escape(proof.tex(link_rhs)) if link_rhs is not None else ""
         calc_steps.append(
             render_cal_step(
                 tag = tr("strategy.calculation", language) if i == 0 else "",
                 lhs = lhs_tex if i == 0 else "",
-                rel = proof.render_relation(link["relation"]),
+                rel = proof.render_relation(link_relation),
                 rhs = rhs_tex,
             )
         )
-        lhs = rhs
+        lhs = link_rhs
     return "<div>" + "\n".join(calc_steps) + "</div>"

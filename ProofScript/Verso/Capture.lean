@@ -71,29 +71,35 @@ private partial def takeSource (hl : Highlighted) (remaining : Nat) : Option (Hi
     return (.tactics goals start stop next, rest)
 
 /-- The native public theorem is elaborated by the following command; the helper
-    InfoTree therefore cannot yet contain its declaration identity. Only the
-    source token bearing the declared name receives this projected identity. -/
-private partial def markDeclaration (name : Name) (hl : Highlighted) : Highlighted × Nat := Id.run do
+    InfoTree therefore cannot yet contain its declaration identity. Project it
+    onto the exact source range of the declaration identifier, not a token whose
+    spelling happens to resemble the resolved name. Source spelling can be
+    qualified, escaped, or relative to the current namespace.
+
+    Highlighted nodes retain source text but not token positions. Accumulate
+    UTF-8 byte offsets from the command's start; annotations consume no bytes. -/
+private partial def markDeclaration (name : Name) (range : Syntax.Range)
+    (hl : Highlighted) (offset : Nat) : Highlighted × Nat := Id.run do
   match hl with
   | .token tok =>
-    if tok.content == name.getString! && tok.kind == .unknown then
+    if offset == range.start.byteIdx && offset + tok.content.utf8ByteSize == range.stop.byteIdx then
       return (.token { tok with kind := .const name name.toString none true none }, 1)
     return (hl, 0)
   | .seq pieces =>
     let mut seen := 0
     let mut result := #[]
+    let mut position := offset
     for piece in pieces do
-      if seen == 0 then
-        let (next, count) := markDeclaration name piece
-        seen := count
-        result := result.push next
-      else result := result.push piece
+      let (next, count) := markDeclaration name range piece position
+      seen := seen + count
+      result := result.push next
+      position := position + piece.toString.utf8ByteSize
     return (.seq result, seen)
   | .span info content =>
-    let (next, count) := markDeclaration name content
+    let (next, count) := markDeclaration name range content offset
     return (.span info next, count)
   | .tactics goals start stop content =>
-    let (next, count) := markDeclaration name content
+    let (next, count) := markDeclaration name range content offset
     return (.tactics goals start stop next, count)
   | _ => return (hl, 0)
 
@@ -180,7 +186,7 @@ private def projectScriptStates (original : Syntax) (trees : PersistentArray Inf
   return result
 
 /-- Called while the helper's single check still owns its InfoTree. -/
-def capture (declaration : Name) (code : String) : CommandElabM String := do
+def capture (declaration : Name) (identifier : TSyntax `ident) (code : String) : CommandElabM String := do
   let file := (← getFileMap).source
   let original? := (← read).macroStack.findSome? fun frame =>
     let source := frame.before.getSubstring?.map (·.toString) |>.getD ""
@@ -198,6 +204,11 @@ def capture (declaration : Name) (code : String) : CommandElabM String := do
   let source := String.Pos.Raw.extract (← getFileMap).source start stop
   unless source == code do
     throwError "Verso: captured source differs from proof code"
+  let some declarationRange := identifier.raw.getRange? (canonicalOnly := true)
+    | throwErrorAt identifier "Verso: declaration identifier has no source range"
+  unless start ≤ declarationRange.start && declarationRange.start < declarationRange.stop &&
+      declarationRange.stop ≤ stop do
+    throwErrorAt identifier "Verso: declaration identifier is outside the captured command"
   let raw ← liftTermElabM <|
     highlightIncludingUnparsed original #[] (← getInfoTrees)
       (startPos? := some start) (endPos? := some stop)
@@ -208,9 +219,9 @@ def capture (declaration : Name) (code : String) : CommandElabM String := do
       | throwError "Verso: cannot bound highlighted syntax to source range"
     pure trimmed
   let highlighted ← projectScriptStates original (← getInfoTrees) highlighted
-  let (highlighted, marked) := markDeclaration declaration highlighted
+  let (highlighted, marked) := markDeclaration declaration declarationRange highlighted start.byteIdx
   unless marked == 1 do
-    throwError "Verso: cannot identify public declaration token"
+    throwErrorAt identifier "Verso: declaration identifier does not align with a unique source token"
   unless highlighted.toString == code do
     throwError "Verso: highlighted source differs from proof code"
   unless safeHighlight highlighted do

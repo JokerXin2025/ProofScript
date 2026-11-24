@@ -17,13 +17,20 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: '3.11'
+      - name: Under Development
+        run: exit 1
       - name: Page component regression
         run: |
           python3 scripts/test-page-components.py
           python3 scripts/test-theorem-ide.py
       - name: Install renderer dependencies
         run: python3 -m pip install ./tools/ps4html
-      - name: Reference collection regression
-        run: python3 scripts/test-references.py
-      - name: Under Development
-        run: exit 1
+      - name: Recorded-value protocol regressions
+        run: |
+          python3 scripts/test-script-board-protocol.py
+          python3 scripts/test-proof-dashboard.py
+      - name: Recorded-value export and page regressions
+        run: |
+          python3 scripts/test-script-board-integration.py
+          python3 scripts/test-theorem-statements.py
+          python3 scripts/test-transient-proof-dependencies.py

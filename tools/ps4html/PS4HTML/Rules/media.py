@@ -24,9 +24,18 @@ TEMPLATE_MEDIA_ERROR = Template((TEMPLATE_DIR / "media_error.html").read_text())
 
 def render_svg(value, proof, *, language):
     """Render recorded SVG using the page media presentation."""
-    metadata = value["metadata"]
+    extra_names, extra_values = value["metadata_extra_names"], value["metadata_extra_values"]
+    if (not isinstance(extra_names, list) or not isinstance(extra_values, list) or
+            len(extra_names) != len(extra_values)):
+        raise ValueError("SVG metadata extra columns must be aligned")
+    metadata = {
+        "title": value["metadata_title"],
+        "label": None if value["metadata_label"] == "null" else value["metadata_label"],
+        "extra": list(zip(extra_names, extra_values)),
+    }
     code = value["code"]
-    source = value.get("source")
+    source = ({"lang": value["source_language"], "code": value["source_code"]}
+              if "source_language" in value and "source_code" in value else None)
     if not code:
         return "<!-- Silent Step: svg (empty) -->"
     try:

@@ -16,16 +16,31 @@ def expr(ref):
     return {"$ref": ref}
 
 
+def plain(value):
+    return {"kind": "plain", "value": value}
+
+
+def expression(ref):
+    return {"kind": "expression", "value": expr(ref)}
+
+
+def column(values):
+    return {"kind": "array", "value": values}
+
+
+def context(values, stage):
+    return {f"$context_names_{stage}": column([plain(name) for name in values]),
+            f"$context_types_{stage}": column([expression(ref['$ref']) for ref in values.values()])}
+
+
 def fixture(step, board=(), kind="tactic", language="zh"):
     roots = []
     for key, value in step.items():
-        if key.startswith("$context_") and isinstance(value, dict):
-            roots.extend(["proof", 0, key, name] for name in value)
-        elif key.startswith("$goal_") and value is not None:
-            roots.append(["proof", 0, key])
-        elif key in {item["value"] for item in board} and isinstance(value, dict) and "$ref" in value:
-            roots.append(["proof", 0, key])
-    doc = {"module": "Test.Dashboard", "code": "",
+        if key.startswith("$context_types_") and isinstance(value, dict):
+            roots.extend(["proof", 0, key, "value", index, "value"] for index in range(len(value["value"])))
+        elif isinstance(value, dict) and value.get("kind") == "expression":
+            roots.append(["proof", 0, key, "value"])
+    doc = {"recordingProtocol": 2, "module": "Test.Dashboard", "code": "",
            "statement": {"parameters": [], "conditions": [], "conclusion": expr("e0")},
            "expressions": {f"e{i}": {"kind": "lit", "lit": {"kind": "literal.nat", "value": i}}
                            for i in range(5)},
@@ -33,9 +48,6 @@ def fixture(step, board=(), kind="tactic", language="zh"):
                                      key=lambda path: tuple((0, x) if isinstance(x, str) else (1, x) for x in path)),
            "proof": [step]}
     # Only reachable expression nodes may appear in a proof graph.
-    used = {"e0"} | {value["$ref"] for key, value in step.items() if isinstance(value, dict)
-                       for value in ([value] if "$ref" in value else value.values())
-                       if isinstance(value, dict) and "$ref" in value}
     from PS4HTML.schema import json_path
     ordered = []
     for root in doc["expressionRoots"]:
@@ -43,7 +55,7 @@ def fixture(step, board=(), kind="tactic", language="zh"):
         if ref not in ordered:
             ordered.append(ref)
     remap = {ref: f"e{index}" for index, ref in enumerate(ordered)}
-    doc["expressions"] = {remap[key]: value for key, value in doc["expressions"].items() if key in used}
+    doc["expressions"] = {remap[key]: value for key, value in doc["expressions"].items() if key in remap}
     for root in doc["expressionRoots"]:
         json_path(doc, root)["$ref"] = remap[json_path(doc, root)["$ref"]]
     resolver = validate_document(doc)
@@ -57,9 +69,9 @@ def fixture(step, board=(), kind="tactic", language="zh"):
 class DashboardTests(unittest.TestCase):
     def test_context_diff_completed_goal_and_board_order(self):
         board = [{"name": "字段", "value": "foo.bar"}, {"name": "字段", "value": "missing"}]
-        step = {"$ruleId": "Test.dashboard", "$context_before": {"h": expr("e1"), "gone": expr("e2")},
-                "$context_after": {"h": expr("e1"), "new": expr("e3")},
-                "$goal_before": expr("e4"), "$goal_after": None, "foo.bar": expr("e1")}
+        step = {"$ruleId": "Test.dashboard", **context({"h": expr("e1"), "gone": expr("e2")}, "before"),
+                **context({"h": expr("e1"), "new": expr("e3")}, "after"),
+                "$goal_before": expression("e4"), "$goal_after": plain("completed"), "foo.bar": expression("e1")}
         _, _, _, engine = fixture(step, board)
         page = engine.render([step])
         self.assertIn("原状态", page)
@@ -84,9 +96,25 @@ class DashboardTests(unittest.TestCase):
         step = {"$ruleId": "Test.dashboard"}
         _, _, _, engine = fixture(step)
         page = engine.render([step])
-        self.assertEqual(page.count('class="codicon codicon-check"'), 2)
+        self.assertEqual(page.count('class="codicon codicon-check"'), 0)
         self.assertNotIn('class="proof-dashboard-context"', page)
         self.assertNotIn('class="proof-dashboard-board"', page)
+
+    def test_literal_dotted_board_field_and_opaque_plain_json(self):
+        board = [{"name": "JSON", "value": "foo.bar"},
+                 {"name": "数组", "value": "items"}]
+        step = {"$ruleId": "Test.dashboard",
+                "foo.bar": plain({"$ref": "<e0>", "rows": [True, None]}),
+                "items": column([plain("<x>"), plain("&")])}
+        _, _, rule, engine = fixture(step, board)
+        rule["fields"]["template"][0]["content"] = "${foo.bar}"
+        page = engine.render([step])
+        self.assertIn('{&quot;$ref&quot;:&quot;&lt;e0&gt;&quot;,&quot;rows&quot;:[true,null]}', page)
+        self.assertIn('&lt;x&gt;, &amp;', page)
+        self.assertNotIn('"$ref":"e0"', page)
+        rule["fields"]["template"][0]["content"] = "${foo}"
+        with self.assertRaisesRegex(ValueError, "Missing recorded template field 'foo'"):
+            engine.render([step])
 
     def test_state_headings_are_translated_with_proof_language(self):
         step = {"$ruleId": "Test.dashboard"}
@@ -97,7 +125,7 @@ class DashboardTests(unittest.TestCase):
         self.assertNotIn('>原状态</h3>', page)
 
     def test_one_sided_context_is_not_marked_added(self):
-        step = {"$ruleId": "Test.dashboard", "$context_after": {"h": expr("e1")}}
+        step = {"$ruleId": "Test.dashboard", **context({"h": expr("e1")}, "after")}
         _, _, _, engine = fixture(step)
         page = engine.render([step])
         self.assertIn('class="proof-dashboard-context-row" role="cell"', page)
@@ -106,9 +134,9 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('class="proof-dashboard-context-row proof-dashboard-blank"', page)
 
     def test_contexts_pair_by_name_and_goal_follows_aligned_rows(self):
-        step = {"$ruleId": "Test.dashboard", "$context_before": {"first": expr("e1"), "shared": expr("e2")},
-                "$context_after": {"shared": expr("e3"), "last": expr("e4")},
-                "$goal_before": expr("e2"), "$goal_after": expr("e3")}
+        step = {"$ruleId": "Test.dashboard", **context({"first": expr("e1"), "shared": expr("e2")}, "before"),
+                **context({"shared": expr("e3"), "last": expr("e4")}, "after"),
+                "$goal_before": expression("e2"), "$goal_after": expression("e3")}
         _, _, _, engine = fixture(step)
         page = engine.render([step])
         pairs = re.findall(r'<div class="proof-dashboard-pair" role="row">(.*?)</div></div>', page)
@@ -121,13 +149,13 @@ class DashboardTests(unittest.TestCase):
         self.assertIn('class="proof-dashboard-pair proof-dashboard-goals"', page)
 
     def test_invalid_context_and_unregistered_roots(self):
-        step = {"$ruleId": "Test.dashboard", "$context_before": {"h": expr("e1")}}
-        _, resolver, rule, _ = fixture(step)
-        with self.assertRaisesRegex(Exception, "expressionRoots"):
-            resolver.roots.remove(("proof", 0, "$context_before", "h"))
-            validate_record(rule, step, resolver=resolver, path=("proof", 0))
+        step = {"$ruleId": "Test.dashboard", **context({"h": expr("e1")}, "before")}
+        doc, resolver, rule, _ = fixture(step)
+        with self.assertRaisesRegex(Exception, "expressionRoots|structural postorder"):
+            validate_document({**doc, "expressionRoots": [["statement", "conclusion"]]})
         with self.assertRaisesRegex(ValueError, "Invalid dashboard context"):
-            validate_record(rule, {"$ruleId": "Test.dashboard", "$context_before": None})
+            validate_record(rule, {"$ruleId": "Test.dashboard", "$context_names_before": column([plain("h")]),
+                                   "$context_types_before": column([])})
 
     def test_metadata_does_not_acquire_dashboard(self):
         step = {"$ruleId": "Test.dashboard"}

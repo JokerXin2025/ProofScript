@@ -1,10 +1,11 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://proofscript.local/schema/recording-function.json",
+  "$id": "https://proofscript.local/schema/recording-function.schema.json",
   "title": "ProofScript computation function recording",
-  "$comment": "This is the function provenance object inside a computation component. It shares native expression encoding with proof documents. This schema validates shape only; the decoder additionally checks reference ownership, structural postorder and exact root targets. Metadata values are opaque scalars.",
+  "$comment": "Protocol 2 function provenance inside a computation component is a separate model, not a tagged recorder value. It shares native expression encoding with proof documents. This schema validates shape only; the decoder additionally checks reference ownership, structural postorder and exact root targets. Metadata values are opaque scalars.",
   "type": "object",
   "required": [
+    "recordingProtocol",
     "declaration",
     "type",
     "expression",
@@ -13,6 +14,7 @@
     "expressionRoots"
   ],
   "properties": {
+    "recordingProtocol": {"const": 2},
     "declaration": {
       "type": "string"
     },

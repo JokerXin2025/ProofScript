@@ -99,7 +99,16 @@ macro "pointwise" loc:(location)? : tactic => `(tactic|
 script_macro «pointwise»
 "pointwise" loc:(location)? => `(tactic| pointwise $[$loc]?)
 
-script_recorder «pointwise» auto (clear := [loc])
+open ProofScript
+
+script_recorder «pointwise» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    record_value "locations" (← captureLocation (loc.map (·.raw)))
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «pointwise» {
   templates := [{

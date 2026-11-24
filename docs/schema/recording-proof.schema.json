@@ -2,10 +2,11 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "https://proofscript.local/schema/recording-proof.schema.json",
   "title": "ProofScript recording proof document",
-  "$comment": "This schema validates shape only. The decoder additionally checks contiguous expression IDs, reference ownership and structural postorder, unique valid root paths, exact root targets, and invocation contract coverage and bindings. Only expressionRoots authorizes entry from proof data into the expression graph; unlisted JSON remains literal data. Nodes encode native Lean expressions. Metadata contains only opaque scalar values and one structural expr edge; syntax values and empty metadata wrappers are omitted. Parameter and value recording do not collect literature references; rendering configuration dependencies are resolved separately.",
+  "$comment": "Protocol 2 tags every recorder field as plain, expression, or array; step and branch envelopes and theorem statements are separate models. This schema validates shape only. The decoder additionally checks contiguous expression IDs, reference ownership and structural postorder, unique valid root paths, exact root targets, aligned builtin columns, and invocation contract coverage and bindings. Only tagged expression leaves listed in expressionRoots authorize entry from proof data into the expression graph; plain JSON remains literal data. Nodes encode native Lean expressions. Metadata contains only opaque scalar values and one structural expr edge; syntax values and empty metadata wrappers are omitted. Parameter and value recording do not collect literature references; rendering configuration dependencies are resolved separately.",
   "type": "object",
-  "required": ["module", "code", "statement", "expressions", "expressionRoots"],
+  "required": ["recordingProtocol", "module", "code", "statement", "expressions", "expressionRoots"],
   "properties": {
+    "recordingProtocol": {"const": 2},
     "module": {"type": "string", "minLength": 1},
     "code": {"type": "string"},
     "semanticCode": {
@@ -24,7 +25,12 @@
     "statement": {"$ref": "#/$defs/statement"},
     "expressions": {"$ref": "#/$defs/expressions"},
     "expressionRoots": {"type": "array", "items": {"$ref": "#/$defs/expressionRootPath"}, "uniqueItems": true},
-    "proof": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/record"}}
+    "proof": {"type": "array", "minItems": 1, "items": {"$ref": "#/$defs/record"}},
+    "bindings": {"type": "array", "items": {"type": "object", "required": ["path", "contractId"],
+      "additionalProperties": false, "properties": {
+        "path": {"type": "array", "prefixItems": [{"const": "proof"}, {"$ref": "#/$defs/nat"}],
+          "items": {"$ref": "#/$defs/jsonPathPart"}, "minItems": 2},
+        "contractId": {"type": "string", "pattern": "^[0-9a-f]{64}$"}}}}
   },
   "dependentRequired": {
     "statement": ["expressions", "expressionRoots"],
@@ -248,26 +254,26 @@
         }
       ]
     },
+    "recordedValue": {
+      "oneOf": [
+        {"type": "object", "required": ["kind", "value"], "additionalProperties": false,
+         "properties": {"kind": {"const": "plain"}, "value": {}}},
+        {"type": "object", "required": ["kind", "value"], "additionalProperties": false,
+         "properties": {"kind": {"const": "expression"}, "value": {"$ref": "#/$defs/exprRef"}}},
+        {"type": "object", "required": ["kind", "value"], "additionalProperties": false,
+         "properties": {"kind": {"const": "array"}, "value": {"type": "array", "items": {"$ref": "#/$defs/recordedValue"}}}}
+      ]
+    },
     "record": {
       "type": "object",
       "required": ["$ruleId"],
       "properties": {
         "$ruleId": {"type": "string", "minLength": 1},
-        "$goal_before": {
-          "anyOf": [
-            {"$ref": "#/$defs/exprRef"},
-            {"type": "null"}
-          ]
-        },
-        "$goal_after": {
-          "anyOf": [
-            {"$ref": "#/$defs/exprRef"},
-            {"type": "null"}
-          ]
-        },
+        "$goal_before": {"$ref": "#/$defs/recordedValue"},
+        "$goal_after": {"$ref": "#/$defs/recordedValue"},
         "$branches": {"type": "array", "items": {"$ref": "#/$defs/branch"}}
       },
-      "additionalProperties": true
+      "additionalProperties": {"$ref": "#/$defs/recordedValue"}
     },
     "branch": {
       "type": "object",

@@ -42,19 +42,19 @@ private initialize sorryProofsExt : EnvExtension NameSet ←
 /-- Capture actual proof locals before any tactic can rename or clear them. -/
 elab "_record_theorem_statement" : tactic => withMainContext do
   let mut parameters := #[]
-  let mut conditions := #[]
+  let mut conditions : Array Expr := #[]
   for decl in (← getLCtx) do
     if decl.isImplementationDetail then continue
-    let type ← recordExpression decl.type
+    let type ← captureExpression decl.type
     if (← Meta.isProp decl.type) || decl.binderInfo == .instImplicit then
       conditions := conditions.push type
     else
-      parameters := parameters.push <| .object [
-        ("variable", ← recordExpression decl.toExpr), ("type", type),
-        ("instance", .plain (toJson (decl.binderInfo == .instImplicit)))]
-  setRecordingStatement <| .object [
-    ("parameters", .array parameters), ("conditions", .array conditions),
-    ("conclusion", ← recordExpression (← (← getMainGoal).getType))]
+      parameters := parameters.push {
+        variableExpr := ← captureExpression decl.toExpr, typeExpr := type,
+        isInstance := decl.binderInfo == .instImplicit }
+  setRecordingStatement {
+    parameters, conditions,
+    conclusion := ← captureExpression (← (← getMainGoal).getType) }
 
 private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyntax `ident)
     (binders : Array (TSyntax ``Lean.Parser.Term.bracketedBinder))
@@ -120,7 +120,7 @@ private def elabDeclaration (kind : RecordedDeclarationKind) (name helper : TSyn
               let (document, artifact) ← recordedProofJson label code moduleName
                 (artifactKey := some key) (path := path)
               pure (document, { artifact with declaration := some declaration })
-        let semantic ← Verso.capture declaration code
+        let semantic ← Verso.capture declaration name code
         let document := document.setObjVal! "semanticCode"
           (textResourceDescriptor "verso" "json" Verso.mediaType semantic)
         pure (some (document, { artifact with contentDigest := document.sha256 }, semantic))

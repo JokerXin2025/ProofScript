@@ -14,7 +14,7 @@ python3 -m pip install -e ./tools/ps4html
 在用户 Lean 项目中配置 ProofScript 依赖、执行 `lake update` 后，运行 `lake build MyLibrary:ps4html`（将 `MyLibrary` 替换为实际库名），输出为
 `.PS4HTML/build/index.html`；`ps4html serve` 提供本地预览。完整示例位于 [`examples/site/`](examples/site/)，
 其中计算页面另需 Node、Emscripten 和匹配的 Lean/Wasm runtime。
-每个 script 步骤对应一个对象，框架字段使用 `$ruleId`、`$goal_before`、`$goal_after` 和 `$branches`；格式变化后需重新运行 Lake 导出目标构建。
+每个 script 步骤对应一个对象：框架管理 `$ruleId` 和 `$branches`，录制器写入的 `$goal_before`、`$goal_after` 等字段使用带标记的单值协议。证明与计算函数产物要求 `"recordingProtocol": 2`；旧产物需重新运行 Lake 导出目标构建。
 详细使用说明见 [PS4HTML 文档](tools/ps4html/README.md)。
 
 普通 `lake build` 和 IDE 默认只检查证明。`#page theorem` / `#page lemma` 生成原生 Lean theorem，
@@ -452,7 +452,7 @@ macro "finish" proof:term : term => `(script
   finish $proof:term)
 ```
 
-参数统一由 `RecordValue α` 实例解释，其中 `α` 就是宏绑定的实际 Lean 类型。内置支持 `TSyntax \`term`、`TSyntax \`ident`、`TSyntax \`str`、`TSyntax \`num`、`location`、`rwRuleSeq`、`simpArgs`、`optConfig`；`Array`、`Option` 和 `Syntax.TSepArray` 会自动组合元素实例。自定义语法类别只需为自己的 `TSyntax` 类型定义实例。匿名且未支持的语法会保持自动录制不可用，应改用手写 recorder，不会静默转换成文本；`num` 输出 JSON 数字，按 `term` 解析的数值仍输出 Lean 表达式引用。
+参数统一由 `RecordValue α` 实例解释，其中 `α` 就是宏绑定的实际 Lean 类型。自动录制支持标量 `TSyntax \`term`、`TSyntax \`ident`、`TSyntax \`str`、`TSyntax \`num`；`Array`、`Option` 和 `Syntax.TSepArray` 可组合受支持的元素实例。录制器中的 `with_rollback do` 为 `Lean.Elab.Tactic.withRollback do` 的简写，执行失败时恢复 tactic 状态。结构化的 `location`、`rwRuleSeq`、`simpArgs`、`optConfig` 改由手写 recorder 捕获；配置源码写入 `config`，明确指定的位置写入 `locations`（`at *` 为 `"all"`，显式目标为 `"target"`），重写规则表达式写入 `rules`；`simpArgs` 仍按类别等信息拆为多个字段。自定义语法类别可为自己的 `TSyntax` 类型定义实例。不受支持的自动录制输入在声明时报错，不会静默转换成文本；`num` 输出 JSON 数字，按 `term` 解析的数值仍输出 Lean 表达式引用。
 
 script 声明配置包括：
 
@@ -487,9 +487,9 @@ script_recorder finishRule => do
   record_goal "$goal_after"
 ```
 
-ID 选择对应注册；参数绑定和策略关键字都来自原注册声明。声明 script 时自动建立 V0，记录 `$ruleId`、`$time_before` 和 `$time_after`，并执行原始策略。参数录制需要显式声明 `script_recorder <id> auto`，可在 `auto` 后配置 `intro` / `clear`；缺少实例或参数 parser 不受支持时，命令立即报错，不添加版本。自定义参数读取器和已有值的转换统一实现 `RecordValue.record`。实际写入决定可用的输出字段，不使用单独的输出字段声明或 schema。
+ID 选择对应注册；参数绑定和策略关键字都来自原注册声明。声明 script 时自动建立 V0，记录 `$time_before` 和 `$time_after`，并执行原始策略；步骤模型单独持有 `$ruleId`。参数录制需要显式声明 `script_recorder <id> auto`，可在 `auto` 后配置 `intro` / `clear`；缺少实例或参数 parser 不受支持时，命令立即报错，不添加版本。结构化参数须手写 recorder，不能自动生成对象。自定义参数读取器和已有值的转换统一实现 `RecordValue.record`。实际写入决定可用的输出字段，不使用单独的输出字段声明或 schema。
 
-`script_info` 的模板使用字段对象，配置读取证明所属模块及其传递导入模块的最终状态。证明后提交的本地更新也作用于本模块证明；下游覆盖作用于下游内容。`templates` 整体替换，`script_info templates <ID> +/- [...]` 可按语言增删当前可见列表，首项为语言缺失时的回退；导入后修改规则使用完整 ID，例如 `script_info MyRules.finishRule`。渲染端读取实际输出字段名，支持 `${rules_before.0.expression}`、`${loc_before.hypotheses}` 等嵌套路径。Lean 原样保存模板字符串，包括未知路径、`${}` 和未闭合的 `${...`；仍检查模板外层结构及其与普通/策略注册的类型是否相符。占位符解释与错误处理由渲染端决定。PS4HTML 在消费实际步骤时检查缺失字段和无效路径，包括模块加载时的数据校验；空或未闭合占位符作为文本显示。缺失的 optional 参数导出为 `null`，捕获错误会中止步骤。文本和结构化值均进行 HTML 转义。特定 renderer 使用最终配置；相同关键字的重载须使用不同 ID。
+`script_info` 的模板使用字段对象，配置读取证明所属模块及其传递导入模块的最终状态。证明后提交的本地更新也作用于本模块证明；下游覆盖作用于下游内容。`templates` 整体替换，`script_info templates <ID> +/- [...]` 可按语言增删当前可见列表，首项为语言缺失时的回退；导入后修改规则使用完整 ID，例如 `script_info MyRules.finishRule`。渲染端按完整字段名取值，例如 `${rules}`，名为 `foo.bar` 的字段则用 `${foo.bar}`；不沿点号展开对象或数组。Lean 原样保存模板字符串，包括未知字段、`${}` 和未闭合的 `${...`；仍检查模板外层结构及其与普通/策略注册的类型是否相符。占位符解释与错误处理由渲染端决定。PS4HTML 在消费实际步骤时检查缺失字段，包括模块加载时的数据校验；空或未闭合占位符作为文本显示。缺失的 optional 参数导出为字符串 `"null"`，捕获错误会中止步骤。文本和 JSON 代码均进行 HTML 转义。特定 renderer 使用最终配置；相同关键字的重载须使用不同 ID。
 
 公共 DSL 与运行时接口由 `import ProofScript.Script.Recording` 导出；`import ProofScript` 还包含脚本声明命令。`script_recorder foo => do ...` 自动在主目标上下文中开启一个录制对象，块内是普通 Lean `TacticM` 代码；最外层 `do` 必须恰好包含一次直接的 `execute`。前面的代码若提前返回，运行时会因未经过 V0 而报错。目标快照由显式 `auto` 或手写记录器添加；V0 负责执行原始策略。
 
@@ -519,7 +519,7 @@ script_recorder snapshotThenClear => do
     record_param "evidence_after" h
 ```
 
-`record_param` 和 `record_value` 共用内部写入函数，但各自仅为该次调用打开不同的实例 scope：`ProofScript.ParamRecorder` 提供语法参数读取器，`ProofScript.ValueRecorder` 提供已有值转换。共享的 `Array`、`List`、`Option` 实例由元素所属 scope 决定是否可用。这只是默认实例可见性约定，并非严格的类型限制；显式打开 scope 或提供其他实例会改变可接受的类型。语句顺序决定读取到的 Lean 状态。真正的读取或转换失败会附带字段名报错并继续向外抛出，不会伪装成 `null`；缺失的 `Option` 值属于正常结果，仍记录为 `null`。每项记录会恢复临时 elaboration 状态，再提交值。若后续记录失败时需要回滚整个语句序列的字段，请用 `withRollback` 包住这段序列。录制只保存值，包含定理常量的表达式及嵌套容器也不收集文献引用；`dependencyCollection` 不影响这些操作。字段名直接传给录制语句；前后快照应使用不同字段名。
+`record_param` 和 `record_value` 共用内部写入函数，但各自仅为该次调用打开不同的实例 scope：`ProofScript.ParamRecorder` 提供语法参数读取器，`ProofScript.ValueRecorder` 提供已有值转换。共享的 `Array`、`List`、`Option` 实例由元素所属 scope 决定是否可用。这只是默认实例可见性约定，并非严格的类型限制；显式打开 scope 或提供其他实例会改变可接受的类型。语句顺序决定读取到的 Lean 状态。真正的读取或转换失败会附带字段名报错并继续向外抛出；缺失的 `Option` 值属于正常结果，记录为字符串 `"null"`。每项记录会恢复临时 elaboration 状态，再提交值。若后续记录失败时需要回滚整个语句序列的字段，请用 `withRollback` 包住这段序列。录制只保存值，包含定理常量的表达式及嵌套容器也不收集文献引用；`dependencyCollection` 不影响这些操作。字段名直接传给录制语句；前后快照应使用不同字段名。
 
 `script_recorder` 支持手写 `script_recorder foo (label := "...") => do ...` 和 `script_recorder foo (label := "...") auto (intro := [...], clear := [...])`，标签可省略。生成器读取原始 script 注册的 `kind` 和 `continuation`，自动管理录制对象，并为 strategy 在 body 成功后准备分支。同一 ID 的标签不能重复，只能引用声明前已存在的版本（包括导入的版本）。
 
@@ -534,24 +534,19 @@ record_value "evidence" saved
 
 这段代码保留执行前读取的值，再在执行后写入。文献引用通过独立于录制值的路径收集。
 
-`RecordedValue` 是纯数据，有普通 JSON、原生 `Lean.Expr`、数组和对象四种形式。`RecordedValue.expression expr` 原样保存表达式及其已有元数据，不查询上下文。默认 `Expr` 转换调用 `recordExpression`，实例化已赋值的表达式及 universe 元变量，再沿原结构始终将自由变量名称和命名类型描述添加为原生标量 `MData`。完整声明类型、局部定义值及应用 binder 描述不再收集。容器组合元素的转换结果；已有 `RecordedValue` 原样通过。
+`RecordedValue` 只表示一个 recorder 字段值，有普通 JSON、原生 `Lean.Expr` 和录制值数组三种形式，没有对象构造子。结构化输入应捕获一次，再在同一个 `withRollback` 范围内写入独立、等长的字段。`RecordedValue.expression expr` 原样保存表达式及其已有元数据，不查询上下文。默认 `Expr` 转换调用 `recordExpression`，实例化已赋值的表达式及 universe 元变量，再沿原结构始终将自由变量名称和命名类型描述添加为原生标量 `MData`。完整声明类型、局部定义值及应用 binder 描述不再收集。容器组合元素的转换结果；已有 `RecordedValue` 原样通过。
 
-`recordedProofJson` 在最终证明导出时统一分配节点编号，输出节点表及显式 `expressionRoots`；其他独立数据主体使用相同的纯编码入口 `encodeOwner`。标量元数据导出为 `mdata.data`，唯一结构子项为 `mdata.expr`；语法值及空包装不导出。PS4HTML 仅从根清单进入表达式图，普通 JSON 保持用户数据语义。渲染配置依赖沿原生表达式结构和有效的命名类型注解解析，不展开声明；录制参数和值不写入文献引用暂存区。结构见[证明 JSON Schema](docs/schema/recording-proof.schema.json)。格式变化后须重新运行 `lake build MyLibrary:ps4html`，`ps4html make --cache` 不迁移旧数据。
+`recordedProofJson` 在最终证明导出时统一分配节点编号，输出节点表及显式 `expressionRoots`。证明文档和计算函数对象均要求 `"recordingProtocol": 2`；每个 recorder 字段标记为 `{"kind":"plain|expression|array","value":...}`，只有表达式叶子注册根路径，`plain` JSON 对象（包括形似 `$ref` 的数据）保持不透明。标量元数据导出为 `mdata.data`，唯一结构子项为 `mdata.expr`；语法值及空包装不导出。渲染配置依赖沿原生表达式结构和有效的命名类型注解解析，不展开声明；录制参数和值不写入文献引用暂存区。结构见[证明 JSON Schema](docs/schema/recording-proof.schema.json)。格式变化后须重新运行 `lake build MyLibrary:ps4html`，`ps4html make --cache` 不迁移旧数据。
 
-自定义转换在捕获时决定输出；需要默认表达式读取时使用 `recordExpression`：
+手写 recorder 可以捕获一次结构化输入并逐字段写入；表达式叶子使用 `recordExpression`：
 
 ```lean
-structure Evidence where
-  term : Lean.Expr
-  label : String
-
-namespace ProofScript.ValueRecorder
-scoped instance : RecordValue Evidence where
-  record value _ := do
-    return .object [
-      ("term", ← recordExpression value.term),
-      ("label", .plain (Lean.toJson value.label))]
-end ProofScript.ValueRecorder
+-- 位于手写 script_recorder 的 do 块内：
+let evidenceTerm ← recordExpression evidence.term
+let evidenceLabel := evidence.label
+Lean.Elab.Tactic.withRollback do
+  record_value "evidence_term" evidenceTerm
+  record_value "evidence_label" evidenceLabel
 ```
 
 自行提供表达式和原生 `MData` 时，直接返回 `RecordedValue.expression expr`。`record_value "term" expr` 使用默认 `Expr` 实例，`record_value "term" (RecordedValue.expression expr)` 保留给定表达式。默认读取器添加 `ProofScript.userName` 和 `ProofScript.type`。命名类型描述是自由变量和绑定节点上的字符串；其中 `decl:<声明名>` 还会冻结该声明的 `decl_info` 以供命名，不增加文献引用。所有标量元数据（包括自定义键）始终导出，没有启用开关。嵌套同名键由外层优先。专用 `let` recorder 在引入定义时输出 `name`、`type`、`value`，后续变量引用不复制这些字段或生成声明悬停提示。
@@ -586,11 +581,11 @@ script_recorder rememberTrue => do
 
 省略目标时使用调用处的上下文。`record_param` 和 `record_goal` 统一通过 `(goal := name)` 指定 `Name` 类型的目标名称，例如 ``record_param "h_after" h (goal := `rest)`` 或 ``record_goal "rest_goal" (goal := `rest)``。名称先做完整匹配，再做唯一后缀匹配。目标不存在或名称有歧义都会报错。
 
-普通自动录制器写入 `$goal_before` 和 `$goal_after`，策略自动录制器只写入 `$goal_before`；每个表达式字段保存原生表达式及其读取函数选定的注解。手写录制器通过 `record_goal` 写入目标。没有剩余目标时，返回 `null`；普通值写入始终不添加文献。模板路径应与对应 recorder 实际提供的字段匹配。
+普通自动录制器写入 `$goal_before` 和 `$goal_after`，策略自动录制器只写入 `$goal_before`；每个表达式字段保存原生表达式及其读取函数选定的注解。手写录制器通过 `record_goal` 写入目标。没有剩余目标时，目标字段值为字符串 `"completed"`；普通值写入始终不添加文献。模板字段名应与对应 recorder 实际提供的字段匹配。
 
 内置 `cases_by` 在执行前记录 `subject`，`contra` 在执行后记录 `hypothesis`。这两个展示值使用 `record_value`，其 `h` 参数使用 `record_param`。`embed` 记录实际参数和目标快照，回放时由内部 recorder 记录证明数据；这些录制操作都不收集文献引用。
 
-默认执行前捕获使用 `<参数名>_before` 字段名，内置模板相应使用 `change.equation_before`、`exact_proj.value_before` 和 `provide.data_before`。`let` 从新引入的局部定义读取 `value` 作为参数捕获，`name`、`type` 作为普通值写入；`calc` 和 `infer` 在各自的捕获时机组装 `init`、`chain` 并作为同一事务提交。字段和验证样例见[第六阶段迁移说明](docs/Script-Binding-Phase6-zh.md)。
+默认执行前捕获使用 `<参数名>_before` 字段名，内置模板相应使用 `change.equation_before`、`exact_proj.value_before` 和 `provide.data_before`。`let` 从新引入的局部定义读取 `value` 作为参数捕获，`name`、`type` 作为普通值写入；`calc` 和 `infer` 在各自时机捕获 `init` 及等长的 `chain_rhs` / `chain_proof`（calc 另有 `chain_relation`），并在同一个回滚范围内写入。当前字段映射见[录制值协议](docs/Recording-Value-Refactor-Protocol-zh.md)；[第六阶段说明](docs/Script-Binding-Phase6-zh.md)记录的是此前迁移。
 
 普通自动录制器对普通参数在执行前后分别捕获；`intro` 参数只在执行后捕获，`clear` 参数只在执行前捕获。strategy 自动录制器在执行前捕获非 `intro` 参数，并跳过 `intro` 参数。手写 DSL 直接由语句位置决定时机。用户参数名和录制键名必须非空，且不能以 `$` 开头；其他自定义字段允许写入，展示所需字段及值结构由 PS4HTML 检查。同一步骤内后一次成功写入同名字段会覆盖前一次值；写入失败时保留此前的值。声明阶段检查无效名称以及 `intro` / `clear` 冲突。
 
@@ -605,7 +600,7 @@ script_recorder rememberTrue => do
 使用 `#page theorem` 或 `#page lemma` 声明页面定理，再运行 `lake build MyLibrary:ps4html` 导出。两者在页面 JSON 中分别使用
 `"theorem"` 和 `"lemma"` 标签。
 发布后的证明数据位于 Lean 项目的 `.ProofScript/proofs/<模块路径>/`。`lake build <库名>:proofscriptExport` 可只导出数据，不渲染 HTML。
-每个证明树顶层都包含 `module`、完整 Lean 源码 `code`、`statement`、表达式表 `expressions`、根路径清单 `expressionRoots` 和步骤契约绑定 `bindings`；脚本模式另有录制的步骤数组 `proof`。数组中的每项都是一个步骤对象，写入 `$ruleId`、`$time_before` 和 `$time_after`（单调时钟纳秒整数），策略还可包含 `$branches`；每个分支的 proof 使用相同格式。显式 `auto` 为普通录制器写入 `$goal_before` / `$goal_after`，为策略录制器写入 `$goal_before`。
+每个证明树顶层都包含 `"recordingProtocol": 2`、`module`、完整 Lean 源码 `code`、`statement`、表达式表 `expressions` 和根路径清单 `expressionRoots`；模块导出还包含步骤契约绑定 `bindings`。脚本模式另有录制的步骤数组 `proof`。每项步骤有框架管理的 `$ruleId`，以及带标记的 `$time_before`、`$time_after` 字段（单调时钟纳秒整数）；策略还可包含 `$branches`，各分支的 proof 使用相同格式。显式 `auto` 为普通录制器写入 `$goal_before` / `$goal_after`，为策略录制器写入 `$goal_before`。
 
 `:= script` 中直接使用无前缀 DSL 名称，框架会自动补全 `script_` 前缀并检查每一步，在页面构建时录制；`:= by` 接受普通 Lean
 策略，但不能使用 ProofScript 的脚本策略。后者仍导出定理陈述及其表达式图，但不输出步骤数组 `proof`。文献引用收集独立于录制，参见[自动文献采集](#自动文献采集)。
@@ -852,7 +847,7 @@ def chooseOffset (large : Bool) : Nat := if large then 128 else 112
 
 函数来源信息使用带标量 `MData` 的原生表达式和独立的纯编码边界。默认命令及 `ComputationFunction.encode` / `ComputationComponent.encode` 输出函数自有表达式节点表及 `expressionRoots`；根路径相对于 `function`。声明名称和可读类型是该 recorder 明确输出的普通字段。finalizer 保留完整 function 数据，并提供 JSON 字符串调用所需的资源。
 
-`ComputationFunction` 只保存一份 `recording : RecordedValue`。函数和组件均通过返回 `Except String Json` 的 `.encode` 校验后完整导出，不提供绕过校验的 `ToJson` 实例。
+`ComputationFunction` 分别保存声明、可读类型、函数表达式及实现，不使用 `RecordedValue` 包装；它拥有独立的表达式表及根路径。函数和组件均通过返回 `Except String Json` 的 `.encode` 校验后完整导出，不提供绕过校验的 `ToJson` 实例。协议 2 的证明与函数导出分别对照 `docs/schema/recording-proof.schema.json` 和 `docs/schema/recording-function.schema.json`。
 
 计算入口必须形如 `α → β` 或 `α → Except String β`，并存在 `Lean.FromJson α` 与
 `Lean.ToJson β`。命令将 `String → String` wrapper 和构建描述持久化到 `.olean`；设置与项目 Lean 版本匹配的 `PROOF_SCRIPT_LEAN_WASM_PREFIX` 后，`lake build MyLibrary:proofscriptExport` 会在模块发布前构建、封存可执行 Wasm，并将页面 execution 更新为 `ready`。`ps4html` 只渲染已完成的资源。前端实现参见 `docs/Frontend-Computation-Handoff-zh.md`。

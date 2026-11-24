@@ -59,10 +59,13 @@ script_recorder boardLinear => do
   let goal ← getMainGoal
   let target ← goal.getType
   record_value "conclusion" target
-  let mut premises : List (String × RecordedValue) := []
+  let mut premiseNames : Array String := #[]
+  let mut premiseTypes : Array RecordedValue := #[]
   for input in inputs.getElems do
-    premises := premises ++ [(input.getId.toString, ← expressionType input.raw)]
-  record_value "premises" (RecordedValue.object premises)
+    premiseNames := premiseNames.push input.getId.toString
+    premiseTypes := premiseTypes.push (← expressionType input.raw)
+  record_value "premises_names" premiseNames
+  record_value "premises_types" premiseTypes
   let start ← IO.monoNanosNow
   execute
   record_value "duration_ns" ((← IO.monoNanosNow) - start)
@@ -78,8 +81,8 @@ script_recorder boardLinear => do
   record_context "$context_after"
 
 script_info boardLinear {
-  templates := [{ lang := zh, tag := "线性推理", content := "由 ${premises}，推出 ${conclusion}" }],
-  board := [("输入算术事实", "premises"), ("待证结论", "conclusion"),
+  templates := [{ lang := zh, tag := "线性推理", content := "由 ${premises_names}，推出 ${conclusion}" }],
+  board := [("输入算术事实", "premises_names"), ("事实类型", "premises_types"), ("待证结论", "conclusion"),
     ("证明项依赖的局部命题", "proof_dependencies"), ("执行耗时（纳秒）", "duration_ns")]
 }
 

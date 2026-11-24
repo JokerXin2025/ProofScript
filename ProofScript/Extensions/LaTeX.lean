@@ -61,16 +61,21 @@ script_elab «latex» (kind := metadata)
   addComponentMetadataInfo metadata.raw
 
 script_recorder «latex» => do
-  record_goal "$goal_before"
-  record_context "$context_before"
-  let metadata ←
-    match parseComponentMetadata metadata.raw with
-    | .ok value => pure value
-    | .error message => throwErrorAt metadata message
-  let content ← compileLatexToSvg code.getString
-  record_value "metadata" (toJson metadata)
-  record_value "code" content
-  record_value "source" (Json.mkObj [("lang", toJson ("latex" : String)), ("code", toJson code.getString)])
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    let metadata ←
+      match parseComponentMetadata metadata.raw with
+      | .ok value => pure value
+      | .error message => throwErrorAt metadata message
+    let content ← compileLatexToSvg code.getString
+    record_value "metadata_title" metadata.title
+    record_value "metadata_label" metadata.label
+    record_value "metadata_extra_names" (metadata.extra.map Prod.fst)
+    record_value "metadata_extra_values" (metadata.extra.map Prod.snd)
+    record_value "code" content
+    record_value "source_language" ("latex" : String)
+    record_value "source_code" code.getString
   execute
   record_goal "$goal_after"
   record_context "$context_after"

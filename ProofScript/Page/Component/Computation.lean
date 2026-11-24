@@ -2,7 +2,7 @@ import ProofScript.Page.Component.Core
 import Lean.Data.Json
 import ProofScript.Output.Path
 import ProofScript.Page.Model
-import ProofScript.Script.Recording.ComputationEncoding
+import ProofScript.Page.Component.ComputationEncoding
 import ProofScript.Core.ModuleExtensionEntries
 
 open Lean
@@ -77,11 +77,15 @@ namespace ProofScript
 /-- Frozen provenance for the Lean declaration backing an interactive computation.
     Complete JSON export goes through `encode`, which exports its independent expression graph. -/
 structure ComputationFunction where
-  recording : RecordedValue
+  declaration : Name
+  type : String
+  expression : Expr
+  implementation : Expr
 
 /-- Encode frozen provenance without consulting the declaration again. -/
 def ComputationFunction.encode (function : ComputationFunction) : Except String Json :=
-  encodeComputationFunction function.recording
+  encodeComputationFunction function.declaration function.type
+    function.expression function.implementation
 
 structure ComputationExecution where
   backend : String := "wasm"
@@ -220,8 +224,8 @@ private def addComputationComponent (metadataStx : Syntax)
     | _ => throwErrorAt functionStx s!"#page computation requires a definition with an implementation; '{declaration}' is not executable"
   let type ← liftTermElabM do
     return toString (← Meta.ppExpr info.type)
-  let recorded ← liftTermElabM do
-    let action := recordComputationFunction declaration type implementation
+  let (expression, implementation) ← liftTermElabM do
+    let action := captureComputationFunction declaration implementation
     (action { elaborator := .anonymous }).run' { goals := [] }
   let payload ← parseJsonAt payloadStx.raw payloadStx.getString
   let shape ← functionShape functionStx.raw info
@@ -244,7 +248,8 @@ private def addComputationComponent (metadataStx : Syntax)
   let value : ComputationComponent := {
     metadata
     renderer := rendererStx.getString
-    function := { recording := recorded }
+    function := {
+      declaration, type, expression, implementation }
     execution := {
       bundleId
       entry := declaration.toString

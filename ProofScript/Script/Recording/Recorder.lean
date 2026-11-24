@@ -1,5 +1,6 @@
 import ProofScript.Script.Recording.Strategy
 import ProofScript.Script.Recording.Parameter
+import ProofScript.Script.Recording.Params
 
 open Lean Elab Tactic
 
@@ -32,6 +33,12 @@ appropriate recording block automatically for a plain `do` body.
 
 namespace ProofScript
 
+open scoped ValueRecorder
+
+/-- Run a recorder's `do` block, restoring tactic state if it fails. -/
+macro "with_rollback" " do" body:doSeq : doElem =>
+  `(doElem| Lean.Elab.Tactic.withRollback do $body:doSeq)
+
 private def recordValue {α : Type} [step : RecordingStep] [RecordValue α]
     (field : String) (value : α) (context : RecordContext := none)
     : TacticM Unit := withRollback do
@@ -42,18 +49,17 @@ private def recordValue {α : Type} [step : RecordingStep] [RecordValue α]
 private def recordGoal (target : Option MVarId := none)
     : TacticM RecordedValue := do
   match target.or (← getGoals).head? with
-  | none => return .plain .null
+  | none => return .plain (toJson "completed")
   | some goal => goal.withContext <| recordExpression (← goal.getType)
 
-/-- Record visible local declarations of a goal as a name-to-type expression object.
-No remaining goal has an empty context. Duplicate user names receive a stable
-numeric suffix so no hypotheses disappear from the recorded JSON object. -/
+/-- Snapshot visible local names and types together, preserving their alignment. -/
 private def recordContext (target : Option MVarId := none)
-    : TacticM RecordedValue := do
+    : TacticM (Array String × Array RecordedValue) := do
   match target.or (← getGoals).head? with
-  | none => return .object []
+  | none => return (#[], #[])
   | some goal => goal.withContext do
-      let mut entries : List (String × RecordedValue) := []
+      let mut names := #[]
+      let mut types := #[]
       let mut used : List String := []
       for decl in (← getLCtx) do
         if decl.isImplementationDetail then continue
@@ -64,8 +70,20 @@ private def recordContext (target : Option MVarId := none)
           name := s!"{base}_{index}"
           index := index + 1
         used := name :: used
-        entries := entries ++ [(name, ← recordExpression decl.type)]
-      return .object entries
+        names := names.push name
+        types := types.push (← recordExpression decl.type)
+      return (names, types)
+
+private def recordContextFields [step : RecordingStep] (field : String)
+    (target : Option MVarId := none) : TacticM Unit := withRollback do
+  step.ensureOpen
+  let suffix ← match field with
+    | "$context_before" => pure "before"
+    | "$context_after" => pure "after"
+    | _ => throwError "record_context expects `$context_before` or `$context_after`"
+  let (names, types) ← recordContext target
+  recordValue ("$context_names_" ++ suffix) names
+  recordValue ("$context_types_" ++ suffix) types
 
 private def executeRecorderPredecessor [RecorderPredecessor] : TacticM Unit :=
   RecorderPredecessor.run
@@ -103,7 +121,7 @@ macro "record_goal "
   recordValue $field (← recordGoal (some (← resolveGoal! (← getGoals) $goal)))
 ))
 
-/-- Record the main goal. No remaining goal is represented by `null`. -/
+/-- Record the main goal. No remaining goal is represented by `completed`. -/
 macro "record_goal "
     field:term:arg
 : doElem => `(doElem| (open scoped ProofScript.ValueRecorder in
@@ -114,16 +132,12 @@ macro "record_goal "
 macro "record_context "
     field:term:arg
     atomic("(" &"goal" " := ") goal:term ")"
-: doElem => `(doElem| (open scoped ProofScript.ValueRecorder in
-  recordValue $field (← recordContext (some (← resolveGoal! (← getGoals) $goal)))
-))
+: doElem => `(doElem| recordContextFields $field (some (← resolveGoal! (← getGoals) $goal)))
 
-/-- Record the main goal's local context, or an empty object when none remains. -/
+/-- Record the main goal's context columns, or empty arrays when none remains. -/
 macro "record_context "
     field:term:arg
-: doElem => `(doElem| (open scoped ProofScript.ValueRecorder in
-  recordValue $field (← recordContext)
-))
+: doElem => `(doElem| recordContextFields $field)
 
 /-- Execute the predecessor implementation selected for the current recorder. -/
 macro "execute" : doElem => `(doElem| executeRecorderPredecessor)

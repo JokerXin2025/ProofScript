@@ -22,6 +22,9 @@ namespace IdeProof
 theorem control : True := by trivial
 #page theorem goodNative : True := by trivial
 #page lemma goodScript : True := script trivial
+#page theorem Qualified.goodNative : True := by trivial
+#page lemma Qualified.goodScript : True := script trivial
+#page theorem Qualified.«escaped.name» : True := True.intro
 #page theorem openSorry : True := by sorry
 #page lemma openError : False := by exact True.intro
 set_option pageBuild false
@@ -124,7 +127,8 @@ def main():
                     markers = {item["range"]["start"]["line"] for item in diagnostics
                                if 2 in item.get("leanTags", [])}
                     expected = {line_of(name) for name in
-                                ("control", "goodNative", "goodScript", "afterNative", "afterScript")}
+                                ("control", "goodNative", "goodScript", "afterNative", "afterScript",
+                                 "Qualified.goodNative", "Qualified.goodScript", "Qualified.«escaped.name»")}
                     assert markers == expected, (mode, markers, expected, diagnostics)
                     errors = [item for item in diagnostics if item.get("severity") == 1]
                     assert len(errors) == 2, (mode, errors)

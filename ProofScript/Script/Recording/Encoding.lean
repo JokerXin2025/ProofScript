@@ -4,77 +4,14 @@
     Authors: JokerXin
 -/
 
-import ProofScript.Script.Recording.Data
-import ProofScript.Utils.Json
-import ProofScript.Utils.JsonPath
+import ProofScript.Script.Recording.ProofModel
+import ProofScript.Script.ExpressionEncoding
 
 open Lean
-open scoped ExprJson
 
 namespace ProofScript
 
-private structure EncodingState where
-  nodes : Array (String × Json) := #[]
-  roots : Array JsonPath := #[]
-
-private abbrev EncodingM := StateM EncodingState
-
-private def expressionRef (index : Nat) : Json :=
-  json% { "$ref": $(s!"e{index}") }
-
-/-- The owner assigns an ID only after encoding every outgoing edge. -/
-private def appendNode (fields : List (String × Json)) : EncodingM Json := do
-  let state ← get
-  let index := state.nodes.size
-  set { state with nodes := state.nodes.push (s!"e{index}", Json.mkObj fields) }
-  return expressionRef index
-
-/-- Encode native expression structure in postorder, without deduplication.
-    All scalar metadata is exported without a field-selection switch.
-    Metadata wrappers with no exported scalar fields are omitted. -/
-private partial def encodeExpression : Expr → EncodingM Json
-| .bvar index =>
-    appendNode [("kind", toJson "bvar"), ("index", toJson index)]
-| .fvar id =>
-    appendNode [("kind", toJson "fvar"), ("id", toJson id.name.toString)]
-| .mvar id =>
-    appendNode [("kind", toJson "mvar"), ("id", toJson id.name.toString)]
-| .sort level =>
-    appendNode [("kind", toJson "sort"), ("level", toJson level)]
-| .const name levels =>
-    appendNode [("kind", toJson "const"), ("name", toJson name.toString),
-    ("levels", toJson levels)]
-| .app fn arg => do
-    let fn ← encodeExpression fn
-    let arg ← encodeExpression arg
-    appendNode [("kind", toJson "app"), ("fn", fn), ("arg", arg)]
-| .lam name type body binderInfo => do
-    let type ← encodeExpression type
-    let body ← encodeExpression body
-    appendNode [("kind", toJson "lam"), ("name", toJson name.toString),
-      ("type", type), ("body", body), ("binderInfo", toJson binderInfo)]
-| .forallE name type body binderInfo => do
-    let type ← encodeExpression type
-    let body ← encodeExpression body
-    appendNode [("kind", toJson "forall"), ("name", toJson name.toString),
-      ("type", type), ("body", body), ("binderInfo", toJson binderInfo)]
-| .letE name type value body nondep => do
-    let type ← encodeExpression type
-    let value ← encodeExpression value
-    let body ← encodeExpression body
-    appendNode [("kind", toJson "let"), ("name", toJson name.toString),
-      ("type", type), ("value", value), ("body", body), ("nondep", toJson nondep)]
-| .lit value => appendNode [
-    ("kind", toJson "lit"), ("lit", toJson value)]
-| .mdata data expr => do
-    let data := toJson data
-    let expr ← encodeExpression expr
-    if data == Json.mkObj [] then return expr
-    appendNode [("kind", toJson "mdata"), ("data", data), ("expr", expr)]
-| .proj typeName index expr => do
-    let expr ← encodeExpression expr
-    appendNode [("kind", toJson "proj"), ("typeName", toJson typeName.toString),
-      ("index", toJson index), ("expr", expr)]
+private abbrev EncodingM := ExpressionEncodingM
 
 mutual
 
@@ -82,16 +19,14 @@ mutual
 private partial def encodeValue (value : RecordedValue) (path : JsonPath)
     : EncodingM Json := do
   match value with
-  | .plain data => return data
+  | .plain data => return Json.mkObj [("kind", toJson "plain"), ("value", data)]
   | .expression expr =>
-      modify fun state => { state with roots := state.roots.push path }
-      encodeExpression expr
+      return Json.mkObj [("kind", toJson "expression"),
+        ("value", ← encodeNativeExpression expr (path.push (.key "value")))]
   | .array values =>
       let values ← values.zipIdx.mapM fun (value, index) =>
-        encodeValue value (path.push (.index index))
-      return .arr values
-  | .object fields =>
-      return Json.mkObj (← encodeFields fields path)
+        encodeValue value (path ++ #[.key "value", .index index])
+      return Json.mkObj [("kind", toJson "array"), ("value", .arr values)]
 
 private partial def encodeFields (fields : List (String × RecordedValue)) (path : JsonPath)
     : EncodingM (List (String × Json)) := do
@@ -102,16 +37,53 @@ private partial def encodeFields (fields : List (String × RecordedValue)) (path
 
 end
 
-/-- Export a complete owner with its own expression table and typed root paths.
-    Fields are traversed lexically; opaque JSON is preserved literally. Callers
-    supply unique field names excluding `expressions` and `expressionRoots`,
-    which are added by the encoder. No fragment-encoding API exposes ownerless
-    expression references. -/
-def encodeOwner (fields : List (String × RecordedValue)) : Json :=
-  let (data, state) := (encodeFields fields #[]).run {}
-  Json.mkObj <| data ++ [
-    ("expressions", Json.mkObj state.nodes.toList),
-    ("expressionRoots", toJson state.roots)
-  ]
+/-- Assemble one graph owner from separately encoded, typed fields. -/
+private def encodeDocument := encodeExpressionDocument
+
+private def encodeStatement (statement : RecordedTheoremStatement)
+    (path : JsonPath) : EncodingM Json := do
+  let conclusion ← encodeNativeExpression statement.conclusion (path.push (.key "conclusion"))
+  let conditions ← statement.conditions.zipIdx.mapM fun (condition, index) =>
+    encodeNativeExpression condition (path ++ #[.key "conditions", .index index])
+  let parameters ← statement.parameters.zipIdx.mapM fun (parameter, index) => do
+    let root := path ++ #[.key "parameters", .index index]
+    let type ← encodeNativeExpression parameter.typeExpr (root.push (.key "type"))
+    let variableRef ← encodeNativeExpression parameter.variableExpr (root.push (.key "variable"))
+    return Json.mkObj [("variable", variableRef), ("type", type),
+      ("instance", toJson parameter.isInstance)]
+  return Json.mkObj [("parameters", .arr parameters), ("conditions", .arr conditions),
+    ("conclusion", conclusion)]
+
+private partial def encodeProofSteps (steps : Array RecordedProofStep)
+    (path : JsonPath) : EncodingM Json := do
+  let items ← steps.zipIdx.mapM fun (step, index) => do
+    let root := path.push (.index index)
+    -- Interleave structural branches with recorder fields by key so expression
+    -- IDs and root paths retain the owner's original lexical traversal order.
+    let entries := step.fields.map fun (name, value) => (name, some value)
+    let entries := if step.branches.isEmpty then entries else ("$branches", none) :: entries
+    let sorted := entries.toArray.qsort fun a b => a.1 < b.1
+    let fields ← sorted.mapM fun (name, value) => do
+      let encoded ← match value with
+        | some value => encodeValue value (root.push (.key name))
+        | none => do
+            let branches ← step.branches.zipIdx.mapM fun (branch, branchIndex) => do
+              let proof ← encodeProofSteps branch.proof
+                (root ++ #[.key "$branches", .index branchIndex, .key "proof"])
+              return Json.mkObj [("name", toJson branch.name), ("proof", proof)]
+            pure (.arr branches)
+      return (name, encoded)
+    return Json.mkObj <| ("$ruleId", toJson step.ruleId.toString) :: fields.toList
+  return .arr items
+
+/-- Proof and statement share a graph, but neither is a RecordedValue. -/
+def encodeProofDocument (owner : Name) (code : String)
+    (statement : RecordedTheoremStatement) (proof : Option (Array RecordedProofStep)) : Json :=
+  encodeDocument do
+    let mut fields := [("code", toJson code), ("module", toJson owner.toString)]
+    if let some steps := proof then
+      fields := fields ++ [("proof", ← encodeProofSteps steps #[.key "proof"])]
+    fields := fields ++ [("statement", ← encodeStatement statement #[.key "statement"])]
+    return fields
 
 end ProofScript

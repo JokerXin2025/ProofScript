@@ -2,6 +2,7 @@ import ProofScript.Script.Command
 import ProofScript.Info.Script.Commands
 
 open Lean.Parser.Tactic (optConfig rwRuleSeq location)
+open ProofScript
 
 
 script_macro «rewrite»
@@ -9,7 +10,16 @@ script_macro «rewrite»
   rewrite $config:optConfig $rules $[$loc]?
 )
 
-script_recorder «rewrite» auto (clear := [config, rules, loc])
+script_recorder «rewrite» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    record_value "config" (captureConfig config)
+    record_value "rules" (← captureRewriteRules ⟨rules.raw⟩)
+    record_value "locations" (← captureLocation (loc.map (·.raw)))
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «rewrite» {
   templates := [{
@@ -26,7 +36,16 @@ script_macro «rw»
   rw $config:optConfig $rules $[$loc]?
 )
 
-script_recorder «rw» auto (clear := [config, rules, loc])
+script_recorder «rw» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    record_value "config" (captureConfig config)
+    record_value "rules" (← captureRewriteRules ⟨rules.raw⟩)
+    record_value "locations" (← captureLocation (loc.map (·.raw)))
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «rw» {
   templates := [{
@@ -47,7 +66,15 @@ macro "rw_pos " h:term loc:(location)? : tactic => `(tactic|
 script_macro «rwPos»
 "rw_pos " h:term loc:(location)? => `(tactic| rw_pos $h $[$loc]?)
 
-script_recorder «rwPos» auto (clear := [h, loc])
+script_recorder «rwPos» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    record_param "h_before" h
+    record_value "locations" (← captureLocation (loc.map (·.raw)))
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «rwPos» {
   templates := [{
@@ -68,7 +95,15 @@ macro "rw_neg " h:term loc:(location)? : tactic => `(tactic|
 script_macro «rwNeg»
 "rw_neg " h:term loc:(location)? => `(tactic| rw_neg $h $[$loc]?)
 
-script_recorder «rwNeg» auto (clear := [h, loc])
+script_recorder «rwNeg» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    record_param "h_before" h
+    record_value "locations" (← captureLocation (loc.map (·.raw)))
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «rwNeg» {
   templates := [{

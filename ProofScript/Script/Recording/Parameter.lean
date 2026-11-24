@@ -15,10 +15,6 @@ def expression (raw : Syntax) : TacticM RecordedValue := do
   else
     withMainContext action
 
-/-- Explicit source-syntax interpretation for categories with no semantic reader. -/
-def syntaxText (value : Syntax) : TacticM RecordedValue :=
-  return .plain <| toJson (value.reprint.getD (reprStr value))
-
 /-- Read the type of an expression-capable input. -/
 def expressionType (raw : Syntax) : TacticM RecordedValue := do
   let action : TacticM RecordedValue :=

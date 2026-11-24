@@ -239,7 +239,21 @@ script_macro «simp»
       simp $config:optConfig only [$rules,*] $[$loc:location]?)
   | _ => Macro.throwUnsupported
 
-script_recorder «simp» auto (clear := [config, args])
+script_recorder «simp» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    record_value "config" (captureConfig config)
+    let (kinds, names, phases, directions, expressions) ← captureSimpArguments ⟨args.raw⟩
+    record_value "args_kind_before" kinds
+    record_value "args_name_before" names
+    record_value "args_phase_before" phases
+    record_value "args_direction_before" directions
+    record_value "args_expression_before" expressions
+    record_value "locations" (← captureLocation (loc.map (·.raw)))
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_info «simp» {
   templates := [{
@@ -840,7 +854,7 @@ script_macro «cases_by» (kind := strategy)
 )
 
 script_recorder «cases_by» => do
-  withRollback do
+  with_rollback do
     record_goal "$goal_before"
     record_context "$context_before"
     record_param "h" h
@@ -984,7 +998,7 @@ private theorem strongInductionOn {motive : Nat → Prop}
     (zero : motive 0) (t : Nat)
     (succ : (n : Nat) → ((m : Nat) → m < n.succ → motive m) → motive n.succ)
   : motive t
-:= Nat.strongRecOn t <| fun n ih =>
+:= Nat.strongRecOn t fun n ih =>
     match n with
     | 0    => zero
     | n + 1 => succ n ih
@@ -1132,14 +1146,15 @@ script_recorder «renderCalc» => do
       let some (rel, _, rhs) ← Term.getCalcRelation? (← instantiateMVars type)
         | throwErrorAt view.term "calc: cannot extract a binary relation from the step"
       let proof ← if containsSyntheticHole view.proof.raw then
-          pure (RecordedValue.object [("kind", .plain (json% "hole"))])
+          pure (RecordedValue.plain (toJson "hole"))
         else recordExpression proof
-      return RecordedValue.object [
-        ("relation", ← recordExpression rel),
-        ("rhs", ← recordExpression rhs), ("proof", proof)]
+      return (← recordExpression rel, ← recordExpression rhs, proof)
     return (init, chain)
-  record_value "init" init
-  record_value "chain" chain
+  with_rollback do
+    record_value "init" init
+    record_value "chain_relation" (RecordedValue.array (chain.map (·.1)))
+    record_value "chain_rhs" (RecordedValue.array (chain.map (·.2.1)))
+    record_value "chain_proof" (RecordedValue.array (chain.map (·.2.2)))
   execute
   record_goal "$goal_after"
   record_context "$context_after"
@@ -1289,27 +1304,28 @@ script_macro «infer»
 
 script_recorder «infer» => do
   let (init, chain) ← liftMacroM <| parseInferSteps steps
-  let recordChain : TacticM RecordedValue := do
-    let mut values := #[]
+  let recordChain : TacticM (Array RecordedValue × Array RecordedValue) := do
+    let mut rhsValues := #[]
+    let mut proofs := #[]
     for i in [:chain.size] do
       let (rhs, prf) := chain[i]!
       let rhsExpr ← elabTerm rhs none
       let proof ←
         -- Later tactic proofs need a preceding result that does not exist at this phase.
         if containsSyntheticHole prf.raw || (i > 0 && inferIsTacticProof prf.raw) then
-          pure (.object [("kind", .plain (toJson "hole"))])
+          pure (.plain (toJson "hole"))
         else
           recordExpression (← elabTerm prf (some rhsExpr))
-      values := values.push <| .object [
-        ("rhs", ← recordExpression rhsExpr),
-        ("proof", proof)
-      ]
-    return .array values
-  withRollback do
+      rhsValues := rhsValues.push (← recordExpression rhsExpr)
+      proofs := proofs.push proof
+    return (rhsValues, proofs)
+  with_rollback do
     record_goal "$goal_before"
     record_context "$context_before"
     record_value "init" (← expression init.raw)
-    record_value "chain" (← recordChain)
+    let (rhsValues, proofs) ← recordChain
+    record_value "chain_rhs" (RecordedValue.array rhsValues)
+    record_value "chain_proof" (RecordedValue.array proofs)
   execute
   record_goal "$goal_after"
   record_context "$context_after"
@@ -1340,7 +1356,21 @@ script_recorder «exact_mod_cast» auto (clear := [proof])
 script_macro «field»
 "field" args:(simpArgs)? => `(tactic| field $[$args:simpArgs]?)
 
-script_recorder «field» auto (clear := [args])
+script_recorder «field» => do
+  with_rollback do
+    record_goal "$goal_before"
+    record_context "$context_before"
+    let (kinds, names, phases, directions, expressions) ← match args with
+      | some args => captureSimpArguments ⟨args.raw⟩
+      | none => pure (#[], #[], #[], #[], #[])
+    record_value "args_kind_before" kinds
+    record_value "args_name_before" names
+    record_value "args_phase_before" phases
+    record_value "args_direction_before" directions
+    record_value "args_expression_before" expressions
+  execute
+  record_goal "$goal_after"
+  record_context "$context_after"
 
 script_macro «gcongr»
 "gcongr" template:(ppSpace colGt term)? names:("with" (ppSpace colGt rintroPat)*)? =>

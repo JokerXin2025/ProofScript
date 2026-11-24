@@ -8,12 +8,16 @@ script_macro «svg» (kind := metadata)
 "svg" metadata:componentMeta code:str => `(tactic| skip)
 
 script_recorder «svg» => do
-  let metadata ←
-    match parseComponentMetadata metadata.raw with
-    | .ok value => pure value
-    | .error message => throwErrorAt metadata message
-  record_value "metadata" (toJson metadata)
-  record_value "code" code.getString
+  with_rollback do
+    let metadata ←
+      match parseComponentMetadata metadata.raw with
+      | .ok value => pure value
+      | .error message => throwErrorAt metadata message
+    record_value "metadata_title" metadata.title
+    record_value "metadata_label" metadata.label
+    record_value "metadata_extra_names" (metadata.extra.map Prod.fst)
+    record_value "metadata_extra_values" (metadata.extra.map Prod.snd)
+    record_value "code" code.getString
   execute
 
 script_info «svg» {

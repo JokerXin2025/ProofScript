@@ -47,6 +47,41 @@ def name_text(parts):
                     else f"«{part}»" for part in name_key(parts))
 
 
+def printed_name_key(value):
+    """Read Lean's printed Name without conflating quoted strings and numeric parts.
+
+    A source declaration may quote an otherwise printable Unicode identifier,
+    whereas ``name_text`` prints its lossless component without the quotes.
+    """
+    if not isinstance(value, str) or not value:
+        raise ValueError("Invalid printed Lean name")
+    parts = []
+    start = 0
+    while start < len(value):
+        if value[start] == "«":
+            end = value.find("»", start + 1)
+            if end <= start + 1:
+                raise ValueError("Invalid printed Lean name")
+            part = value[start + 1:end]
+            end += 1
+        else:
+            end = value.find(".", start)
+            if end < 0:
+                end = len(value)
+            part = value[start:end]
+            if not part or "«" in part or "»" in part:
+                raise ValueError("Invalid printed Lean name")
+            if part.isascii() and part.isdecimal():
+                part = int(part)
+        parts.append(part)
+        if end == len(value):
+            return name_key(parts)
+        if value[end] != ".":
+            raise ValueError("Invalid printed Lean name")
+        start = end + 1
+    raise ValueError("Invalid printed Lean name")
+
+
 LeanName = tuple[str | int, ...]
 TheoremKey = tuple[str, LeanName]
 

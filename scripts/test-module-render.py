@@ -23,6 +23,7 @@ MODULE = "Test.PageTheoremExpressionBoundaries"
 sys.path.insert(0, str(ROOT / "tools/ps4html"))
 
 from PS4HTML.page import Page, build_label_index
+from PS4HTML.info import printed_name_key
 from PS4HTML.engine import render_details, render_module_navigation, render_page, render_proof
 from PS4HTML.module_protocol import _publish_library_navigation
 from PS4HTML.project import PS4HTMLError
@@ -40,6 +41,16 @@ class ModuleRenderTests(unittest.TestCase):
     def setUpClass(cls):
         subprocess.run(["lake", "build", f"+{MODULE}:proofscriptExport"],
                        cwd=ROOT, capture_output=True, text=True, timeout=600, check=True)
+
+    def test_verso_declaration_identity_uses_lossless_components(self):
+        self.assertEqual(printed_name_key("PageDeclarationNames.Qualified.«定理»"),
+                         ("PageDeclarationNames", "Qualified", "定理"))
+        self.assertEqual(printed_name_key("PageDeclarationNames.Qualified.定理"),
+                         ("PageDeclarationNames", "Qualified", "定理"))
+        self.assertNotEqual(printed_name_key("Project.«1»"), printed_name_key("Project.1"))
+        for invalid in ("Project.«unterminated", "Project..name", "Project.«name»suffix"):
+            with self.subTest(invalid=invalid), self.assertRaises(ValueError):
+                printed_name_key(invalid)
 
     def test_theorem_labels_use_exported_identity(self):
         component = {"data": {"theorem": {"value": {
@@ -94,7 +105,7 @@ class ModuleRenderTests(unittest.TestCase):
         page = (SITE / "Test/PageTheoremExpressionBoundaries.html").read_text()
         self.assertIn("theorem-PageTheoremExpressionBoundaries.boundary_wrapper_alias", page)
         self.assertIn("theorem-PageTheoremExpressionBoundaries.boundary_string_layout", page)
-        self.assertFalse((SITE / "Test/PageTitle.html").exists())
+        self.assertFalse((SITE / "Test/UnusedModule.html").exists())
         self.assertIn('class="hl lean block"', page)
         self.assertNotIn('<pre><code>', page)
         self.assertIn('id="ps-verso-data"', page)
@@ -152,7 +163,7 @@ class ModuleRenderTests(unittest.TestCase):
     def test_library_scope(self):
         result = render(LIBRARY)
         self.assertEqual(result.returncode, 0, result.stderr)
-        for name in ("PageTitle", "ClassicalFormula", "PageTheoremExpressionGallery",
+        for name in ("PageBetaReduction", "ClassicalFormula", "PageTheoremExpressionGallery",
                      "PageTheoremExpressionInteractions", "PageTheoremExpressionBoundaries", "PageScriptBoard"):
             self.assertTrue((SITE / f"Test/{name}.html").is_file(), name)
         self.assertFalse((SITE / "Test/UnusedModule.html").exists())

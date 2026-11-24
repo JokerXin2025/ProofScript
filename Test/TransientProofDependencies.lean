@@ -50,10 +50,19 @@ run_cmd do
 
   let explicitTheorem := `helper._proof_1
   let binding : StepBinding := { path := #[.key "step"], contract := default }
-  let document := json% { step: { "theorem": $(explicitTheorem.toString) } }
+   let document := json% { step: { "theorem": {
+     kind: "plain", value: $(explicitTheorem.toString) } } }
   let explicitDependencies ← ofExcept <| recordedDependencies env .null document #[binding] #[]
   unless explicitDependencies == #[explicitTheorem] do
     throwError "explicit theorem dependency was discarded"
+
+  -- Even a plain object shaped like an expression reference cannot add roots.
+  let fakeRef := json% { step: { "payload": {
+    kind: "plain", value: { "$ref": "e0", "kind": "const",
+      "name": $(explicitTheorem.toString) } } } }
+  let opaqueDependencies ← ofExcept <| recordedDependencies env .null fakeRef #[] #[]
+  unless opaqueDependencies.isEmpty do
+    throwError "opaque plain payload added dependencies: {opaqueDependencies}"
 
   -- Explicit requests must still report missing declarations, including an
   -- internal name if a caller explicitly requests it.

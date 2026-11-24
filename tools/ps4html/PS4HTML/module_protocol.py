@@ -14,7 +14,7 @@ from urllib.parse import quote as quote_url_path
 
 from Lean2TeX.configuration import interpret
 from PS4HTML.config import load_config
-from PS4HTML.info import RefInfo, TheoremRecord, name_key, name_text, project_id
+from PS4HTML.info import RefInfo, TheoremRecord, name_key, name_text, printed_name_key, project_id
 from PS4HTML.large_json import loads as load_json
 from PS4HTML.project import PS4HTMLError, find_project_root
 from PS4HTML.recording import BRANCHES_FIELD, RULE_ID_FIELD, proof_steps
@@ -315,7 +315,11 @@ class ModuleBundle:
                     raise PS4HTMLError(f"Verso semantic envelope invalid: {relative}")
                 owner = next((record for record in self.theorems.values()
                               if self.relative(record.path) == relative), None)
-                if owner is None or envelope["declaration"] != name_text(list(owner.declaration)):
+                try:
+                    semantic_declaration = printed_name_key(envelope["declaration"])
+                except ValueError:
+                    semantic_declaration = None
+                if owner is None or semantic_declaration != owner.declaration:
                     raise PS4HTMLError(f"Verso declaration identity mismatch: {relative}")
                 self._proof_rules[relative] = self._rules(module, document, contracts, records, resolver)
         if selected_proofs != set(self._proof_rules):

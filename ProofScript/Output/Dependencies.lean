@@ -121,7 +121,9 @@ def recordedDependencies (env : Environment) (table document : Json)
       dependencies := add dependencies dependency
   for binding in bindings do
     let step ← JsonPath.get? binding.path document
-    if let .ok theoremName := step.getObjValAs? String "theorem" then
+    if let .ok theoremField := step.getObjVal? "theorem" then
+      if (theoremField.getObjValAs? String "kind").toOption != some "plain" then continue
+      let .ok theoremName := theoremField.getObjValAs? String "value" | continue
       let name ← printedName env theoremName
       dependencies := add dependencies name
   return dependencies

@@ -6,21 +6,19 @@ from PS4HTML.i18n import tr
 
 def rule_infer(infer, proof, *, language):
     init = infer["init"]
-    chain = infer["chain"]
+    rhs, proofs = infer["chain_rhs"], infer["chain_proof"]
     if init is None:
         raise ValueError("infer.init must be a recorded expression")
-    if not isinstance(chain, list) or not chain:
-        raise ValueError("infer.chain must be a nonempty array")
+    if (not isinstance(rhs, list) or not isinstance(proofs, list) or
+            not rhs or len(rhs) != len(proofs)):
+        raise ValueError("infer.chain must be nonempty with aligned columns")
     infer_steps = []
     lhs = init
-    for i, link in enumerate(chain):
-        if not isinstance(link, dict) or not {"rhs", "proof"} <= link.keys():
-            raise ValueError("infer chain entry requires rhs and proof")
-        if link["rhs"] is None or link["proof"] is None:
+    for i, (link_rhs, proof_value) in enumerate(zip(rhs, proofs)):
+        if link_rhs is None or proof_value is None:
             raise ValueError("infer chain entries cannot contain null values")
-        rhs = link["rhs"]
         lhs_tex = html.escape(proof.tex(lhs)) if lhs is not None else ""
-        rhs_tex = html.escape(proof.tex(rhs)) if rhs is not None else ""
+        rhs_tex = html.escape(proof.tex(link_rhs)) if link_rhs is not None else ""
         infer_steps.append(
             render_cal_step(
                 tag = tr("strategy.inference", language) if i == 0 else "",
@@ -29,5 +27,5 @@ def rule_infer(infer, proof, *, language):
                 rhs = rhs_tex,
             )
         )
-        lhs = rhs
+        lhs = link_rhs
     return "<div>" + "\n".join(infer_steps) + "</div>"

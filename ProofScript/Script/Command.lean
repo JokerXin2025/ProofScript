@@ -77,6 +77,10 @@ private def validateAutoRecording (name : String) (args : Array (TSyntax ``macro
       let inputType ← match ← paramBindingTypeTerm stx with
         | .ok type => pure type
         | .error msg => throwErrorAt id m!"[script recorder] '{name}': 参数 '{id.getId}' {msg}"
+      let structured := #[
+        "simpArgs", "rwRuleSeq", "location", "optConfig"]
+      if structured.any (fun kind => (toString inputType.raw).contains kind) then
+        throwErrorAt id m!"[script recorder] '{name}': 参数 '{id.getId}' 是结构化参数；请使用手写 script_recorder 捕获并逐字段写入"
       let type ← `(term| ProofScript.RecordValue $inputType:term)
       let available ← Elab.Command.withScope
           (fun scope => { scope with openDecls := OpenDecl.simple `ProofScript.ParamRecorder [] :: scope.openDecls }) do
@@ -371,12 +375,12 @@ private def parseAutoCfg (cfg : Option (TSyntax ``scriptCfg))
     throwError "[script recorder] strategy automatic recording cannot specify clear"
   return result
 
-/-- Version zero executes the script and records its identity and monotonic timestamps. -/
+/-- Version zero executes the script and records monotonic timestamps.
+    The step model owns the rule identity. -/
 private def genInitialRecording (name : String) (executionKind ruleId sourceKind : Name)
     (args : Array (TSyntax ``macroArg)) (cfg : ScriptRecordingConfig) : CommandElabM Name := do
   let recArgs ← recorderArguments ("script_" ++ name) args cfg.isStrategy
   let rhs ← `(term| do
-    record_value "$ruleId" $(quote ruleId.toString)
     record_value "$time_before" (← IO.monoNanosNow)
     execute
     record_value "$time_after" (← IO.monoNanosNow))
@@ -413,19 +417,19 @@ private def autoRecorderBody (registration : ScriptTacticRegistration)
     (if afterRecords.isEmpty then #[emptyRecord] else afterRecords).map (·.raw)⟩
   if registration.config.isStrategy then
     `(term| do
-      Lean.Elab.Tactic.withRollback do
+      with_rollback do
         record_goal "$goal_before"
         record_context "$context_before"
         do $beforeSeq:doSeqIndent
       execute)
   else
     `(term| do
-      Lean.Elab.Tactic.withRollback do
+      with_rollback do
         record_goal "$goal_before"
         record_context "$context_before"
         do $beforeSeq:doSeqIndent
       execute
-      Lean.Elab.Tactic.withRollback do
+      with_rollback do
         record_goal "$goal_after"
         record_context "$context_after"
         do $afterSeq:doSeqIndent)

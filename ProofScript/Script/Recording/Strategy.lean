@@ -110,15 +110,14 @@ def advanceCurrentStrategyCase : TacticM Unit := do
 /-- Internal script completion, after branch routing returns to the parent destination. -/
 def finishRecordingStrategy : TacticM Unit := withRollback do
   let pending ← takeRecordingStrategy
-  let mut branches := #[]
+  let mut branches : Array RecordedProofBranch := #[]
   let mut branchBindings : Array (Array StepBinding) := #[]
   for index in [:pending.labels.length] do
     let label := pending.labels[index]!
     let (proof, bindings) ← takeBoxWithContracts (pending.childPrefix ++ "_" ++ label.toString)
-    branches := branches.push <| .object [
-      ("name", .plain (toJson label.toString)), ("proof", .array proof)]
+    branches := branches.push { name := label.toString, proof }
     branchBindings := branchBindings.push bindings
-  mergeRecordingSlotFields pending.slot [("$branches", .array branches)]
+  setRecordingSlotBranches pending.slot branches
   for index in [:pending.labels.length] do
     attachRecordingSlotContracts pending.slot <| branchBindings[index]!.map fun binding =>
       { binding with path := #[.key "$branches", .index index, .key "proof"] ++ binding.path }

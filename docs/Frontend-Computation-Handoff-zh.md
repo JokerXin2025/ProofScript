@@ -62,6 +62,7 @@ Finalized component 示例：
         },
         "renderer": "proofscript/test-json-v1",
         "function": {
+          "recordingProtocol": 2,
           "declaration": "Demo.compute",
           "type": "Bool → Nat",
           "expression": {"$ref": "e1"},
